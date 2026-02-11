@@ -10,6 +10,7 @@ import type { AgentMode } from './constants'
 const DEFAULT_SETTINGS: Settings = {
   mode: 'DEFAULT' as const,
   adsEnabled: true,
+  hippoEnabled: true,
 }
 
 // Note: FREE mode is now a valid AgentMode (was previously LITE)
@@ -24,6 +25,7 @@ export interface Settings {
   alwaysUseALaCarte?: boolean
   /** @deprecated Use server-side fallbackToALaCarte setting instead */
   fallbackToALaCarte?: boolean
+  hippoEnabled?: boolean
 }
 
 /**
@@ -104,6 +106,11 @@ const validateSettings = (parsed: unknown): Settings => {
   // Validate fallbackToALaCarte (legacy)
   if (typeof obj.fallbackToALaCarte === 'boolean') {
     settings.fallbackToALaCarte = obj.fallbackToALaCarte
+  }
+
+  // Validate hippoEnabled
+  if (typeof obj.hippoEnabled === 'boolean') {
+    settings.hippoEnabled = obj.hippoEnabled
   }
 
   return settings

@@ -59,6 +59,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     aliases: ['referral'],
   },
   {
+    id: 'hippo:toggle',
+    label: 'hippo:toggle',
+    description: 'Toggle Hippo memory integration on/off',
+    aliases: ['hippo'],
+  },
+  {
+    id: 'hippo:enable',
+    label: 'hippo:enable',
+    description: 'Enable Hippo memory integration',
+  },
+  {
+    id: 'hippo:disable',
+    label: 'hippo:disable',
+    description: 'Disable Hippo memory integration',
+  },
+  {
+    id: 'hippo:status',
+    label: 'hippo:status',
+    description: 'Show Hippo status (enabled/disabled, binary installed)',
+  },
+  {
     id: 'init',
     label: 'init',
     description: 'Create a starter knowledge.md file',

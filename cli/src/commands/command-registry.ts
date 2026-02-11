@@ -1,6 +1,7 @@
 import open from 'open'
 
 import { handleAdsEnable, handleAdsDisable } from './ads'
+import { handleHippoEnable, handleHippoDisable, handleHippoToggle, handleHippoStatus } from './hippo'
 import { useThemeStore } from '../hooks/use-theme'
 import { handleHelpCommand } from './help'
 import { handleImageCommand } from './image'
@@ -176,6 +177,43 @@ export const COMMAND_REGISTRY: CommandDefinition[] = [
     name: 'ads:disable',
     handler: (params) => {
       const { postUserMessage } = handleAdsDisable()
+      params.setMessages((prev) => postUserMessage(prev))
+      params.saveToHistory(params.inputValue.trim())
+      clearInput(params)
+    },
+  }),
+  defineCommand({
+    name: 'hippo:enable',
+    handler: (params) => {
+      const { postUserMessage } = handleHippoEnable()
+      params.setMessages((prev) => postUserMessage(prev))
+      params.saveToHistory(params.inputValue.trim())
+      clearInput(params)
+    },
+  }),
+  defineCommand({
+    name: 'hippo:disable',
+    handler: (params) => {
+      const { postUserMessage } = handleHippoDisable()
+      params.setMessages((prev) => postUserMessage(prev))
+      params.saveToHistory(params.inputValue.trim())
+      clearInput(params)
+    },
+  }),
+  defineCommand({
+    name: 'hippo:toggle',
+    aliases: ['hippo'],
+    handler: (params) => {
+      const { postUserMessage } = handleHippoToggle()
+      params.setMessages((prev) => postUserMessage(prev))
+      params.saveToHistory(params.inputValue.trim())
+      clearInput(params)
+    },
+  }),
+  defineCommand({
+    name: 'hippo:status',
+    handler: (params) => {
+      const { postUserMessage } = handleHippoStatus()
       params.setMessages((prev) => postUserMessage(prev))
       params.saveToHistory(params.inputValue.trim())
       clearInput(params)

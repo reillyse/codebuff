@@ -4,6 +4,17 @@ import type { ChatMessage } from '../../../types/chat'
 import type { SendMessageTimerController } from '../../../utils/send-message-timer'
 import type { StreamStatus } from '../../use-message-queue'
 
+// Mock the logger to prevent analytics initialization errors in tests
+mock.module('../../../utils/logger', () => ({
+  logger: {
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    fatal: () => {},
+  },
+}))
+
 // Ensure required env vars exist so logger/env parsing succeeds in tests
 const ensureEnv = () => {
   process.env.NEXT_PUBLIC_CB_ENVIRONMENT =
@@ -414,6 +425,8 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Network timeout'),
+      prompt: 'test prompt',
+      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: (value: boolean) => {
@@ -468,6 +481,8 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Something failed'),
+      prompt: 'test prompt',
+      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},
@@ -506,6 +521,8 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Regular error'),
+      prompt: 'test prompt',
+      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},
@@ -540,6 +557,8 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Some error'),
+      prompt: 'test prompt',
+      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},
@@ -573,6 +592,8 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Some error'),
+      prompt: 'test prompt',
+      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},
@@ -622,6 +643,8 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: contextLengthError,
+      prompt: 'test prompt',
+      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: (value: boolean) => {
@@ -690,6 +713,8 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: paymentError,
+      prompt: 'test prompt',
+      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},

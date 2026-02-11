@@ -1,7 +1,7 @@
 import { getErrorObject } from '@codebuff/common/util/error'
 
 import { getProjectRoot } from '../../project-files'
-import { storeRunToHippo } from '../../utils/hippo-hooks'
+import { storeRunToHippo, storeErrorToHippo } from '../../utils/hippo-hooks'
 import { useChatStore } from '../../state/chat-store'
 import { processBashContext } from '../../utils/bash-context-processor'
 import { markRunningAgentsAsCancelled } from '../../utils/block-operations'
@@ -388,6 +388,8 @@ export const handleRunCompletion = (params: {
 
 export const handleRunError = (params: {
   error: unknown
+  prompt: string
+  agentMode: AgentMode
   timerController: SendMessageTimerController
   updater: BatchedMessageUpdater
   setIsRetrying: (value: boolean) => void
@@ -399,6 +401,8 @@ export const handleRunError = (params: {
 }) => {
   const {
     error,
+    prompt,
+    agentMode,
     timerController,
     updater,
     setIsRetrying,
@@ -420,7 +424,16 @@ export const handleRunError = (params: {
     isProcessingQueueRef,
     isQueuePausedRef,
   })
-  timerController.stop('error')
+  const timerResult = timerController.stop('error')
+  const elapsedMs = timerResult?.elapsedMs ?? 0
+
+  // Store error to hippo memory (background, non-blocking)
+  storeErrorToHippo({
+    error,
+    prompt,
+    agentMode,
+    elapsedMs,
+  })
 
   if (isOutOfCreditsError(error)) {
     updater.setError(OUT_OF_CREDITS_MESSAGE)

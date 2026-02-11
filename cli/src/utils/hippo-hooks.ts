@@ -4,6 +4,7 @@ import os from 'os'
 import path from 'path'
 
 import { logger } from './logger'
+import { loadSettings } from './settings'
 
 import type { RunState } from '@codebuff/sdk'
 import type { AgentMode } from './constants'
@@ -199,17 +200,112 @@ const getOutcome = (runState: RunState): 'success' | 'failure' => {
 }
 
 /**
- * Search hippo for prior context related to the query.
- * Runs synchronously and returns the context string.
- * Returns empty string if hippo is disabled, not installed, or search fails.
+ * Check if hippo is enabled and available
  */
-export const searchHippoContext = (query: string, maxTokens: number = 4000): string => {
-  // Check if hippo binary exists
+const isHippoAvailable = (): boolean => {
+  const settings = loadSettings()
+  if (settings.hippoEnabled === false) {
+    logger.debug({}, 'Hippo is disabled in settings')
+    return false
+  }
+  
   if (!fs.existsSync(HIPPO_BINARY)) {
     logger.debug(
       { path: HIPPO_BINARY },
-      'Hippo binary not found, skipping context search'
+      'Hippo binary not found'
     )
+    return false
+  }
+  
+  return true
+}
+
+/**
+ * Get recent snapshot from hippo (last N runs)
+ */
+const getRecentSnapshot = (limit: number = 5): string => {
+  const args = [
+    'snapshot',
+    '--limit', String(limit),
+    '--short',
+  ]
+  
+  try {
+    const result = spawnSync(HIPPO_BINARY, args, {
+      encoding: 'utf-8',
+      timeout: HIPPO_SEARCH_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: process.cwd(),
+    })
+    
+    if (result.signal || result.error || result.status !== 0) {
+      logger.debug(
+        { signal: result.signal, error: result.error?.message, status: result.status },
+        'Hippo snapshot failed'
+      )
+      return ''
+    }
+    
+    return result.stdout?.trim() ?? ''
+  } catch (error) {
+    logger.debug(
+      { error: error instanceof Error ? error.message : String(error) },
+      'Failed to get hippo snapshot'
+    )
+    return ''
+  }
+}
+
+/**
+ * Get semantic context from hippo for the query
+ */
+const getSemanticContext = (query: string, maxTokens: number): string => {
+  const args = [
+    'context',
+    query,
+    '--max-tokens', String(maxTokens),
+  ]
+  
+  try {
+    const result = spawnSync(HIPPO_BINARY, args, {
+      encoding: 'utf-8',
+      timeout: HIPPO_SEARCH_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: process.cwd(),
+    })
+    
+    if (result.signal || result.error || result.status !== 0) {
+      logger.debug(
+        { signal: result.signal, error: result.error?.message, status: result.status },
+        'Hippo semantic context failed'
+      )
+      return ''
+    }
+    
+    const context = result.stdout?.trim() ?? ''
+    
+    // Filter out empty results
+    if (!context || context.includes('Found 0 results')) {
+      return ''
+    }
+    
+    return context
+  } catch (error) {
+    logger.debug(
+      { error: error instanceof Error ? error.message : String(error) },
+      'Failed to get hippo semantic context'
+    )
+    return ''
+  }
+}
+
+/**
+ * Search hippo for prior context related to the query.
+ * Combines recent snapshot with semantic search for comprehensive context.
+ * Returns empty string if hippo is disabled, not installed, or search fails.
+ */
+export const searchHippoContext = (query: string, maxTokens: number = 4000): string => {
+  if (!isHippoAvailable()) {
     return ''
   }
   
@@ -224,70 +320,42 @@ export const searchHippoContext = (query: string, maxTokens: number = 4000): str
     ? trimmedQuery.substring(0, HIPPO_QUERY_MAX_LENGTH) 
     : trimmedQuery
   
-  const args = [
-    'context',
-    truncatedQuery,
-    '--max-tokens', String(maxTokens),
-  ]
-  
   logger.debug(
     { query: truncatedQuery },
     'Searching hippo for prior context'
   )
   
-  try {
-    const result = spawnSync(HIPPO_BINARY, args, {
-      encoding: 'utf-8',
-      timeout: HIPPO_SEARCH_TIMEOUT_MS,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: process.cwd(), // Run from project root so hippo auto-detects .hippo/project.yaml
-    })
-    
-    // Check if process was killed by timeout
-    if (result.signal) {
-      logger.debug(
-        { signal: result.signal },
-        'Hippo context search timed out'
-      )
-      return ''
+  // Get both recent snapshot and semantic context
+  const recentSnapshot = getRecentSnapshot(5)
+  const semanticTokenBudget = recentSnapshot ? Math.floor(maxTokens * 0.7) : maxTokens
+  const semanticContext = getSemanticContext(truncatedQuery, semanticTokenBudget)
+  
+  // Combine results with section headers for clarity
+  const parts: string[] = []
+  
+  if (recentSnapshot) {
+    parts.push(`### Recent Activity:\n${recentSnapshot}`)
+  }
+  
+  if (semanticContext) {
+    // Only add semantic context if it's different from recent snapshot
+    if (!recentSnapshot || !recentSnapshot.includes(semanticContext.substring(0, 100))) {
+      parts.push(`### Related Context:\n${semanticContext}`)
     }
-    
-    if (result.error) {
-      logger.debug(
-        { error: result.error.message },
-        'Hippo context search failed'
-      )
-      return ''
-    }
-    
-    if (result.status !== 0) {
-      logger.debug(
-        { status: result.status, stderr: result.stderr },
-        'Hippo context search returned non-zero exit code'
-      )
-      return ''
-    }
-    
-    const context = result.stdout?.trim() ?? ''
-    
-    // Filter out empty results
-    if (!context || context.includes('Found 0 results')) {
-      return ''
-    }
-    
-    logger.debug(
-      { contextLength: context.length },
-      'Retrieved context from hippo'
-    )
-    
-    return context
-  } catch (error) {
-    logger.debug(
-      { error: error instanceof Error ? error.message : String(error) },
-      'Failed to search hippo context'
-    )
+  }
+  
+  if (parts.length === 0) {
     return ''
   }
+  
+  const combined = parts.join('\n\n')
+  
+  logger.debug(
+    { contextLength: combined.length, hasSnapshot: !!recentSnapshot, hasSemantic: !!semanticContext },
+    'Retrieved combined context from hippo'
+  )
+  
+  return combined
 }
 
 export type StoreRunToHippoParams = {
@@ -302,6 +370,10 @@ export type StoreRunToHippoParams = {
  * Runs in a detached background process so it doesn't block the CLI.
  */
 export const storeRunToHippo = (params: StoreRunToHippoParams): void => {
+  if (!isHippoAvailable()) {
+    return
+  }
+  
   const { runState, prompt, agentMode, elapsedMs } = params
   
   // Extract meaningful data from the run
@@ -338,20 +410,65 @@ export const storeRunToHippo = (params: StoreRunToHippoParams): void => {
     args.push('--commands-run', commandsRun.join(','))
   }
   
-  // Check if hippo binary exists before attempting to spawn
-  if (!fs.existsSync(HIPPO_BINARY)) {
-    logger.debug(
-      { path: HIPPO_BINARY },
-      'Hippo binary not found, skipping storage'
-    )
-    return
-  }
-  
   logger.debug(
     { hippoArgs: args, filesChanged, filesRead },
     'Storing run to hippo memory'
   )
   
+  spawnHippoStore(args)
+}
+
+export type StoreErrorToHippoParams = {
+  error: unknown
+  prompt: string
+  agentMode: AgentMode
+  elapsedMs: number
+}
+
+/**
+ * Store an error to hippo memory so we learn from failures.
+ * Runs in a detached background process so it doesn't block the CLI.
+ * Silently fails if hippo is not available - this is best-effort logging.
+ */
+export const storeErrorToHippo = (params: StoreErrorToHippoParams): void => {
+  // Wrap everything in try-catch since this is best-effort and should never break the main flow
+  try {
+    if (!isHippoAvailable()) {
+      return
+    }
+    
+    const { error, prompt, agentMode, elapsedMs } = params
+    
+    const sessionId = generateHippoSessionId(agentMode)
+    const inputSummary = buildInputSummary(prompt, agentMode)
+    
+    // Build error description
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    const elapsedSeconds = Math.floor(elapsedMs / 1000)
+    const outputDescription = `Error after ${elapsedSeconds}s: ${errorMessage.substring(0, 200)}`
+    
+    const concepts = ['codebuff', 'error', agentMode.toLowerCase()]
+    
+    const args = [
+      'store',
+      '--agent', 'codebuff',
+      '--session', sessionId,
+      '--input', inputSummary,
+      '--output', outputDescription,
+      '--concepts', concepts.join(','),
+      '--outcome', 'failure',
+    ]
+    
+    spawnHippoStore(args)
+  } catch {
+    // Silently ignore any errors - hippo storage should never break the error handling flow
+  }
+}
+
+/**
+ * Helper to spawn hippo store process in background
+ */
+const spawnHippoStore = (args: string[]): void => {
   try {
     // Spawn detached process so it doesn't block CLI
     const child = spawn(HIPPO_BINARY, args, {

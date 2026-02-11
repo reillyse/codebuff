@@ -409,19 +409,20 @@ export const useSendMessage = ({
       // before any async work, so the router can correctly detect busy state.
       let actualCredits: number | undefined
 
+      // Build effective prompt before try block so it's accessible in catch for error logging
+      const agentDefinitions = loadAgentDefinitions()
+      const resolvedAgent = resolveAgent(agentMode, agentId, agentDefinitions)
+
+      const promptWithBashContext = bashContextForPrompt
+        ? bashContextForPrompt + finalContent
+        : finalContent
+      const effectivePrompt = buildPromptWithContext(
+        promptWithBashContext,
+        messageContent,
+      )
+
       // Execute SDK run with streaming handlers
       try {
-        const agentDefinitions = loadAgentDefinitions()
-        const resolvedAgent = resolveAgent(agentMode, agentId, agentDefinitions)
-
-        const promptWithBashContext = bashContextForPrompt
-          ? bashContextForPrompt + finalContent
-          : finalContent
-        const effectivePrompt = buildPromptWithContext(
-          promptWithBashContext,
-          messageContent,
-        )
-
         // Search hippo for prior context (Rule 1: Search Hippo FIRST)
         const hippoContext = searchHippoContext(effectivePrompt)
         const promptWithHippoContext = hippoContext
@@ -457,7 +458,7 @@ export const useSendMessage = ({
           prompt: promptWithHippoContext,
           content: messageContent,
           previousRunState: previousRunStateRef.current,
-          agentDefinitions,
+          agentDefinitions: agentDefinitions,
           eventHandlerState,
           signal: abortController.signal,
           costMode: AGENT_MODE_TO_COST_MODE[agentMode],
@@ -495,6 +496,8 @@ export const useSendMessage = ({
       } catch (error) {
         handleRunError({
           error,
+          prompt: effectivePrompt,
+          agentMode,
           timerController,
           updater,
           setIsRetrying,
