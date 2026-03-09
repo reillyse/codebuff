@@ -544,6 +544,13 @@ export async function* promptAiSdkStream(
   const responseValue = await response.response
   const messageId = responseValue.id
 
+  const requestMetadata = await response.request
+  emitCacheDebugProviderRequest({
+    callback: params.onCacheDebugProviderRequestBuilt,
+    provider: getModelProvider(aiSDKModel),
+    rawBody: requestMetadata.body,
+  })
+
   // Skip cost tracking for Claude OAuth (user is on their own subscription)
   if (!isClaudeOAuth) {
     const providerMetadataResult = await response.providerMetadata
