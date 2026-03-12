@@ -121,9 +121,9 @@ export const INPUT_MODE_CONFIGS: Record<InputMode, InputModeConfig> = {
     blockKeyboardExit: false,
   },
   'connect:chatgpt': {
-    icon: '🔗',
+    icon: '🔐',
     color: 'info',
-    placeholder: 'paste authorization code here...',
+    placeholder: 'paste ChatGPT auth code or callback URL...',
     widthAdjustment: 3,
     showAgentModeToggle: false,
     disableSlashSuggestions: true,

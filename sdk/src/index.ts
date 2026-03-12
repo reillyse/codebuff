@@ -91,4 +91,8 @@ export {
   promptAiSdkStream,
   promptAiSdkStructured,
 } from './impl/llm'
-export { resetClaudeOAuthRateLimit, setClaudeOAuthFallbackEnabled } from './impl/model-provider'
+export {
+  resetChatGptOAuthRateLimit,
+  resetClaudeOAuthRateLimit,
+  setClaudeOAuthFallbackEnabled,
+} from './impl/model-provider'

@@ -1,5 +1,9 @@
+import { CHATGPT_OAUTH_ENABLED } from '@codebuff/common/constants/chatgpt-oauth'
+import { CLAUDE_OAUTH_ENABLED } from '@codebuff/common/constants/claude-oauth'
 import {
+  getChatGptOAuthCredentials,
   getClaudeOAuthCredentials,
+  getValidChatGptOAuthCredentials,
   getValidClaudeOAuthCredentials,
   setClaudeOAuthFallbackEnabled,
 } from '@codebuff/sdk'
@@ -43,5 +47,14 @@ export async function initializeApp(params: { cwd?: string }): Promise<{ claudeO
   } catch (error) {
     console.debug('Failed to refresh Claude OAuth credentials:', error)
     return { claudeOAuthExpired: true }
+  }
+
+  if (CHATGPT_OAUTH_ENABLED) {
+    const chatGptCredentials = getChatGptOAuthCredentials()
+    if (chatGptCredentials) {
+      getValidChatGptOAuthCredentials().catch(() => {
+        // Best-effort background refresh.
+      })
+    }
   }
 }

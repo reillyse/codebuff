@@ -1,3 +1,5 @@
+import { CHATGPT_OAUTH_ENABLED } from '@codebuff/common/constants/chatgpt-oauth'
+import { CLAUDE_OAUTH_ENABLED } from '@codebuff/common/constants/claude-oauth'
 import { AGENT_MODES } from '../utils/constants'
 import { CREDITS_REFERRAL_BONUS } from '@codebuff/common/old-constants'
 
@@ -36,12 +38,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     aliases: ['h', '?'],
     implicitCommand: true,
   },
-  {
-    id: 'connect:claude',
-    label: 'connect:claude (deprecated)',
-    description: 'Claude subscription will be removed March 1st',
-    aliases: ['claude'],
-  },
+  ...(CLAUDE_OAUTH_ENABLED
+    ? [
+        {
+          id: 'connect:claude',
+          label: 'connect:claude (deprecated)',
+          description: 'Claude subscription will be removed March 1st',
+          aliases: ['claude'],
+        },
+      ]
+    : []),
+  ...(CHATGPT_OAUTH_ENABLED
+    ? [
+        {
+          id: 'connect:chatgpt',
+          label: 'connect:chatgpt',
+          description: 'Connect your ChatGPT subscription for direct OpenAI streaming',
+          aliases: ['chatgpt'],
+        },
+      ]
+    : []),
+
   {
     id: 'ads:enable',
     label: 'ads:enable',
