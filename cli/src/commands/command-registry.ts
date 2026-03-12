@@ -179,9 +179,8 @@ const FREEBUFF_REMOVED_COMMANDS = new Set([
   'connect:claude',
 ])
 
-const FREEBUFF_ONLY_COMMANDS = new Set([
-  'plan',
-])
+// Commands that should ONLY be available in Freebuff mode (excluded from regular mode)
+const FREEBUFF_ONLY_COMMANDS = new Set<string>([])
 
 const ALL_COMMANDS: CommandDefinition[] = [
   defineCommand({

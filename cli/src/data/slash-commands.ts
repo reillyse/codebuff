@@ -1,6 +1,6 @@
 import { CHATGPT_OAUTH_ENABLED } from '@codebuff/common/constants/chatgpt-oauth'
 import { CLAUDE_OAUTH_ENABLED } from '@codebuff/common/constants/claude-oauth'
-import { AGENT_MODES } from '../utils/constants'
+import { AGENT_MODES, IS_FREEBUFF } from '../utils/constants'
 import { CREDITS_REFERRAL_BONUS } from '@codebuff/common/old-constants'
 
 import type { SkillsMap } from '@codebuff/common/types/skill'
@@ -30,7 +30,20 @@ const MODE_COMMANDS: SlashCommand[] = AGENT_MODES.map((mode) => ({
   description: `Switch to ${mode} mode`,
 }))
 
-export const SLASH_COMMANDS: SlashCommand[] = [
+const FREEBUFF_REMOVED_COMMAND_IDS = new Set([
+  'connect:claude',
+  'ads:enable',
+  'ads:disable',
+  'refer-friends',
+  'usage',
+  'subscribe',
+  'agent:gpt-5',
+  'image',
+  'publish',
+  'init',
+])
+
+const ALL_SLASH_COMMANDS: SlashCommand[] = [
   {
     id: 'help',
     label: 'help',
@@ -197,6 +210,12 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     implicitCommand: true,
   },
 ]
+
+export const SLASH_COMMANDS: SlashCommand[] = IS_FREEBUFF
+  ? ALL_SLASH_COMMANDS.filter(
+      (cmd) => !FREEBUFF_REMOVED_COMMAND_IDS.has(cmd.id),
+    )
+  : ALL_SLASH_COMMANDS
 
 export const SLASHLESS_COMMAND_IDS = new Set(
   SLASH_COMMANDS.filter((cmd) => cmd.implicitCommand).map((cmd) =>
