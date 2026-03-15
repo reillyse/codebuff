@@ -11,6 +11,8 @@ import type { AgentMode } from './constants'
 
 // Path to hippo binary - can be overridden via HIPPO_PATH env var
 const HIPPO_BINARY = process.env.HIPPO_PATH ?? path.join(os.homedir(), 'Programming/hippo/build/hippo')
+// Tilde path for hints that the agent can run via terminal
+const HIPPO_HINT_CMD = process.env.HIPPO_PATH ?? '~/Programming/hippo/build/hippo'
 
 // Constants for hippo search
 const HIPPO_SEARCH_TIMEOUT_MS = 5000 // 5 second timeout for search
@@ -77,64 +79,6 @@ const extractFilesFromHistory = (runState: RunState): { filesChanged: string[], 
 }
 
 /**
- * Extract concepts from file paths for hippo tagging
- */
-const extractConceptsFromFiles = (files: string[]): string[] => {
-  const concepts = new Set<string>()
-  
-  for (const file of files) {
-    const ext = path.extname(file).toLowerCase()
-    const basename = path.basename(file).toLowerCase()
-    
-    // Language/framework concepts
-    if (ext === '.ts' || ext === '.tsx') concepts.add('typescript')
-    if (ext === '.tsx' || file.includes('/components/') || file.includes('/hooks/')) concepts.add('react')
-    if (ext === '.py') concepts.add('python')
-    if (ext === '.go') concepts.add('go')
-    if (ext === '.rs') concepts.add('rust')
-    if (ext === '.js' || ext === '.jsx') concepts.add('javascript')
-    if (ext === '.css' || ext === '.scss') concepts.add('styling')
-    if (ext === '.json') concepts.add('config')
-    if (ext === '.md' || ext === '.mdx') concepts.add('documentation')
-    
-    // File type concepts
-    if (basename.includes('.test.') || basename.includes('.spec.') || file.includes('__tests__')) {
-      concepts.add('tests')
-    }
-    if (file.includes('/api/') || file.includes('routes')) concepts.add('api')
-    if (file.includes('/hooks/')) concepts.add('hooks')
-    if (file.includes('/utils/') || file.includes('/helpers/')) concepts.add('utilities')
-  }
-  
-  return Array.from(concepts)
-}
-
-/**
- * Extract concepts from run output for hippo tagging
- */
-const extractConcepts = (runState: RunState, filesChanged: string[], filesRead: string[]): string[] => {
-  const concepts: string[] = ['codebuff']
-  
-  if (runState.output?.type === 'error') {
-    concepts.push('error')
-  } else {
-    concepts.push('success')
-  }
-  
-  // Add concepts from files touched
-  const allFiles = [...filesChanged, ...filesRead]
-  const fileConcepts = extractConceptsFromFiles(allFiles)
-  concepts.push(...fileConcepts)
-  
-  // Add concept if files were actually changed
-  if (filesChanged.length > 0) {
-    concepts.push('code-changes')
-  }
-  
-  return [...new Set(concepts)] // Deduplicate
-}
-
-/**
  * Build a summary of the run for hippo's --input field
  */
 const buildInputSummary = (prompt: string, agentMode: AgentMode): string => {
@@ -145,7 +89,41 @@ const buildInputSummary = (prompt: string, agentMode: AgentMode): string => {
 }
 
 /**
- * Build a detailed output description for hippo's --output field
+ * Extract the agent's own summary from the last assistant text block.
+ * This is far more informative than file lists for future recall.
+ */
+const extractAgentSummary = (runState: RunState): string | null => {
+  const messageHistory = runState.sessionState?.mainAgentState?.messageHistory ?? []
+  
+  for (let i = messageHistory.length - 1; i >= 0; i--) {
+    const message = messageHistory[i]
+    if (message.role !== 'assistant') continue
+    if (!message.content || !Array.isArray(message.content)) continue
+    
+    let lastText = ''
+    for (const block of message.content) {
+      if (block.type === 'text') {
+        const rawText = ('text' in block ? String(block.text) : '').trim()
+        // Skip <think> blocks — internal reasoning, not useful for recall
+        if (rawText && !rawText.startsWith('<think>')) {
+          lastText = rawText
+        }
+      }
+    }
+    
+    if (lastText) {
+      // Sanitize for CLI argument safety: collapse newlines, limit length
+      const sanitized = lastText.replace(/\n+/g, ' ').replace(/\s+/g, ' ')
+      return sanitized.length > 300 ? sanitized.substring(0, 300) + '...' : sanitized
+    }
+  }
+  
+  return null
+}
+
+/**
+ * Build a detailed output description for hippo's --output field.
+ * Prefers the agent's own summary, falls back to file-based description.
  */
 const buildOutputDescription = (
   runState: RunState, 
@@ -154,23 +132,26 @@ const buildOutputDescription = (
   filesRead: string[],
   commandsRun: string[]
 ): string => {
-  const parts: string[] = []
-  
-  // Handle errors first
   if (runState.output?.type === 'error') {
-    parts.push(`Error: ${runState.output.message ?? 'Unknown error'}`)
-    return parts.join(' ')
+    return `Error: ${runState.output.message ?? 'Unknown error'}`
   }
   
-  // Describe what was done based on tool usage
+  // Try to extract the agent's own summary (most informative)
+  const agentSummary = extractAgentSummary(runState)
+  if (agentSummary) {
+    return agentSummary
+  }
+  
+  // Fall back to file-based description with relative paths
+  const parts: string[] = []
+  
   if (filesChanged.length > 0) {
-    const fileList = filesChanged.slice(0, 5).map(f => path.basename(f)).join(', ')
+    const fileList = filesChanged.slice(0, 5).join(', ')
     const moreFiles = filesChanged.length > 5 ? ` +${filesChanged.length - 5} more` : ''
     parts.push(`Modified: ${fileList}${moreFiles}.`)
   }
   
   if (filesRead.length > 0 && filesChanged.length === 0) {
-    // Only mention reads if nothing was changed (analysis/exploration run)
     parts.push(`Analyzed ${filesRead.length} files.`)
   }
   
@@ -178,7 +159,6 @@ const buildOutputDescription = (
     parts.push(`Ran ${commandsRun.length} command(s).`)
   }
   
-  // If no significant activity, fall back to basic description
   if (parts.length === 0) {
     const elapsedSeconds = Math.floor(elapsedMs / 1000)
     const messageCount = runState.sessionState?.mainAgentState?.messageHistory?.length ?? 0
@@ -189,13 +169,17 @@ const buildOutputDescription = (
 }
 
 /**
- * Determine outcome type for hippo based on run result
+ * Determine outcome type for hippo based on run result and what was done.
+ * Uses richer outcome types so hippo's dream phase can classify runs better.
  */
-const getOutcome = (runState: RunState): 'success' | 'failure' => {
+const getOutcome = (runState: RunState, filesChanged: string[], filesRead: string[]): 'success' | 'failure' | 'discovery' => {
   if (runState.output?.type === 'error') {
     return 'failure'
   }
-  // structuredOutput, lastMessage, allMessages all indicate success
+  // Read-only runs (analysis, review, exploration) are discoveries
+  if (filesChanged.length === 0 && filesRead.length > 0) {
+    return 'discovery'
+  }
   return 'success'
 }
 
@@ -221,15 +205,9 @@ const isHippoAvailable = (): boolean => {
 }
 
 /**
- * Get recent snapshot from hippo (last N runs)
+ * Run a hippo CLI command synchronously with timeout. Returns stdout or null on failure.
  */
-const getRecentSnapshot = (limit: number = 5): string => {
-  const args = [
-    'snapshot',
-    '--limit', String(limit),
-    '--short',
-  ]
-  
+const runHippoSync = (args: string[]): string | null => {
   try {
     const result = spawnSync(HIPPO_BINARY, args, {
       encoding: 'utf-8',
@@ -240,122 +218,81 @@ const getRecentSnapshot = (limit: number = 5): string => {
     
     if (result.signal || result.error || result.status !== 0) {
       logger.debug(
-        { signal: result.signal, error: result.error?.message, status: result.status },
-        'Hippo snapshot failed'
+        { signal: result.signal, error: result.error?.message, status: result.status, args: args.slice(0, 2) },
+        'Hippo command failed'
       )
-      return ''
+      return null
     }
     
-    return result.stdout?.trim() ?? ''
+    return result.stdout?.trim() ?? null
   } catch (error) {
     logger.debug(
       { error: error instanceof Error ? error.message : String(error) },
-      'Failed to get hippo snapshot'
+      'Failed to run hippo command'
     )
-    return ''
+    return null
   }
 }
 
-/**
- * Get semantic context from hippo for the query
- */
-const getSemanticContext = (query: string, maxTokens: number): string => {
-  const args = [
-    'context',
-    query,
-    '--max-tokens', String(maxTokens),
-  ]
-  
-  try {
-    const result = spawnSync(HIPPO_BINARY, args, {
-      encoding: 'utf-8',
-      timeout: HIPPO_SEARCH_TIMEOUT_MS,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: process.cwd(),
-    })
-    
-    if (result.signal || result.error || result.status !== 0) {
-      logger.debug(
-        { signal: result.signal, error: result.error?.message, status: result.status },
-        'Hippo semantic context failed'
-      )
-      return ''
-    }
-    
-    const context = result.stdout?.trim() ?? ''
-    
-    // Filter out empty results
-    if (!context || context.includes('Found 0 results')) {
-      return ''
-    }
-    
-    return context
-  } catch (error) {
-    logger.debug(
-      { error: error instanceof Error ? error.message : String(error) },
-      'Failed to get hippo semantic context'
-    )
-    return ''
-  }
+const parseResultCount = (output: string): number => {
+  // hippo context outputs "Retrieved X runs"
+  const contextMatch = output.match(/Retrieved (\d+) runs?/)
+  if (contextMatch) return parseInt(contextMatch[1], 10)
+  // hippo search outputs "Found X results"
+  const searchMatch = output.match(/Found (\d+) results?/)
+  if (searchMatch) return parseInt(searchMatch[1], 10)
+  return 0
 }
 
 /**
- * Search hippo for prior context related to the query.
- * Combines recent snapshot with semantic search for comprehensive context.
- * Returns empty string if hippo is disabled, not installed, or search fails.
+ * Generate lightweight hints about what Hippo knows relevant to this query.
+ * Instead of dumping thousands of tokens of context, returns brief pointers
+ * that tell the agent what's available and how to query for details.
+ * Returns empty string if nothing relevant is found or hippo is unavailable.
  */
-export const searchHippoContext = (query: string, maxTokens: number = 4000): string => {
-  if (!isHippoAvailable()) {
-    return ''
-  }
+export const getHippoHints = (query: string): string => {
+  if (!isHippoAvailable()) return ''
   
-  // Return early if query is empty
   const trimmedQuery = query.trim()
-  if (!trimmedQuery) {
-    return ''
-  }
+  if (!trimmedQuery) return ''
   
-  // Truncate query if too long for command line
-  const truncatedQuery = trimmedQuery.length > HIPPO_QUERY_MAX_LENGTH 
-    ? trimmedQuery.substring(0, HIPPO_QUERY_MAX_LENGTH) 
+  const truncatedQuery = trimmedQuery.length > HIPPO_QUERY_MAX_LENGTH
+    ? trimmedQuery.substring(0, HIPPO_QUERY_MAX_LENGTH)
     : trimmedQuery
   
-  logger.debug(
-    { query: truncatedQuery },
-    'Searching hippo for prior context'
-  )
+  logger.debug({ query: truncatedQuery }, 'Generating hippo hints')
   
-  // Get both recent snapshot and semantic context
-  const recentSnapshot = getRecentSnapshot(5)
-  const semanticTokenBudget = recentSnapshot ? Math.floor(maxTokens * 0.7) : maxTokens
-  const semanticContext = getSemanticContext(truncatedQuery, semanticTokenBudget)
+  const hints: string[] = []
   
-  // Combine results with section headers for clarity
-  const parts: string[] = []
-  
-  if (recentSnapshot) {
-    parts.push(`### Recent Activity:\n${recentSnapshot}`)
-  }
-  
-  if (semanticContext) {
-    // Only add semantic context if it's different from recent snapshot
-    if (!recentSnapshot || !recentSnapshot.includes(semanticContext.substring(0, 100))) {
-      parts.push(`### Related Context:\n${semanticContext}`)
+  // Quick relevance probe — use hippo context (hybrid keyword+vector+graph search)
+  const contextOutput = runHippoSync(['context', truncatedQuery, '--max-tokens', '100'])
+  if (contextOutput) {
+    const resultCount = parseResultCount(contextOutput)
+    if (resultCount > 0) {
+      const shortQuery = truncatedQuery.substring(0, 60).replace(/'/g, '')
+      hints.push(`- 🧠 ${resultCount} related memories found. Run: \`${HIPPO_HINT_CMD} recall '${shortQuery}' --max-tokens 2000\``)
     }
   }
   
-  if (parts.length === 0) {
-    return ''
+  // Skill matching — use hippo's semantic skill search
+  const skillsOutput = runHippoSync(['search-skills', truncatedQuery])
+  if (skillsOutput) {
+    hints.push(`- 🔧 ${skillsOutput}`)
   }
   
-  const combined = parts.join('\n\n')
+  // Only inject hints when something relevant was found
+  if (hints.length === 0) return ''
   
-  logger.debug(
-    { contextLength: combined.length, hasSnapshot: !!recentSnapshot, hasSemantic: !!semanticContext },
-    'Retrieved combined context from hippo'
-  )
+  hints.push('')
+  hints.push('General memory commands (via terminal):')
+  hints.push(`- \`${HIPPO_HINT_CMD} search '<query>' --limit 5\` — search all memories`)
+  hints.push(`- \`${HIPPO_HINT_CMD} recall '<topic>' --max-tokens 2000\` — full recall across memory tiers`)
+  hints.push(`- \`${HIPPO_HINT_CMD} skills\` — learned procedures from past work`)
+  hints.push(`- \`${HIPPO_HINT_CMD} concepts\` — knowledge graph of all topics`)
   
-  return combined
+  const result = hints.join('\n')
+  logger.debug({ hintLength: result.length }, 'Generated hippo hints')
+  return result
 }
 
 export type StoreRunToHippoParams = {
@@ -382,8 +319,7 @@ export const storeRunToHippo = (params: StoreRunToHippoParams): void => {
   const sessionId = generateHippoSessionId(agentMode)
   const inputSummary = buildInputSummary(prompt, agentMode)
   const outputDescription = buildOutputDescription(runState, elapsedMs, filesChanged, filesRead, commandsRun)
-  const concepts = extractConcepts(runState, filesChanged, filesRead)
-  const outcome = getOutcome(runState)
+  const outcome = getOutcome(runState, filesChanged, filesRead)
   
   const args = [
     'store',
@@ -391,7 +327,6 @@ export const storeRunToHippo = (params: StoreRunToHippoParams): void => {
     '--session', sessionId,
     '--input', inputSummary,
     '--output', outputDescription,
-    '--concepts', concepts.join(','),
     '--outcome', outcome,
   ]
   
@@ -447,15 +382,12 @@ export const storeErrorToHippo = (params: StoreErrorToHippoParams): void => {
     const elapsedSeconds = Math.floor(elapsedMs / 1000)
     const outputDescription = `Error after ${elapsedSeconds}s: ${errorMessage.substring(0, 200)}`
     
-    const concepts = ['codebuff', 'error', agentMode.toLowerCase()]
-    
     const args = [
       'store',
       '--agent', 'codebuff',
       '--session', sessionId,
       '--input', inputSummary,
       '--output', outputDescription,
-      '--concepts', concepts.join(','),
       '--outcome', 'failure',
     ]
     

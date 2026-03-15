@@ -7,7 +7,7 @@ import { getCodebuffClient } from '../utils/codebuff-client'
 import { AGENT_MODE_TO_ID, AGENT_MODE_TO_COST_MODE } from '../utils/constants'
 import { createEventHandlerState } from '../utils/create-event-handler-state'
 import { createRunConfig } from '../utils/create-run-config'
-import { searchHippoContext } from '../utils/hippo-hooks'
+import { getHippoHints } from '../utils/hippo-hooks'
 import { loadAgentDefinitions } from '../utils/local-agent-registry'
 import { logger } from '../utils/logger'
 import {
@@ -423,10 +423,10 @@ export const useSendMessage = ({
 
       // Execute SDK run with streaming handlers
       try {
-        // Search hippo for prior context (Rule 1: Search Hippo FIRST)
-        const hippoContext = searchHippoContext(effectivePrompt)
-        const promptWithHippoContext = hippoContext
-          ? `## Prior work from Hippo memory:\n${hippoContext}\n\n## Current request:\n${effectivePrompt}`
+        // Generate lightweight hippo hints (relevant memories + skills)
+        const hippoHints = getHippoHints(effectivePrompt)
+        const promptWithHippoContext = hippoHints
+          ? `## Hippo Memory Available\n${hippoHints}\n\n${effectivePrompt}`
           : effectivePrompt
 
         const eventHandlerState = createEventHandlerState({
