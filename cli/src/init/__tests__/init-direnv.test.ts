@@ -11,7 +11,7 @@ import {
   initializeDirenv,
 } from '../init-direnv'
 
-mock.module('../utils/logger', () => ({
+mock.module('../../utils/logger', () => ({
   logger: {
     debug: () => {},
     info: () => {},

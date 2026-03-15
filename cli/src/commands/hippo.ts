@@ -1,15 +1,11 @@
 import fs from 'fs'
-import os from 'os'
-import path from 'path'
 
+import { HIPPO_BINARY } from '../utils/hippo-hooks'
 import { logger } from '../utils/logger'
 import { getSystemMessage } from '../utils/message-history'
 import { saveSettings, loadSettings } from '../utils/settings'
 
 import type { ChatMessage } from '../types/chat'
-
-// Path to hippo binary - matches hippo-hooks.ts
-const HIPPO_BINARY = process.env.HIPPO_PATH ?? path.join(os.homedir(), 'Programming/hippo/build/hippo')
 
 export const handleHippoEnable = (): {
   postUserMessage: (messages: ChatMessage[]) => ChatMessage[]

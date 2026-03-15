@@ -10,7 +10,7 @@ import type { RunState } from '@codebuff/sdk'
 import type { AgentMode } from './constants'
 
 // Path to hippo binary - can be overridden via HIPPO_PATH env var
-const HIPPO_BINARY = process.env.HIPPO_PATH ?? path.join(os.homedir(), 'Programming/hippo/build/hippo')
+export const HIPPO_BINARY = process.env.HIPPO_PATH ?? path.join(os.homedir(), 'Programming/hippo/build/hippo')
 // Tilde path for hints that the agent can run via terminal
 const HIPPO_HINT_CMD = process.env.HIPPO_PATH ?? '~/Programming/hippo/build/hippo'
 
