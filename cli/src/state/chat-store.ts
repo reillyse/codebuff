@@ -4,6 +4,7 @@ import { immer } from 'zustand/middleware/immer'
 
 import { AGENT_MODES } from '../utils/constants'
 import { clamp } from '../utils/math'
+import { resetHippoSessionState } from '../utils/hippo-hooks'
 import { loadModePreference, loadSettings, saveModePreference } from '../utils/settings'
 
 import type { ChatMessage, ContentBlock } from '../types/chat'
@@ -341,6 +342,8 @@ export const useChatStore = create<ChatStore>()(
     setHippoEnabled: (enabled) =>
       set((state) => {
         state.hippoEnabled = enabled
+        state.hippoRecalls = 0
+        state.hippoConnectionOk = null
       }),
 
     incrementHippoRecalls: () =>
@@ -507,7 +510,8 @@ export const useChatStore = create<ChatStore>()(
         }
       }),
 
-    reset: () =>
+    reset: () => {
+      resetHippoSessionState()
       set((state) => {
         state.chatSessionId = generateSessionId()
         state.messages = initialState.messages.slice()
@@ -541,6 +545,7 @@ export const useChatStore = create<ChatStore>()(
         state.pendingBashMessages = []
         state.suggestedFollowups = null
         state.clickedFollowupsMap = new Map<string, Set<number>>()
-      }),
+      })
+    },
   })),
 )
