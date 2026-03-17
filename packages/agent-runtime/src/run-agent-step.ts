@@ -1101,7 +1101,6 @@ export async function loopAgentSteps(
         type: 'error',
         message: 'Agent run error: ' + errorMessage,
         ...(statusCode !== undefined && { statusCode }),
-        // ...(params.prompt ? { details: `Error occurred during response to prompt: "${params.prompt}"` } : {}),
       },
     }
   }
