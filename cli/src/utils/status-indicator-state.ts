@@ -8,6 +8,7 @@ export type StatusIndicatorState =
   | { kind: 'retrying' }
   | { kind: 'waiting' }
   | { kind: 'streaming' }
+  | { kind: 'searching-memory' }
   | { kind: 'reconnected' }
   | { kind: 'paused' }
 
@@ -30,6 +31,11 @@ export type StatusIndicatorStateArgs = {
    * When true, hides the "working..." and "thinking..." indicators.
    */
   isAskUserActive?: boolean
+  /**
+   * Whether hippo memory search is currently in progress.
+   * When true, shows "searching memory..." instead of "thinking...".
+   */
+  isSearchingMemory?: boolean
 }
 
 /**
@@ -55,6 +61,7 @@ export const getStatusIndicatorState = ({
   isRetrying = false,
   showReconnectionMessage = false,
   isAskUserActive = false,
+  isSearchingMemory = false,
 }: StatusIndicatorStateArgs): StatusIndicatorState => {
   if (nextCtrlCWillExit) {
     return { kind: 'ctrlC' }
@@ -86,6 +93,10 @@ export const getStatusIndicatorState = ({
   // Show paused state when ask_user is active (timer stays visible but frozen)
   if (isAskUserActive) {
     return { kind: 'paused' }
+  }
+
+  if (isSearchingMemory) {
+    return { kind: 'searching-memory' }
   }
 
   if (streamStatus === 'waiting') {

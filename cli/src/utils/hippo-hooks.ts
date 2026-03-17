@@ -11,11 +11,9 @@ import type { AgentMode } from './constants'
 
 // Path to hippo binary - can be overridden via HIPPO_PATH env var
 export const HIPPO_BINARY = process.env.HIPPO_PATH ?? path.join(os.homedir(), 'Programming/hippo/build/hippo')
-// Tilde path for hints that the agent can run via terminal
-const HIPPO_HINT_CMD = process.env.HIPPO_PATH ?? '~/Programming/hippo/build/hippo'
-
 // Constants for hippo search
 const HIPPO_SEARCH_TIMEOUT_MS = 5000 // 5 second timeout for search
+const HIPPO_CONTEXT_SEARCH_TIMEOUT_MS = 15000 // 15 second timeout for hippo context-search
 const HIPPO_QUERY_MAX_LENGTH = 500
 
 // Tool names that indicate file changes
@@ -82,43 +80,98 @@ const extractFilesFromHistory = (runState: RunState): { filesChanged: string[], 
  * Build a summary of the run for hippo's --input field
  */
 const buildInputSummary = (prompt: string, agentMode: AgentMode): string => {
-  const truncatedPrompt = prompt.length > 100 
-    ? prompt.substring(0, 100) + '...' 
+  const truncatedPrompt = prompt.length > 500 
+    ? prompt.substring(0, 500) + '...' 
     : prompt
   return `[${agentMode}] ${truncatedPrompt}`
 }
 
 /**
- * Extract the agent's own summary from the last assistant text block.
- * This is far more informative than file lists for future recall.
+ * Build a rich run summary by extracting the agent's text, todo plan state,
+ * and suggested followups from the full message history.
  */
-const extractAgentSummary = (runState: RunState): string | null => {
+const buildRichRunSummary = (runState: RunState): string | null => {
   const messageHistory = runState.sessionState?.mainAgentState?.messageHistory ?? []
-  
-  for (let i = messageHistory.length - 1; i >= 0; i--) {
-    const message = messageHistory[i]
+
+  let lastSummaryText: string | null = null
+  let latestTodosDescription: string | null = null
+  let followupsDescription: string | null = null
+
+  for (const message of messageHistory) {
     if (message.role !== 'assistant') continue
     if (!message.content || !Array.isArray(message.content)) continue
-    
-    let lastText = ''
+
+    let messageLastText = ''
+
     for (const block of message.content) {
       if (block.type === 'text') {
         const rawText = ('text' in block ? String(block.text) : '').trim()
-        // Skip <think> blocks — internal reasoning, not useful for recall
         if (rawText && !rawText.startsWith('<think>')) {
-          lastText = rawText
+          messageLastText = rawText
+        }
+      }
+
+      if (block.type === 'tool-call') {
+        const input = block.input ?? {}
+
+        if (block.toolName === 'write_todos' && Array.isArray(input.todos)) {
+          const todos = (input.todos as unknown[]).filter(
+            (t): t is Record<string, unknown> => typeof t === 'object' && t !== null,
+          )
+          if (todos.length > 0) {
+            const completed = todos.filter((t) => t.completed === true).length
+            const incomplete = todos.filter((t) => t.completed !== true)
+            if (incomplete.length === 0) {
+              latestTodosDescription = `Plan: ${completed}/${todos.length} complete (all done!)`
+            } else {
+              const remaining = incomplete
+                .map((t) => (typeof t.task === 'string' ? t.task : ''))
+                .filter(Boolean)
+                .slice(0, 5)
+                .join(', ')
+              latestTodosDescription = `Plan: ${completed}/${todos.length} complete. Remaining: ${remaining}`
+            }
+          }
+        }
+
+        if (block.toolName === 'suggest_followups' && Array.isArray(input.followups)) {
+          const followups = (input.followups as unknown[]).filter(
+            (f): f is Record<string, unknown> => typeof f === 'object' && f !== null,
+          )
+          const labels = followups
+            .map((f) => (typeof f.label === 'string' ? f.label : typeof f.prompt === 'string' ? f.prompt : ''))
+            .filter(Boolean)
+            .slice(0, 5)
+          if (labels.length > 0) {
+            followupsDescription = `Next steps: ${labels.join(', ')}`
+          }
         }
       }
     }
-    
-    if (lastText) {
-      // Sanitize for CLI argument safety: collapse newlines, limit length
-      const sanitized = lastText.replace(/\n+/g, ' ').replace(/\s+/g, ' ')
-      return sanitized.length > 300 ? sanitized.substring(0, 300) + '...' : sanitized
+
+    if (messageLastText) {
+      lastSummaryText = messageLastText
     }
   }
-  
-  return null
+
+  const parts: string[] = []
+
+  if (lastSummaryText) {
+    parts.push(lastSummaryText.length > 500 ? lastSummaryText.substring(0, 500) + '...' : lastSummaryText)
+  }
+
+  if (latestTodosDescription) {
+    parts.push(latestTodosDescription)
+  }
+
+  if (followupsDescription) {
+    parts.push(followupsDescription)
+  }
+
+  if (parts.length === 0) return null
+
+  const combined = parts.join(' | ').replace(/\n+/g, ' ').replace(/\s+/g, ' ')
+  return combined.length > 1200 ? combined.substring(0, 1200) + '...' : combined
 }
 
 /**
@@ -136,10 +189,10 @@ const buildOutputDescription = (
     return `Error: ${runState.output.message ?? 'Unknown error'}`
   }
   
-  // Try to extract the agent's own summary (most informative)
-  const agentSummary = extractAgentSummary(runState)
-  if (agentSummary) {
-    return agentSummary
+  // Try to build a rich summary from text + tool calls (most informative)
+  const richSummary = buildRichRunSummary(runState)
+  if (richSummary) {
+    return richSummary
   }
   
   // Fall back to file-based description with relative paths
@@ -207,11 +260,11 @@ const isHippoAvailable = (): boolean => {
 /**
  * Run a hippo CLI command synchronously with timeout. Returns stdout or null on failure.
  */
-const runHippoSync = (args: string[]): string | null => {
+const runHippoSync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): string | null => {
   try {
-    const result = spawnSync(HIPPO_BINARY, args, {
+    const result = spawnSync(HIPPO_BINARY, [...args, '--quiet'], {
       encoding: 'utf-8',
-      timeout: HIPPO_SEARCH_TIMEOUT_MS,
+      timeout: timeoutMs,
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: process.cwd(),
     })
@@ -234,65 +287,163 @@ const runHippoSync = (args: string[]): string | null => {
   }
 }
 
-const parseResultCount = (output: string): number => {
-  // hippo context outputs "Retrieved X runs"
-  const contextMatch = output.match(/Retrieved (\d+) runs?/)
-  if (contextMatch) return parseInt(contextMatch[1], 10)
-  // hippo search outputs "Found X results"
-  const searchMatch = output.match(/Found (\d+) results?/)
-  if (searchMatch) return parseInt(searchMatch[1], 10)
-  return 0
+/**
+ * Run a hippo CLI command asynchronously with timeout. Returns stdout or null on failure.
+ * Unlike runHippoSync, this doesn't block the event loop — the UI stays responsive.
+ */
+const runHippoAsync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): Promise<string | null> => {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(HIPPO_BINARY, [...args, '--quiet'], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        cwd: process.cwd(),
+      })
+
+      const chunks: Buffer[] = []
+      let settled = false
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true
+          child.kill('SIGTERM')
+          logger.debug({ args: args.slice(0, 2) }, 'Hippo command timed out')
+          resolve(null)
+        }
+      }, timeoutMs)
+
+      child.stdout?.on('data', (chunk: Buffer) => {
+        chunks.push(chunk)
+      })
+
+      child.on('close', (code) => {
+        clearTimeout(timer)
+        if (settled) return
+        settled = true
+        if (code !== 0) {
+          logger.debug({ code, args: args.slice(0, 2) }, 'Hippo command failed')
+          resolve(null)
+          return
+        }
+        resolve(Buffer.concat(chunks).toString('utf-8').trim() || null)
+      })
+
+      child.on('error', (error) => {
+        clearTimeout(timer)
+        if (settled) return
+        settled = true
+        logger.debug({ error: error.message }, 'Failed to run hippo command')
+        resolve(null)
+      })
+    } catch (error) {
+      logger.debug(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Failed to spawn hippo command',
+      )
+      resolve(null)
+    }
+  })
 }
 
 /**
- * Generate lightweight hints about what Hippo knows relevant to this query.
- * Instead of dumping thousands of tokens of context, returns brief pointers
- * that tell the agent what's available and how to query for details.
- * Returns empty string if nothing relevant is found or hippo is unavailable.
+ * Build a plain-text conversation context string for the hippo context-search --context flag.
+ * Extracts recent user prompts and files touched from the previous run state.
  */
-export const getHippoHints = (query: string): string => {
-  if (!isHippoAvailable()) return ''
-  
-  const trimmedQuery = query.trim()
-  if (!trimmedQuery) return ''
-  
-  const truncatedQuery = trimmedQuery.length > HIPPO_QUERY_MAX_LENGTH
-    ? trimmedQuery.substring(0, HIPPO_QUERY_MAX_LENGTH)
-    : trimmedQuery
-  
-  logger.debug({ query: truncatedQuery }, 'Generating hippo hints')
-  
-  const hints: string[] = []
-  
-  // Quick relevance probe — use hippo context (hybrid keyword+vector+graph search)
-  const contextOutput = runHippoSync(['context', truncatedQuery, '--max-tokens', '100'])
-  if (contextOutput) {
-    const resultCount = parseResultCount(contextOutput)
-    if (resultCount > 0) {
-      const shortQuery = truncatedQuery.substring(0, 60).replace(/'/g, '')
-      hints.push(`- 🧠 ${resultCount} related memories found. Run: \`${HIPPO_HINT_CMD} recall '${shortQuery}' --max-tokens 2000\``)
+const buildConversationContext = (previousRunState: RunState | null): string | null => {
+  if (!previousRunState) return null
+
+  const messageHistory = previousRunState.sessionState?.mainAgentState?.messageHistory ?? []
+
+  const recentPrompts: string[] = []
+  for (let i = messageHistory.length - 1; i >= 0 && recentPrompts.length < 3; i--) {
+    const message = messageHistory[i]
+    if (message.role !== 'user') continue
+    if (!message.content || !Array.isArray(message.content)) continue
+
+    for (const block of message.content) {
+      if (block.type === 'text' && 'text' in block) {
+        const text = String(block.text).trim()
+        if (text) {
+          recentPrompts.push(text.length > 200 ? text.substring(0, 200) + '...' : text)
+          break
+        }
+      }
     }
   }
-  
-  // Skill matching — use hippo's semantic skill search
-  const skillsOutput = runHippoSync(['search-skills', truncatedQuery])
-  if (skillsOutput) {
-    hints.push(`- 🔧 ${skillsOutput}`)
+
+  const { filesChanged, filesRead } = extractFilesFromHistory(previousRunState)
+
+  if (recentPrompts.length === 0 && filesChanged.length === 0 && filesRead.length === 0) {
+    return null
   }
-  
-  // Only inject hints when something relevant was found
-  if (hints.length === 0) return ''
-  
-  hints.push('')
-  hints.push('General memory commands (via terminal):')
-  hints.push(`- \`${HIPPO_HINT_CMD} search '<query>' --limit 5\` — search all memories`)
-  hints.push(`- \`${HIPPO_HINT_CMD} recall '<topic>' --max-tokens 2000\` — full recall across memory tiers`)
-  hints.push(`- \`${HIPPO_HINT_CMD} skills\` — learned procedures from past work`)
-  hints.push(`- \`${HIPPO_HINT_CMD} concepts\` — knowledge graph of all topics`)
-  
-  const result = hints.join('\n')
-  logger.debug({ hintLength: result.length }, 'Generated hippo hints')
-  return result
+
+  const parts: string[] = []
+  if (recentPrompts.length > 0) {
+    parts.push(`Recently working on: ${recentPrompts.join('; ')}`)
+  }
+  if (filesChanged.length > 0) {
+    parts.push(`Files modified: ${filesChanged.slice(0, 8).join(', ')}`)
+  }
+  if (filesRead.length > 0) {
+    parts.push(`Files read: ${filesRead.slice(0, 8).join(', ')}`)
+  }
+  return parts.join('. ') + '.'
+}
+
+/**
+ * Fetch relevant context from Hippo memory by calling `hippo context-search` locally.
+ * This runs entirely on the local machine with no server dependency.
+ *
+ * Flow:
+ * 1. Build conversation context JSON from previous run state
+ * 2. Call `hippo context-search '<query>' --context '<text>'`
+ * 3. Return the output (or empty string if nothing relevant)
+ */
+export const getHippoContext = async (
+  query: string,
+  previousRunState: RunState | null,
+): Promise<string> => {
+  try {
+    if (!isHippoAvailable()) return ''
+
+    const trimmedQuery = query.trim()
+    if (!trimmedQuery) return ''
+
+    const truncatedQuery = trimmedQuery.length > HIPPO_QUERY_MAX_LENGTH
+      ? trimmedQuery.substring(0, HIPPO_QUERY_MAX_LENGTH)
+      : trimmedQuery
+
+    logger.debug({ query: truncatedQuery }, 'Fetching hippo context via context-search')
+
+    const args = ['context-search', truncatedQuery]
+
+    const contextString = buildConversationContext(previousRunState)
+    if (contextString) {
+      args.push('--context', contextString)
+    }
+
+    const result = await runHippoAsync(args, HIPPO_CONTEXT_SEARCH_TIMEOUT_MS)
+    if (!result) return ''
+
+    const trimmedResult = result.trim()
+
+    if (!trimmedResult || trimmedResult.toUpperCase() === 'NONE' || trimmedResult.length < 20) {
+      logger.debug({}, 'Hippo context-search found nothing relevant')
+      return ''
+    }
+
+    logger.debug({ contextLength: trimmedResult.length }, 'Hippo context extracted via context-search')
+    return trimmedResult
+  } catch (error) {
+    try {
+      logger.debug(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Hippo context-search failed',
+      )
+    } catch {
+      // Safety net: logger itself can throw (e.g. analytics not initialized)
+    }
+    return ''
+  }
 }
 
 export type StoreRunToHippoParams = {

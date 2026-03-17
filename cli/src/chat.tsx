@@ -151,6 +151,7 @@ export const Chat = ({
     setAgentMode,
     toggleAgentMode,
     isRetrying,
+    isSearchingMemory,
     pendingBashMessages,
     refs: {
       activeAgentStreamsRef,
@@ -1289,6 +1290,7 @@ export const Chat = ({
     showReconnectionMessage,
     isRetrying,
     isAskUserActive: askUserState !== null,
+    isSearchingMemory,
   })
   const hasStatusIndicatorContent = statusIndicatorState.kind !== 'idle'
 

@@ -71,6 +71,7 @@ export type ChatStoreState = {
   activeTopBanner: TopBannerType
   inputMode: InputMode
   isRetrying: boolean
+  isSearchingMemory: boolean
   askUserState: AskUserState
   pendingAttachments: PendingAttachment[]
   pendingBashMessages: PendingBashMessage[]
@@ -139,6 +140,7 @@ type ChatStoreActions = {
   closeTopBanner: () => void
   setInputMode: (mode: InputMode) => void
   setIsRetrying: (retrying: boolean) => void
+  setIsSearchingMemory: (searching: boolean) => void
   setAskUserState: (state: AskUserState) => void
   updateAskUserAnswer: (questionIndex: number, optionIndex: number) => void
   updateAskUserOtherText: (questionIndex: number, text: string) => void
@@ -190,6 +192,7 @@ const initialState: ChatStoreState = {
   activeTopBanner: null,
   inputMode: 'default' as InputMode,
   isRetrying: false,
+  isSearchingMemory: false,
   askUserState: null,
   pendingAttachments: [],
   pendingBashMessages: [],
@@ -319,6 +322,11 @@ export const useChatStore = create<ChatStore>()(
     setIsRetrying: (retrying) =>
       set((state) => {
         state.isRetrying = retrying
+      }),
+
+    setIsSearchingMemory: (searching) =>
+      set((state) => {
+        state.isSearchingMemory = searching
       }),
 
     setAskUserState: (askUserState) =>
@@ -500,6 +508,7 @@ export const useChatStore = create<ChatStore>()(
         state.activeTopBanner = initialState.activeTopBanner
         state.inputMode = initialState.inputMode
         state.isRetrying = initialState.isRetrying
+        state.isSearchingMemory = initialState.isSearchingMemory
         state.askUserState = initialState.askUserState
         state.pendingAttachments = []
         state.pendingBashMessages = []

@@ -73,6 +73,9 @@ export interface UseChatStateReturn {
   // Retry state
   isRetrying: boolean
 
+  // Memory search state
+  isSearchingMemory: boolean
+
   // Pending bash messages
   pendingBashMessages: PendingBashMessage[]
 
@@ -110,6 +113,7 @@ export function useChatState(): UseChatStateReturn {
     setAgentMode,
     toggleAgentMode,
     isRetrying,
+    isSearchingMemory,
   } = useChatStore(
     useShallow((store) => ({
       inputValue: store.inputValue,
@@ -133,6 +137,7 @@ export function useChatState(): UseChatStateReturn {
       setAgentMode: store.setAgentMode,
       toggleAgentMode: store.toggleAgentMode,
       isRetrying: store.isRetrying,
+      isSearchingMemory: store.isSearchingMemory,
     })),
   )
 
@@ -208,6 +213,9 @@ export function useChatState(): UseChatStateReturn {
 
     // Retry state
     isRetrying,
+
+    // Memory search state
+    isSearchingMemory,
 
     // Pending bash messages
     pendingBashMessages,

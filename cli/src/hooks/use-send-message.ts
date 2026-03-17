@@ -7,7 +7,7 @@ import { getCodebuffClient } from '../utils/codebuff-client'
 import { AGENT_MODE_TO_ID, AGENT_MODE_TO_COST_MODE } from '../utils/constants'
 import { createEventHandlerState } from '../utils/create-event-handler-state'
 import { createRunConfig } from '../utils/create-run-config'
-import { getHippoHints } from '../utils/hippo-hooks'
+import { getHippoContext } from '../utils/hippo-hooks'
 import { loadAgentDefinitions } from '../utils/local-agent-registry'
 import { logger } from '../utils/logger'
 import {
@@ -133,6 +133,7 @@ export const useSendMessage = ({
     addSessionCredits,
     setRunState,
     setIsRetrying,
+    setIsSearchingMemory,
   } = useChatStore.getState()
   const previousRunStateRef = useRef<RunState | null>(null)
   // Memoize stream controller to maintain referential stability across renders
@@ -352,6 +353,32 @@ export const useSendMessage = ({
       setInputFocused(true)
       inputRef.current?.focus()
 
+      // Build effective prompt
+      const agentDefinitions = loadAgentDefinitions()
+      const resolvedAgent = resolveAgent(agentMode, agentId, agentDefinitions)
+
+      const promptWithBashContext = bashContextForPrompt
+        ? bashContextForPrompt + finalContent
+        : finalContent
+      const effectivePrompt = buildPromptWithContext(
+        promptWithBashContext,
+        messageContent,
+      )
+
+      // Extract relevant context from hippo memories (async local CLI call, no server needed)
+      setStreamStatus('waiting')
+      setIsSearchingMemory(true)
+      let hippoContext: string
+      try {
+        hippoContext = await getHippoContext(effectivePrompt, previousRunStateRef.current)
+      } finally {
+        setIsSearchingMemory(false)
+      }
+
+      const promptWithHippoContext = hippoContext
+        ? `## Relevant Context from Past Sessions\n${hippoContext}\n\n${effectivePrompt}`
+        : effectivePrompt
+
       // Get SDK client
       const client = await getCodebuffClient()
 
@@ -409,25 +436,8 @@ export const useSendMessage = ({
       // before any async work, so the router can correctly detect busy state.
       let actualCredits: number | undefined
 
-      // Build effective prompt before try block so it's accessible in catch for error logging
-      const agentDefinitions = loadAgentDefinitions()
-      const resolvedAgent = resolveAgent(agentMode, agentId, agentDefinitions)
-
-      const promptWithBashContext = bashContextForPrompt
-        ? bashContextForPrompt + finalContent
-        : finalContent
-      const effectivePrompt = buildPromptWithContext(
-        promptWithBashContext,
-        messageContent,
-      )
-
       // Execute SDK run with streaming handlers
       try {
-        // Generate lightweight hippo hints (relevant memories + skills)
-        const hippoHints = getHippoHints(effectivePrompt)
-        const promptWithHippoContext = hippoHints
-          ? `## Hippo Memory Available\n${hippoHints}\n\n${effectivePrompt}`
-          : effectivePrompt
 
         const eventHandlerState = createEventHandlerState({
           streamRefs,

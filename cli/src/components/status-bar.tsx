@@ -31,6 +31,7 @@ export const StatusBar = ({
   const shouldShowTimer =
     statusIndicatorState?.kind === 'waiting' ||
     statusIndicatorState?.kind === 'streaming' ||
+    statusIndicatorState?.kind === 'searching-memory' ||
     statusIndicatorState?.kind === 'paused'
 
   useEffect(() => {
@@ -87,6 +88,15 @@ export const StatusBar = ({
       
       case 'connecting':
         return <ShimmerText text="connecting..." />
+      
+      case 'searching-memory':
+        return (
+          <ShimmerText
+            text="searching memory..."
+            interval={SHIMMER_INTERVAL_MS}
+            primaryColor={theme.secondary}
+          />
+        )
       
       case 'waiting':
         return (
