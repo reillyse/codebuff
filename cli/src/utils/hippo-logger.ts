@@ -10,8 +10,17 @@ const TRUNCATE_TO = 10 * 1024 * 1024 // Keep last 10MB after truncation
 const INTERACTIONS_LOG = 'hippo-interactions.log'
 const PROMPTS_LOG = 'hippo-prompts.log'
 
+let cachedLoggingEnabled: boolean | null = null
+
 export const isHippoLoggingEnabled = (): boolean => {
-  return loadSettings().hippoLoggingEnabled === true
+  if (cachedLoggingEnabled === null) {
+    cachedLoggingEnabled = loadSettings().hippoLoggingEnabled === true
+  }
+  return cachedLoggingEnabled
+}
+
+export const resetHippoLoggingCache = (): void => {
+  cachedLoggingEnabled = null
 }
 
 const getLogPath = (filename: string): string | null => {

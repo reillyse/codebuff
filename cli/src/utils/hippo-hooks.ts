@@ -20,6 +20,13 @@ const HIPPO_QUERY_MAX_LENGTH = 500
 // Track last stored pruning summary to avoid duplicate hippo stores
 let lastStoredSummaryHash: string | null = null
 
+/**
+ * Reset module-level hippo state. Call when starting a new chat session.
+ */
+export const resetHippoSessionState = (): void => {
+  lastStoredSummaryHash = null
+}
+
 // Tool names that indicate file changes
 const FILE_WRITE_TOOLS = ['write_file', 'str_replace', 'propose_write_file', 'propose_str_replace']
 const FILE_READ_TOOLS = ['read_files', 'read_subtree']
@@ -483,8 +490,6 @@ export const getHippoContext = async (
 
 export type HippoSessionStats = {
   runs: number
-  filesChanged: number
-  filesRead: number
 }
 
 /**
@@ -504,26 +509,8 @@ export const getHippoSessionStats = async (sessionId: string): Promise<HippoSess
     const runs: unknown[] = JSON.parse(result)
     if (!Array.isArray(runs)) return null
 
-    const changedSet = new Set<string>()
-    const readSet = new Set<string>()
-
-    for (const run of runs) {
-      if (typeof run !== 'object' || run === null) continue
-      const meta = (run as Record<string, unknown>).metadata
-      if (typeof meta !== 'object' || meta === null) continue
-      const md = meta as Record<string, unknown>
-      if (Array.isArray(md.files_changed)) {
-        for (const f of md.files_changed) if (typeof f === 'string') changedSet.add(f)
-      }
-      if (Array.isArray(md.files_read)) {
-        for (const f of md.files_read) if (typeof f === 'string') readSet.add(f)
-      }
-    }
-
     return {
       runs: runs.length,
-      filesChanged: changedSet.size,
-      filesRead: readSet.size,
     }
   } catch {
     return null
@@ -609,6 +596,14 @@ export const storePruningSummaryToHippo = (params: {
     const { runState, sessionId } = params
     const messageHistory = runState.sessionState?.mainAgentState?.messageHistory ?? []
 
+    // Quick check: skip full scan if no message contains a conversation summary
+    const hasSummary = messageHistory.some((m) =>
+      m.role === 'user' &&
+      Array.isArray(m.content) &&
+      m.content.some((b) => b.type === 'text' && typeof b.text === 'string' && (b.text as string).includes('<conversation_summary>')),
+    )
+    if (!hasSummary) return
+
     for (const message of messageHistory) {
       if (message.role !== 'user' || !Array.isArray(message.content)) continue
 
@@ -657,6 +652,59 @@ export const storePruningSummaryToHippo = (params: {
 
     logger.error({ sessionId: params.sessionId }, 'Failed to store pruning summary to hippo')
   }
+}
+
+/**
+ * Check if an error is worth storing to hippo memory.
+ * Skip transient/expected errors; keep actionable ones.
+ */
+const isErrorWorthStoring = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error)
+  const lower = message.toLowerCase()
+
+  // Skip: out of credits / payment errors (user already knows)
+  if (lower.includes('out of credits') || lower.includes('payment') || lower.includes('insufficient credits') || lower.includes('insufficient funds')) return false
+
+  // Skip: transient network errors
+  if (lower.includes('econnrefused') || lower.includes('econnreset') || lower.includes('etimedout')) return false
+  if (lower.includes('fetch failed') || lower.includes('network error')) return false
+  if (lower.includes('timeout') && !lower.includes('context')) return false
+
+  return true
+}
+
+/**
+ * Store a meaningful error to hippo memory.
+ * Filters out transient/expected errors (network timeouts, out-of-credits).
+ * Keeps actionable errors (context length exceeded, server 500s).
+ */
+export const storeErrorToHippo = (params: {
+  error: unknown
+  sessionId: string
+}): void => {
+  if (!isHippoAvailable()) return
+
+  const { error, sessionId } = params
+  if (!isErrorWorthStoring(error)) return
+
+  const errorMessage = error instanceof Error ? error.message : String(error)
+  const truncated = errorMessage.length > 500 ? errorMessage.substring(0, 500) + '...' : errorMessage
+
+  logger.debug({ sessionId, errorLength: errorMessage.length }, 'Storing error to hippo memory')
+
+  logHippoPrompt('store', `Error: ${truncated}`, {
+    'Session': sessionId,
+    'Type': 'error',
+  })
+
+  spawnHippoStore([
+    'store',
+    '--agent', 'codebuff',
+    '--session', sessionId,
+    '--input', 'Error during run',
+    '--output', `Error: ${truncated}`,
+    '--outcome', 'failure',
+  ])
 }
 
 /**

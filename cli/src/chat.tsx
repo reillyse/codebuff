@@ -17,9 +17,6 @@ import { routeUserPrompt, addBashMessageToHistory } from './commands/router'
 import { AdBanner } from './components/ad-banner'
 import { BottomStatusLine } from './components/bottom-status-line'
 import { ChatInputBar } from './components/chat-input-bar'
-import { HIPPO_BINARY, getHippoSessionStats } from './utils/hippo-hooks'
-
-import type { HippoSessionStats } from './utils/hippo-hooks'
 import { LoadPreviousButton } from './components/load-previous-button'
 import { ReviewScreen } from './components/review-screen'
 import { MessageWithAgents } from './components/message-with-agents'
@@ -62,6 +59,7 @@ import { trackEvent } from './utils/analytics'
 import { getClaudeOAuthStatus } from './utils/claude-oauth'
 import { showClipboardMessage } from './utils/clipboard'
 import { readClipboardImage } from './utils/clipboard-image'
+import { HIPPO_BINARY, getHippoSessionStats } from './utils/hippo-hooks'
 import { getInputModeConfig } from './utils/input-modes'
 
 import {
@@ -89,6 +87,7 @@ import type { MultilineInputHandle } from './components/multiline-input'
 import type { MatchedSlashCommand } from './hooks/use-suggestion-engine'
 import type { User } from './utils/auth'
 import type { AgentMode } from './utils/constants'
+import type { HippoSessionStats } from './utils/hippo-hooks'
 import type { FileTreeNode } from '@codebuff/common/util/file'
 import type { ScrollBoxRenderable } from '@opentui/core'
 import type { UseMutationResult } from '@tanstack/react-query'
@@ -1326,15 +1325,26 @@ export const Chat = ({
   }, [chatSessionId])
   const hippoRecalls = useChatStore((state) => state.hippoRecalls)
   const hippoConnectionOk = useChatStore((state) => state.hippoConnectionOk)
+  const hippoFetchIdRef = useRef(0)
   const [hippoStats, setHippoStats] = useState<HippoSessionStats | null>(null)
   useEffect(() => {
     if (!isHippoBinaryInstalled) {
       setHippoStats(null)
       return
     }
-    if (!isSearchingMemory) {
-      getHippoSessionStats(chatSessionId).then(setHippoStats).catch(() => setHippoStats(null))
-    }
+    if (isSearchingMemory) return
+    const fetchId = ++hippoFetchIdRef.current
+    // Delay to allow storeRunToHippo (fire-and-forget) to complete before fetching stats
+    const timer = setTimeout(() => {
+      getHippoSessionStats(chatSessionId)
+        .then((stats) => {
+          if (hippoFetchIdRef.current === fetchId) setHippoStats(stats)
+        })
+        .catch(() => {
+          if (hippoFetchIdRef.current === fetchId) setHippoStats(null)
+        })
+    }, 1500)
+    return () => clearTimeout(timer)
   }, [isHippoBinaryInstalled, isSearchingMemory, chatSessionId])
 
   // Fetch Claude quota when OAuth is active

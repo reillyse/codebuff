@@ -1,7 +1,7 @@
 import open from 'open'
 
 import { handleAdsEnable, handleAdsDisable } from './ads'
-import { handleHippoEnable, handleHippoDisable, handleHippoToggle, handleHippoStatus, handleHippoLogEnable, handleHippoLogDisable, handleHippoLogToggle, getHippoEnabled } from './hippo'
+import { handleHippoEnable, handleHippoDisable, handleHippoStatus, handleHippoLogEnable, handleHippoLogDisable, handleHippoLogToggle } from './hippo'
 import { useThemeStore } from '../hooks/use-theme'
 import { handleHelpCommand } from './help'
 import { handleImageCommand } from './image'
@@ -206,8 +206,9 @@ export const COMMAND_REGISTRY: CommandDefinition[] = [
     name: 'hippo:toggle',
     aliases: ['hippo'],
     handler: (params) => {
-      const { postUserMessage } = handleHippoToggle()
-      useChatStore.getState().setHippoEnabled(getHippoEnabled())
+      const currentEnabled = useChatStore.getState().hippoEnabled
+      const { postUserMessage } = currentEnabled ? handleHippoDisable() : handleHippoEnable()
+      useChatStore.getState().setHippoEnabled(!currentEnabled)
       params.setMessages((prev) => postUserMessage(prev))
       params.saveToHistory(params.inputValue.trim())
       clearInput(params)

@@ -1,7 +1,7 @@
 import { getErrorObject } from '@codebuff/common/util/error'
 
 import { getProjectRoot } from '../../project-files'
-import { storeRunToHippo, storePruningSummaryToHippo } from '../../utils/hippo-hooks'
+import { storeRunToHippo, storePruningSummaryToHippo, storeErrorToHippo } from '../../utils/hippo-hooks'
 import { useChatStore } from '../../state/chat-store'
 import { processBashContext } from '../../utils/bash-context-processor'
 import { markRunningAgentsAsCancelled } from '../../utils/block-operations'
@@ -430,6 +430,12 @@ export const handleRunError = (params: {
     isQueuePausedRef,
   })
   timerController.stop('error')
+
+  // Store meaningful errors to hippo memory (background, non-blocking)
+  storeErrorToHippo({
+    error,
+    sessionId: useChatStore.getState().chatSessionId,
+  })
 
   if (isOutOfCreditsError(error)) {
     updater.setError(OUT_OF_CREDITS_MESSAGE)

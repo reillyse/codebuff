@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 
 import { HIPPO_BINARY } from '../utils/hippo-hooks'
+import { resetHippoLoggingCache } from '../utils/hippo-logger'
 import { logger } from '../utils/logger'
 import { getSystemMessage } from '../utils/message-history'
 import { getProjectRoot } from '../project-files'
@@ -48,27 +49,10 @@ export const handleHippoDisable = (): {
   }
 }
 
-export const handleHippoToggle = (): {
-  postUserMessage: (messages: ChatMessage[]) => ChatMessage[]
-} => {
-  const currentEnabled = getHippoEnabled()
-  
-  if (currentEnabled) {
-    return handleHippoDisable()
-  } else {
-    return handleHippoEnable()
-  }
-}
-
-export const getHippoEnabled = (): boolean => {
-  const settings = loadSettings()
-  return settings.hippoEnabled ?? true
-}
-
 export const handleHippoStatus = (): {
   postUserMessage: (messages: ChatMessage[]) => ChatMessage[]
 } => {
-  const enabled = getHippoEnabled()
+  const enabled = loadSettings().hippoEnabled !== false
   const binaryExists = fs.existsSync(HIPPO_BINARY)
   const loggingEnabled = loadSettings().hippoLoggingEnabled === true
   
@@ -104,6 +88,7 @@ export const handleHippoLogEnable = (): {
 } => {
   logger.info('[hippo] Enabling Hippo debug logging')
   saveSettings({ hippoLoggingEnabled: true })
+  resetHippoLoggingCache()
 
   let logDir = 'debug'
   try {
@@ -125,6 +110,7 @@ export const handleHippoLogDisable = (): {
 } => {
   logger.info('[hippo] Disabling Hippo debug logging')
   saveSettings({ hippoLoggingEnabled: false })
+  resetHippoLoggingCache()
 
   return {
     postUserMessage: (messages) => [
