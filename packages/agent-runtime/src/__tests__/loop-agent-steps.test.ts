@@ -7,6 +7,7 @@ import {
 import { setupDbSpies } from '@codebuff/common/testing/mocks/database'
 import { getInitialSessionState } from '@codebuff/common/types/session-state'
 import { AbortError, promptSuccess } from '@codebuff/common/util/error'
+import * as promiseUtils from '@codebuff/common/util/promise'
 import { APICallError } from 'ai'
 import { assistantMessage, userMessage } from '@codebuff/common/util/messages'
 import db from '@codebuff/internal/db'
@@ -810,6 +811,13 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
   })
 
   describe('transient API error retry', () => {
+    beforeAll(() => {
+      mock.module('@codebuff/common/util/promise', () => ({
+        ...promiseUtils,
+        sleep: async () => {},
+      }))
+    })
+
     it('should retry runAgentStep on transient 500 errors and succeed on second attempt', async () => {
       const llmOnlyTemplate = {
         ...mockTemplate,

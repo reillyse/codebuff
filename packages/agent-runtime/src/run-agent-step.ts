@@ -67,25 +67,28 @@ const MAX_STEP_RETRIES = 2
 /** Base delay in ms before the first retry (doubles each attempt, with jitter) */
 const STEP_RETRY_BASE_DELAY_MS = 2000
 
+/** Maximum delay in ms between retries (cap for exponential backoff) */
+const STEP_RETRY_MAX_DELAY_MS = 30_000
+
+/** Extract the HTTP status code from an API error, if present */
+function getApiErrorStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  if ('status' in error) {
+    const s = (error as { status: unknown }).status
+    if (typeof s === 'number') return s
+  }
+  if ('statusCode' in error) {
+    const s = (error as { statusCode: unknown }).statusCode
+    if (typeof s === 'number') return s
+  }
+  return undefined
+}
+
 /** Check if an error is a transient API error that is safe to retry.
  * Note: 429 is deliberately excluded — the AI SDK handles rate limits via its own maxRetries. */
 function isRetryableApiError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false
-  // Check 'status' (AI SDK's APICallError convention)
-  if ('status' in error) {
-    const status = (error as { status: unknown }).status
-    if (typeof status === 'number' && RETRYABLE_API_STATUS_CODES.has(status)) {
-      return true
-    }
-  }
-  // Check 'statusCode' (our convention)
-  if ('statusCode' in error) {
-    const statusCode = (error as { statusCode: unknown }).statusCode
-    if (typeof statusCode === 'number' && RETRYABLE_API_STATUS_CODES.has(statusCode)) {
-      return true
-    }
-  }
-  return false
+  const statusCode = getApiErrorStatusCode(error)
+  return statusCode !== undefined && RETRYABLE_API_STATUS_CODES.has(statusCode)
 }
 
 async function additionalToolDefinitions(
@@ -578,6 +581,7 @@ export async function loopAgentSteps(
     localAgentTemplates,
     logger,
     parentSystemPrompt,
+    onResponseChunk,
     parentTools,
     prompt,
     signal,
@@ -901,9 +905,11 @@ export async function loopAgentSteps(
       for (let retryAttempt = 0; retryAttempt <= MAX_STEP_RETRIES; retryAttempt++) {
         if (retryAttempt > 0) {
           if (signal.aborted) throw new AbortError()
-          const baseDelay = STEP_RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1)
+          const baseDelay = Math.min(STEP_RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1), STEP_RETRY_MAX_DELAY_MS)
           const jitter = 0.8 + Math.random() * 0.4
           const delay = Math.round(baseDelay * jitter)
+          const statusCode = getApiErrorStatusCode(stepError)
+          const delaySec = Math.round(delay / 1000)
           logger.warn(
             {
               attempt: retryAttempt + 1,
@@ -912,6 +918,9 @@ export async function loopAgentSteps(
               error: getErrorObject(stepError),
             },
             'Retrying agent step after transient API error',
+          )
+          onResponseChunk(
+            `⚠️ Transient API error${statusCode ? ` (${statusCode})` : ''}, retrying in ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`,
           )
           await sleep(delay)
         }
