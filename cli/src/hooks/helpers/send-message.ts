@@ -1,7 +1,7 @@
 import { getErrorObject } from '@codebuff/common/util/error'
 
 import { getProjectRoot } from '../../project-files'
-import { storeRunToHippo, storeErrorToHippo } from '../../utils/hippo-hooks'
+import { storeRunToHippo, storePruningSummaryToHippo } from '../../utils/hippo-hooks'
 import { useChatStore } from '../../state/chat-store'
 import { processBashContext } from '../../utils/bash-context-processor'
 import { markRunningAgentsAsCancelled } from '../../utils/block-operations'
@@ -274,6 +274,7 @@ export const handleRunCompletion = (params: {
   actualCredits: number | undefined
   agentMode: AgentMode
   prompt: string
+  sessionId?: string
   timerController: SendMessageTimerController
   updater: BatchedMessageUpdater
   aiMessageId: string
@@ -291,6 +292,7 @@ export const handleRunCompletion = (params: {
     actualCredits,
     agentMode,
     prompt,
+    sessionId,
     timerController,
     updater,
     streamRefs,
@@ -383,13 +385,18 @@ export const handleRunCompletion = (params: {
     prompt,
     agentMode,
     elapsedMs,
+    sessionId,
   })
+
+  // If context was pruned during this run, store the summary to hippo
+  // so it can be surfaced in future queries
+  if (sessionId) {
+    storePruningSummaryToHippo({ runState, sessionId })
+  }
 }
 
 export const handleRunError = (params: {
   error: unknown
-  prompt: string
-  agentMode: AgentMode
   timerController: SendMessageTimerController
   updater: BatchedMessageUpdater
   setIsRetrying: (value: boolean) => void
@@ -401,8 +408,6 @@ export const handleRunError = (params: {
 }) => {
   const {
     error,
-    prompt,
-    agentMode,
     timerController,
     updater,
     setIsRetrying,
@@ -424,16 +429,7 @@ export const handleRunError = (params: {
     isProcessingQueueRef,
     isQueuePausedRef,
   })
-  const timerResult = timerController.stop('error')
-  const elapsedMs = timerResult?.elapsedMs ?? 0
-
-  // Store error to hippo memory (background, non-blocking)
-  storeErrorToHippo({
-    error,
-    prompt,
-    agentMode,
-    elapsedMs,
-  })
+  timerController.stop('error')
 
   if (isOutOfCreditsError(error)) {
     updater.setError(OUT_OF_CREDITS_MESSAGE)

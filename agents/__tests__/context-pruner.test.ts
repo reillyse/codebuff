@@ -1625,3 +1625,83 @@ describe('context-pruner glob and list_directory tools', () => {
     expect(content).toContain('Read subtree: src/components, src/utils')
   })
 })
+
+describe('context-pruner hippo memory integration', () => {
+  let mockAgentState: AgentState
+
+  beforeEach(() => {
+    mockAgentState = createMockAgentState([], 0)
+  })
+
+  const runHandleSteps = (
+    messages: Message[],
+    contextTokenCount: number,
+    maxContextLength: number,
+  ) => {
+    mockAgentState.messageHistory = messages
+    mockAgentState.contextTokenCount = contextTokenCount
+    const mockLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    }
+    const generator = contextPruner.handleSteps!({
+      agentState: mockAgentState,
+      logger: mockLogger,
+      params: { maxContextLength },
+    })
+    const results: any[] = []
+    let result = generator.next()
+    while (!result.done) {
+      if (typeof result.value === 'object') {
+        results.push(result.value)
+      }
+      result = generator.next()
+    }
+    return results
+  }
+
+  test('includes hippo memory note when pruning is triggered', () => {
+    const messages = [
+      createMessage('user', 'Help me refactor this code'),
+      createMessage('assistant', 'Sure, I can help with that'),
+      createMessage('user', 'Thanks, now fix the tests'),
+    ]
+
+    const results = runHandleSteps(messages, 250000, 200000)
+    const content = results[0].input.messages[0].content[0].text
+
+    expect(content).toContain('Hippo memory system')
+    expect(content).toContain(
+      '## Relevant Context from Past Sessions',
+    )
+    expect(content).toContain(
+      'relevant details about pruned context',
+    )
+  })
+
+  test('does not include hippo memory note when context is under limit (no pruning)', () => {
+    const messages = [
+      createMessage('user', 'Hello'),
+      createMessage('assistant', 'Hi there!'),
+    ]
+
+    const results = runHandleSteps(messages, 100, 200000)
+
+    // When not pruning, original messages are preserved without summary
+    expect(results[0].input.messages).toHaveLength(2)
+    expect(results[0].input.messages[0].role).toBe('user')
+    expect(results[0].input.messages[1].role).toBe('assistant')
+
+    // No summary content should exist
+    const firstMsgContent = results[0].input.messages[0].content
+    if (Array.isArray(firstMsgContent)) {
+      const textContent = firstMsgContent
+        .filter((p: Record<string, unknown>) => p.type === 'text')
+        .map((p: Record<string, unknown>) => p.text)
+        .join('')
+      expect(textContent).not.toContain('Hippo memory system')
+    }
+  })
+})

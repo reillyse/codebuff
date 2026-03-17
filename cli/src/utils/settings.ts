@@ -11,6 +11,7 @@ const DEFAULT_SETTINGS: Settings = {
   mode: 'DEFAULT' as const,
   adsEnabled: true,
   hippoEnabled: true,
+  hippoLoggingEnabled: false,
 }
 
 // Note: FREE mode is now a valid AgentMode (was previously LITE)
@@ -26,6 +27,7 @@ export interface Settings {
   /** @deprecated Use server-side fallbackToALaCarte setting instead */
   fallbackToALaCarte?: boolean
   hippoEnabled?: boolean
+  hippoLoggingEnabled?: boolean
 }
 
 /**
@@ -111,6 +113,11 @@ const validateSettings = (parsed: unknown): Settings => {
   // Validate hippoEnabled
   if (typeof obj.hippoEnabled === 'boolean') {
     settings.hippoEnabled = obj.hippoEnabled
+  }
+
+  // Validate hippoLoggingEnabled
+  if (typeof obj.hippoLoggingEnabled === 'boolean') {
+    settings.hippoLoggingEnabled = obj.hippoLoggingEnabled
   }
 
   return settings

@@ -3,6 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
+import { logHippoInteraction, logHippoPrompt } from './hippo-logger'
 import { logger } from './logger'
 import { loadSettings } from './settings'
 
@@ -15,6 +16,9 @@ export const HIPPO_BINARY = process.env.HIPPO_PATH ?? path.join(os.homedir(), 'P
 const HIPPO_SEARCH_TIMEOUT_MS = 5000 // 5 second timeout for search
 const HIPPO_CONTEXT_SEARCH_TIMEOUT_MS = 15000 // 15 second timeout for hippo context-search
 const HIPPO_QUERY_MAX_LENGTH = 500
+
+// Track last stored pruning summary to avoid duplicate hippo stores
+let lastStoredSummaryHash: string | null = null
 
 // Tool names that indicate file changes
 const FILE_WRITE_TOOLS = ['write_file', 'str_replace', 'propose_write_file', 'propose_str_replace']
@@ -32,7 +36,7 @@ export const generateHippoSessionId = (agentMode: AgentMode): string => {
   const day = String(now.getDate()).padStart(2, '0')
   const hours = String(now.getHours()).padStart(2, '0')
   const minutes = String(now.getMinutes()).padStart(2, '0')
-  
+
   return `codebuff-${agentMode.toLowerCase()}-${year}-${month}-${day}-${hours}${minutes}`
 }
 
@@ -43,18 +47,18 @@ const extractFilesFromHistory = (runState: RunState): { filesChanged: string[], 
   const filesChanged = new Set<string>()
   const filesRead = new Set<string>()
   const commandsRun: string[] = []
-  
+
   const messageHistory = runState.sessionState?.mainAgentState?.messageHistory ?? []
-  
+
   for (const message of messageHistory) {
     if (!message.content || !Array.isArray(message.content)) continue
-    
+
     for (const block of message.content) {
       // Handle tool-call blocks from the SDK
       if (block.type === 'tool-call') {
         const toolName = block.toolName
         const input = block.input ?? {}
-        
+
         if (toolName && FILE_WRITE_TOOLS.includes(toolName)) {
           const filePath = input.path as string | undefined
           if (filePath) filesChanged.add(filePath)
@@ -68,7 +72,7 @@ const extractFilesFromHistory = (runState: RunState): { filesChanged: string[], 
       }
     }
   }
-  
+
   return {
     filesChanged: Array.from(filesChanged),
     filesRead: Array.from(filesRead),
@@ -80,8 +84,8 @@ const extractFilesFromHistory = (runState: RunState): { filesChanged: string[], 
  * Build a summary of the run for hippo's --input field
  */
 const buildInputSummary = (prompt: string, agentMode: AgentMode): string => {
-  const truncatedPrompt = prompt.length > 500 
-    ? prompt.substring(0, 500) + '...' 
+  const truncatedPrompt = prompt.length > 500
+    ? prompt.substring(0, 500) + '...'
     : prompt
   return `[${agentMode}] ${truncatedPrompt}`
 }
@@ -179,7 +183,7 @@ const buildRichRunSummary = (runState: RunState): string | null => {
  * Prefers the agent's own summary, falls back to file-based description.
  */
 const buildOutputDescription = (
-  runState: RunState, 
+  runState: RunState,
   elapsedMs: number,
   filesChanged: string[],
   filesRead: string[],
@@ -188,36 +192,36 @@ const buildOutputDescription = (
   if (runState.output?.type === 'error') {
     return `Error: ${runState.output.message ?? 'Unknown error'}`
   }
-  
+
   // Try to build a rich summary from text + tool calls (most informative)
   const richSummary = buildRichRunSummary(runState)
   if (richSummary) {
     return richSummary
   }
-  
+
   // Fall back to file-based description with relative paths
   const parts: string[] = []
-  
+
   if (filesChanged.length > 0) {
     const fileList = filesChanged.slice(0, 5).join(', ')
     const moreFiles = filesChanged.length > 5 ? ` +${filesChanged.length - 5} more` : ''
     parts.push(`Modified: ${fileList}${moreFiles}.`)
   }
-  
+
   if (filesRead.length > 0 && filesChanged.length === 0) {
     parts.push(`Analyzed ${filesRead.length} files.`)
   }
-  
+
   if (commandsRun.length > 0) {
     parts.push(`Ran ${commandsRun.length} command(s).`)
   }
-  
+
   if (parts.length === 0) {
     const elapsedSeconds = Math.floor(elapsedMs / 1000)
     const messageCount = runState.sessionState?.mainAgentState?.messageHistory?.length ?? 0
     parts.push(`Completed in ${elapsedSeconds}s with ${messageCount} messages.`)
   }
-  
+
   return parts.join(' ')
 }
 
@@ -245,7 +249,7 @@ const isHippoAvailable = (): boolean => {
     logger.debug({}, 'Hippo is disabled in settings')
     return false
   }
-  
+
   if (!fs.existsSync(HIPPO_BINARY)) {
     logger.debug(
       { path: HIPPO_BINARY },
@@ -253,7 +257,7 @@ const isHippoAvailable = (): boolean => {
     )
     return false
   }
-  
+
   return true
 }
 
@@ -261,6 +265,7 @@ const isHippoAvailable = (): boolean => {
  * Run a hippo CLI command synchronously with timeout. Returns stdout or null on failure.
  */
 const runHippoSync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): string | null => {
+  const startTime = Date.now()
   try {
     const result = spawnSync(HIPPO_BINARY, [...args, '--quiet'], {
       encoding: 'utf-8',
@@ -268,21 +273,25 @@ const runHippoSync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): stri
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: process.cwd(),
     })
-    
+
     if (result.signal || result.error || result.status !== 0) {
       logger.debug(
         { signal: result.signal, error: result.error?.message, status: result.status, args: args.slice(0, 2) },
         'Hippo command failed'
       )
+      logHippoInteraction(args, null, Date.now() - startTime)
       return null
     }
-    
-    return result.stdout?.trim() ?? null
+
+    const output = result.stdout?.trim() ?? null
+    logHippoInteraction(args, output, Date.now() - startTime)
+    return output
   } catch (error) {
     logger.debug(
       { error: error instanceof Error ? error.message : String(error) },
       'Failed to run hippo command'
     )
+    logHippoInteraction(args, null, Date.now() - startTime)
     return null
   }
 }
@@ -292,7 +301,8 @@ const runHippoSync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): stri
  * Unlike runHippoSync, this doesn't block the event loop — the UI stays responsive.
  */
 const runHippoAsync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): Promise<string | null> => {
-  return new Promise((resolve) => {
+  const startTime = Date.now()
+  return new Promise<string | null>((resolve) => {
     try {
       const child = spawn(HIPPO_BINARY, [...args, '--quiet'], {
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -341,6 +351,9 @@ const runHippoAsync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): Pro
       )
       resolve(null)
     }
+  }).then((result) => {
+    logHippoInteraction(args, result, Date.now() - startTime)
+    return result
   })
 }
 
@@ -389,6 +402,12 @@ const buildConversationContext = (previousRunState: RunState | null): string | n
   return parts.join('. ') + '.'
 }
 
+export type HippoContextResult = {
+  context: string
+  /** null = didn't attempt, true = CLI responded, false = CLI failed/timed out */
+  connectionOk: boolean | null
+}
+
 /**
  * Fetch relevant context from Hippo memory by calling `hippo context-search` locally.
  * This runs entirely on the local machine with no server dependency.
@@ -401,12 +420,13 @@ const buildConversationContext = (previousRunState: RunState | null): string | n
 export const getHippoContext = async (
   query: string,
   previousRunState: RunState | null,
-): Promise<string> => {
+  sessionId?: string,
+): Promise<HippoContextResult> => {
   try {
-    if (!isHippoAvailable()) return ''
+    if (!isHippoAvailable()) return { context: '', connectionOk: null }
 
     const trimmedQuery = query.trim()
-    if (!trimmedQuery) return ''
+    if (!trimmedQuery) return { context: '', connectionOk: null }
 
     const truncatedQuery = trimmedQuery.length > HIPPO_QUERY_MAX_LENGTH
       ? trimmedQuery.substring(0, HIPPO_QUERY_MAX_LENGTH)
@@ -417,22 +437,36 @@ export const getHippoContext = async (
     const args = ['context-search', truncatedQuery]
 
     const contextString = buildConversationContext(previousRunState)
+
+    logHippoPrompt('query', truncatedQuery, {
+      'Context': contextString ?? '(none)',
+      'Session': sessionId,
+    })
+
     if (contextString) {
       args.push('--context', contextString)
     }
 
+    if (sessionId) {
+      args.push('--session', sessionId)
+    }
+
     const result = await runHippoAsync(args, HIPPO_CONTEXT_SEARCH_TIMEOUT_MS)
-    if (!result) return ''
+    if (!result) {
+      logHippoPrompt('response', '(no results)')
+      return { context: '', connectionOk: false }
+    }
 
     const trimmedResult = result.trim()
 
     if (!trimmedResult || trimmedResult.toUpperCase() === 'NONE' || trimmedResult.length < 20) {
       logger.debug({}, 'Hippo context-search found nothing relevant')
-      return ''
+      return { context: '', connectionOk: true }
     }
 
     logger.debug({ contextLength: trimmedResult.length }, 'Hippo context extracted via context-search')
-    return trimmedResult
+    logHippoPrompt('response', trimmedResult, { 'Content length': trimmedResult.length })
+    return { context: trimmedResult, connectionOk: true }
   } catch (error) {
     try {
       logger.debug(
@@ -442,7 +476,57 @@ export const getHippoContext = async (
     } catch {
       // Safety net: logger itself can throw (e.g. analytics not initialized)
     }
-    return ''
+    return { context: '', connectionOk: false }
+  }
+}
+
+
+export type HippoSessionStats = {
+  runs: number
+  filesChanged: number
+  filesRead: number
+}
+
+/**
+ * Fetch session-specific stats by calling `hippo snapshot --session <id> --json`.
+ * Returns run count and unique file counts for the given session, or null if unavailable.
+ */
+export const getHippoSessionStats = async (sessionId: string): Promise<HippoSessionStats | null> => {
+  try {
+    if (!isHippoAvailable()) return null
+
+    const result = await runHippoAsync(
+      ['snapshot', '--session', sessionId, '--json'],
+      HIPPO_SEARCH_TIMEOUT_MS,
+    )
+    if (!result) return null
+
+    const runs: unknown[] = JSON.parse(result)
+    if (!Array.isArray(runs)) return null
+
+    const changedSet = new Set<string>()
+    const readSet = new Set<string>()
+
+    for (const run of runs) {
+      if (typeof run !== 'object' || run === null) continue
+      const meta = (run as Record<string, unknown>).metadata
+      if (typeof meta !== 'object' || meta === null) continue
+      const md = meta as Record<string, unknown>
+      if (Array.isArray(md.files_changed)) {
+        for (const f of md.files_changed) if (typeof f === 'string') changedSet.add(f)
+      }
+      if (Array.isArray(md.files_read)) {
+        for (const f of md.files_read) if (typeof f === 'string') readSet.add(f)
+      }
+    }
+
+    return {
+      runs: runs.length,
+      filesChanged: changedSet.size,
+      filesRead: readSet.size,
+    }
+  } catch {
+    return null
   }
 }
 
@@ -451,6 +535,7 @@ export type StoreRunToHippoParams = {
   prompt: string
   agentMode: AgentMode
   elapsedMs: number
+  sessionId?: string
 }
 
 /**
@@ -461,17 +546,17 @@ export const storeRunToHippo = (params: StoreRunToHippoParams): void => {
   if (!isHippoAvailable()) {
     return
   }
-  
+
   const { runState, prompt, agentMode, elapsedMs } = params
-  
+
   // Extract meaningful data from the run
   const { filesChanged, filesRead, commandsRun } = extractFilesFromHistory(runState)
-  
-  const sessionId = generateHippoSessionId(agentMode)
+
+  const sessionId = params.sessionId ?? generateHippoSessionId(agentMode)
   const inputSummary = buildInputSummary(prompt, agentMode)
   const outputDescription = buildOutputDescription(runState, elapsedMs, filesChanged, filesRead, commandsRun)
   const outcome = getOutcome(runState, filesChanged, filesRead)
-  
+
   const args = [
     'store',
     '--agent', 'codebuff',
@@ -480,71 +565,97 @@ export const storeRunToHippo = (params: StoreRunToHippoParams): void => {
     '--output', outputDescription,
     '--outcome', outcome,
   ]
-  
+
   // Add files-changed if any
   if (filesChanged.length > 0) {
     args.push('--files-changed', filesChanged.slice(0, 10).join(','))
   }
-  
+
   // Add files-read if any (limit to avoid overly long args)
   if (filesRead.length > 0) {
     args.push('--files-read', filesRead.slice(0, 10).join(','))
   }
-  
+
   // Add commands-run if any
   if (commandsRun.length > 0) {
     args.push('--commands-run', commandsRun.join(','))
   }
-  
+
   logger.debug(
     { hippoArgs: args, filesChanged, filesRead },
     'Storing run to hippo memory'
   )
-  
+
+  logHippoPrompt('store', `Input: ${inputSummary}\nOutput: ${outputDescription}`, {
+    'Session': sessionId,
+    'Outcome': outcome,
+    'Files changed': filesChanged.length > 0 ? filesChanged.join(', ') : '(none)',
+  })
+
   spawnHippoStore(args)
 }
 
-export type StoreErrorToHippoParams = {
-  error: unknown
-  prompt: string
-  agentMode: AgentMode
-  elapsedMs: number
-}
-
 /**
- * Store an error to hippo memory so we learn from failures.
- * Runs in a detached background process so it doesn't block the CLI.
- * Silently fails if hippo is not available - this is best-effort logging.
+ * Extract and store the conversation summary to hippo after context pruning.
+ * This preserves pruned context so hippo can surface it in future queries.
  */
-export const storeErrorToHippo = (params: StoreErrorToHippoParams): void => {
-  // Wrap everything in try-catch since this is best-effort and should never break the main flow
+export const storePruningSummaryToHippo = (params: {
+  runState: RunState
+  sessionId: string
+}): void => {
   try {
-    if (!isHippoAvailable()) {
-      return
+    if (!isHippoAvailable()) return
+
+    const { runState, sessionId } = params
+    const messageHistory = runState.sessionState?.mainAgentState?.messageHistory ?? []
+
+    for (const message of messageHistory) {
+      if (message.role !== 'user' || !Array.isArray(message.content)) continue
+
+      for (const block of message.content) {
+        if (block.type !== 'text' || typeof block.text !== 'string') continue
+
+        const match = (block.text as string).match(
+          /<conversation_summary>([\s\S]*?)<\/conversation_summary>/,
+        )
+        if (!match) continue
+
+        let summary = match[1].trim()
+        if (summary.length > 2000) {
+          summary = summary.substring(0, 2000) + '...'
+        }
+
+        // Deduplicate: skip if we already stored this exact summary
+        const prefix = summary.substring(0, 100)
+        const suffix = summary.substring(Math.max(0, summary.length - 100))
+        const fingerprint = `${summary.length}:${prefix}:${suffix}`
+        if (fingerprint === lastStoredSummaryHash) {
+          logger.debug({ sessionId }, 'Pruning summary already stored, skipping')
+          return
+        }
+        lastStoredSummaryHash = fingerprint
+
+        logger.debug(
+          { sessionId, summaryLength: summary.length },
+          'Storing pruning summary to hippo',
+        )
+
+        logHippoPrompt('store', summary, { 'Session': sessionId, 'Type': 'pruning-summary' })
+
+        spawnHippoStore([
+          'store',
+          '--agent', 'codebuff',
+          '--session', sessionId,
+          '--input', 'Context pruning summary',
+          '--output', summary,
+          '--outcome', 'discovery',
+        ])
+        return
+      }
     }
-    
-    const { error, prompt, agentMode, elapsedMs } = params
-    
-    const sessionId = generateHippoSessionId(agentMode)
-    const inputSummary = buildInputSummary(prompt, agentMode)
-    
-    // Build error description
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    const elapsedSeconds = Math.floor(elapsedMs / 1000)
-    const outputDescription = `Error after ${elapsedSeconds}s: ${errorMessage.substring(0, 200)}`
-    
-    const args = [
-      'store',
-      '--agent', 'codebuff',
-      '--session', sessionId,
-      '--input', inputSummary,
-      '--output', outputDescription,
-      '--outcome', 'failure',
-    ]
-    
-    spawnHippoStore(args)
   } catch {
-    // Silently ignore any errors - hippo storage should never break the error handling flow
+
+    logger.error({ sessionId: params.sessionId }, 'Failed to store pruning summary to hippo')
   }
 }
 
@@ -553,13 +664,15 @@ export const storeErrorToHippo = (params: StoreErrorToHippoParams): void => {
  */
 const spawnHippoStore = (args: string[]): void => {
   try {
+    logHippoInteraction(args, '(fire-and-forget)')
+
     // Spawn detached process so it doesn't block CLI
     const child = spawn(HIPPO_BINARY, args, {
       detached: true,
       stdio: 'ignore',
       cwd: process.cwd(), // Run from project root so hippo auto-detects .hippo/project.yaml
     })
-    
+
     // Unref to allow parent process to exit independently
     child.unref()
   } catch (error) {

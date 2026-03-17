@@ -1,7 +1,7 @@
 import open from 'open'
 
 import { handleAdsEnable, handleAdsDisable } from './ads'
-import { handleHippoEnable, handleHippoDisable, handleHippoToggle, handleHippoStatus } from './hippo'
+import { handleHippoEnable, handleHippoDisable, handleHippoToggle, handleHippoStatus, handleHippoLogEnable, handleHippoLogDisable, handleHippoLogToggle, getHippoEnabled } from './hippo'
 import { useThemeStore } from '../hooks/use-theme'
 import { handleHelpCommand } from './help'
 import { handleImageCommand } from './image'
@@ -186,6 +186,7 @@ export const COMMAND_REGISTRY: CommandDefinition[] = [
     name: 'hippo:enable',
     handler: (params) => {
       const { postUserMessage } = handleHippoEnable()
+      useChatStore.getState().setHippoEnabled(true)
       params.setMessages((prev) => postUserMessage(prev))
       params.saveToHistory(params.inputValue.trim())
       clearInput(params)
@@ -195,6 +196,7 @@ export const COMMAND_REGISTRY: CommandDefinition[] = [
     name: 'hippo:disable',
     handler: (params) => {
       const { postUserMessage } = handleHippoDisable()
+      useChatStore.getState().setHippoEnabled(false)
       params.setMessages((prev) => postUserMessage(prev))
       params.saveToHistory(params.inputValue.trim())
       clearInput(params)
@@ -205,6 +207,7 @@ export const COMMAND_REGISTRY: CommandDefinition[] = [
     aliases: ['hippo'],
     handler: (params) => {
       const { postUserMessage } = handleHippoToggle()
+      useChatStore.getState().setHippoEnabled(getHippoEnabled())
       params.setMessages((prev) => postUserMessage(prev))
       params.saveToHistory(params.inputValue.trim())
       clearInput(params)
@@ -214,6 +217,33 @@ export const COMMAND_REGISTRY: CommandDefinition[] = [
     name: 'hippo:status',
     handler: (params) => {
       const { postUserMessage } = handleHippoStatus()
+      params.setMessages((prev) => postUserMessage(prev))
+      params.saveToHistory(params.inputValue.trim())
+      clearInput(params)
+    },
+  }),
+  defineCommand({
+    name: 'hippo:log:enable',
+    handler: (params) => {
+      const { postUserMessage } = handleHippoLogEnable()
+      params.setMessages((prev) => postUserMessage(prev))
+      params.saveToHistory(params.inputValue.trim())
+      clearInput(params)
+    },
+  }),
+  defineCommand({
+    name: 'hippo:log:disable',
+    handler: (params) => {
+      const { postUserMessage } = handleHippoLogDisable()
+      params.setMessages((prev) => postUserMessage(prev))
+      params.saveToHistory(params.inputValue.trim())
+      clearInput(params)
+    },
+  }),
+  defineCommand({
+    name: 'hippo:log',
+    handler: (params) => {
+      const { postUserMessage } = handleHippoLogToggle()
       params.setMessages((prev) => postUserMessage(prev))
       params.saveToHistory(params.inputValue.trim())
       clearInput(params)

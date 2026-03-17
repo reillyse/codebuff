@@ -425,8 +425,6 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Network timeout'),
-      prompt: 'test prompt',
-      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: (value: boolean) => {
@@ -481,8 +479,6 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Something failed'),
-      prompt: 'test prompt',
-      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},
@@ -521,8 +517,6 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Regular error'),
-      prompt: 'test prompt',
-      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},
@@ -557,8 +551,6 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Some error'),
-      prompt: 'test prompt',
-      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},
@@ -592,8 +584,6 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: new Error('Some error'),
-      prompt: 'test prompt',
-      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},
@@ -643,8 +633,6 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: contextLengthError,
-      prompt: 'test prompt',
-      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: (value: boolean) => {
@@ -713,8 +701,6 @@ describe('handleRunError', () => {
 
     handleRunError({
       error: paymentError,
-      prompt: 'test prompt',
-      agentMode: 'DEFAULT',
       timerController,
       updater,
       setIsRetrying: () => {},

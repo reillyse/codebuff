@@ -4,7 +4,7 @@ import { immer } from 'zustand/middleware/immer'
 
 import { AGENT_MODES } from '../utils/constants'
 import { clamp } from '../utils/math'
-import { loadModePreference, saveModePreference } from '../utils/settings'
+import { loadModePreference, loadSettings, saveModePreference } from '../utils/settings'
 
 import type { ChatMessage, ContentBlock } from '../types/chat'
 import type { AgentMode } from '../utils/constants'
@@ -72,6 +72,9 @@ export type ChatStoreState = {
   inputMode: InputMode
   isRetrying: boolean
   isSearchingMemory: boolean
+  hippoEnabled: boolean
+  hippoRecalls: number
+  hippoConnectionOk: boolean | null
   askUserState: AskUserState
   pendingAttachments: PendingAttachment[]
   pendingBashMessages: PendingBashMessage[]
@@ -141,6 +144,9 @@ type ChatStoreActions = {
   setInputMode: (mode: InputMode) => void
   setIsRetrying: (retrying: boolean) => void
   setIsSearchingMemory: (searching: boolean) => void
+  setHippoEnabled: (enabled: boolean) => void
+  incrementHippoRecalls: () => void
+  setHippoConnectionOk: (ok: boolean | null) => void
   setAskUserState: (state: AskUserState) => void
   updateAskUserAnswer: (questionIndex: number, optionIndex: number) => void
   updateAskUserOtherText: (questionIndex: number, text: string) => void
@@ -193,6 +199,9 @@ const initialState: ChatStoreState = {
   inputMode: 'default' as InputMode,
   isRetrying: false,
   isSearchingMemory: false,
+  hippoEnabled: loadSettings().hippoEnabled !== false,
+  hippoRecalls: 0,
+  hippoConnectionOk: null,
   askUserState: null,
   pendingAttachments: [],
   pendingBashMessages: [],
@@ -327,6 +336,21 @@ export const useChatStore = create<ChatStore>()(
     setIsSearchingMemory: (searching) =>
       set((state) => {
         state.isSearchingMemory = searching
+      }),
+
+    setHippoEnabled: (enabled) =>
+      set((state) => {
+        state.hippoEnabled = enabled
+      }),
+
+    incrementHippoRecalls: () =>
+      set((state) => {
+        state.hippoRecalls += 1
+      }),
+
+    setHippoConnectionOk: (ok) =>
+      set((state) => {
+        state.hippoConnectionOk = ok
       }),
 
     setAskUserState: (askUserState) =>
@@ -509,6 +533,9 @@ export const useChatStore = create<ChatStore>()(
         state.inputMode = initialState.inputMode
         state.isRetrying = initialState.isRetrying
         state.isSearchingMemory = initialState.isSearchingMemory
+        state.hippoEnabled = loadSettings().hippoEnabled !== false
+        state.hippoRecalls = initialState.hippoRecalls
+        state.hippoConnectionOk = initialState.hippoConnectionOk
         state.askUserState = initialState.askUserState
         state.pendingAttachments = []
         state.pendingBashMessages = []

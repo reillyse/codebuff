@@ -1,9 +1,11 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 
 import { useTheme } from '../hooks/use-theme'
+import { formatElapsedTime } from '../utils/format-elapsed-time'
 import { formatResetTime } from '../utils/time-format'
 
 import type { ClaudeQuotaData } from '../hooks/use-claude-quota-query'
+import type { HippoSessionStats } from '../utils/hippo-hooks'
 
 interface BottomStatusLineProps {
   /** Whether Claude OAuth is connected */
@@ -12,6 +14,20 @@ interface BottomStatusLineProps {
   isClaudeActive: boolean
   /** Quota data from Anthropic API */
   claudeQuota?: ClaudeQuotaData | null
+  /** Whether hippo memory is enabled in settings */
+  isHippoEnabled: boolean
+  /** Whether the hippo binary is installed on disk */
+  isHippoBinaryInstalled: boolean
+  /** Whether hippo is actively searching memory */
+  isHippoActive: boolean
+  /** Stats from hippo memory for the current session */
+  hippoStats?: HippoSessionStats | null
+  /** Number of times hippo returned useful context this session */
+  hippoRecalls?: number
+  /** Whether hippo CLI is confirmed reachable (null = unknown, true = ok, false = failed) */
+  hippoConnectionOk?: boolean | null
+  /** Timestamp (ms) when hippo was last used in this session */
+  hippoLastUsedAt?: number | null
 }
 
 /**
@@ -22,8 +38,43 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
   isClaudeConnected,
   isClaudeActive,
   claudeQuota,
+  isHippoEnabled,
+  isHippoBinaryInstalled,
+  isHippoActive,
+  hippoStats,
+  hippoRecalls = 0,
+  hippoConnectionOk,
+  hippoLastUsedAt,
 }) => {
   const theme = useTheme()
+  const [isHippoHovered, setIsHippoHovered] = useState(false)
+  const [isClaudeHovered, setIsClaudeHovered] = useState(false)
+
+  // Pulse the hippo dot while actively searching memory
+  const [hippoDotVisible, setHippoDotVisible] = useState(true)
+  useEffect(() => {
+    if (!isHippoActive) {
+      setHippoDotVisible(true)
+      return
+    }
+    const interval = setInterval(() => {
+      setHippoDotVisible((prev) => !prev)
+    }, 350)
+    return () => clearInterval(interval)
+  }, [isHippoActive])
+
+  // Live-updating "last used X ago" label
+  const [lastUsedElapsed, setLastUsedElapsed] = useState<number | null>(null)
+  useEffect(() => {
+    if (hippoLastUsedAt == null) {
+      setLastUsedElapsed(null)
+      return
+    }
+    const compute = () => setLastUsedElapsed(Math.max(0, Math.floor((Date.now() - hippoLastUsedAt) / 1000)))
+    compute()
+    const interval = setInterval(compute, 10_000)
+    return () => clearInterval(interval)
+  }, [hippoLastUsedAt])
 
   // Use the more restrictive of the two quotas (5-hour window is usually the limiting factor)
   const claudeDisplayRemaining = claudeQuota
@@ -40,8 +91,8 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
       : claudeQuota.sevenDayResetsAt
     : null
 
-  // Only show when Claude is connected
-  if (!isClaudeConnected) {
+  // Only show when there's something to display
+  if (!isClaudeConnected && !isHippoEnabled) {
     return null
   }
 
@@ -52,19 +103,88 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
       ? theme.success
       : theme.muted
 
+  // For dot color: only confirmed successful recalls prove the full stack works
+  const hasConfirmedSuccess = hippoRecalls > 0
+  // For hover display: show stats if any session data is available
+  const hasSessionStats = (hippoStats != null && hippoStats.runs > 0) || hippoRecalls > 0
+  const hippoDotColor = !isHippoBinaryInstalled
+    ? theme.error
+    : hippoConnectionOk === false
+      ? theme.warning
+      : hippoConnectionOk === true && (isHippoActive || hasConfirmedSuccess)
+        ? theme.success
+        : theme.muted
+
+  // Shared hover detail for Claude (used in both exhausted and non-exhausted branches)
+  const claudeHoverDetail = isClaudeHovered && claudeQuota ? (
+    <>
+      <text style={{ fg: theme.foreground }}> Claude</text>
+      <text style={{ fg: theme.muted }}>{` · 5h: ${Math.round(claudeQuota.fiveHourRemaining)}%`}</text>
+      <text style={{ fg: theme.muted }}>{` · 7d: ${Math.round(claudeQuota.sevenDayRemaining)}%`}</text>
+      {claudeResetTime && (
+        <text style={{ fg: theme.muted }}>{` · resets in ${formatResetTime(claudeResetTime)}`}</text>
+      )}
+    </>
+  ) : null
+
   return (
     <box
       style={{
         width: '100%',
         flexDirection: 'row',
-        justifyContent: 'flex-end',
+        paddingLeft: 1,
         paddingRight: 1,
         gap: 2,
       }}
     >
-      {/* Show Claude subscription when connected and not depleted */}
-      {!isClaudeExhausted && (
+      {/* Hippo memory indicator */}
+      {isHippoEnabled && (
         <box
+          onMouseOver={() => setIsHippoHovered(true)}
+          onMouseOut={() => setIsHippoHovered(false)}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 0,
+          }}
+        >
+          <text style={{ fg: hippoDotVisible ? hippoDotColor : theme.muted }}>{hippoDotVisible ? '●' : '○'}</text>
+          <text style={{ fg: isHippoHovered ? theme.foreground : theme.muted }}> Hippo memory</text>
+          {isHippoHovered ? (
+            isHippoActive ? (
+              <text style={{ fg: theme.info }}> · searching...</text>
+            ) : !isHippoBinaryInstalled ? (
+              <text style={{ fg: theme.error }}> · not found</text>
+            ) : hippoConnectionOk === false ? (
+              <text style={{ fg: theme.warning }}> · disconnected</text>
+            ) : hasSessionStats ? (
+              <text style={{ fg: theme.muted }}>
+                {formatSessionStats(hippoStats?.runs ?? 0, hippoRecalls)}
+                {lastUsedElapsed != null && ` · ${formatLastUsed(lastUsedElapsed)}`}
+              </text>
+            ) : lastUsedElapsed != null ? (
+              <text style={{ fg: theme.muted }}>{` · ${formatLastUsed(lastUsedElapsed)}`}</text>
+            ) : (
+              <text style={{ fg: theme.muted }}> · idle</text>
+            )
+          ) : (
+            !isHippoBinaryInstalled ? (
+              <text style={{ fg: theme.muted }}> · not found</text>
+            ) : hippoConnectionOk === false ? (
+              <text style={{ fg: theme.muted }}> · disconnected</text>
+            ) : null
+          )}
+        </box>
+      )}
+
+      {/* Spacer pushes Claude to the right */}
+      <box style={{ flexGrow: 1 }} />
+
+      {/* Show Claude subscription when connected and not depleted */}
+      {isClaudeConnected && !isClaudeExhausted && (
+        <box
+          onMouseOver={() => setIsClaudeHovered(true)}
+          onMouseOut={() => setIsClaudeHovered(false)}
           style={{
             flexDirection: 'row',
             alignItems: 'center',
@@ -72,16 +192,22 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
           }}
         >
           <text style={{ fg: claudeDotColor }}>●</text>
-          <text style={{ fg: theme.muted }}> Claude subscription</text>
-          {claudeDisplayRemaining !== null ? (
-            <BatteryIndicator value={claudeDisplayRemaining} theme={theme} />
-          ) : null}
+          {claudeHoverDetail ?? (
+            <>
+              <text style={{ fg: isClaudeHovered ? theme.foreground : theme.muted }}> Claude subscription</text>
+              {claudeDisplayRemaining !== null ? (
+                <BatteryIndicator value={claudeDisplayRemaining} theme={theme} />
+              ) : null}
+            </>
+          )}
         </box>
       )}
 
       {/* Show Claude as depleted when exhausted */}
-      {isClaudeExhausted && (
+      {isClaudeConnected && isClaudeExhausted && (
         <box
+          onMouseOver={() => setIsClaudeHovered(true)}
+          onMouseOut={() => setIsClaudeHovered(false)}
           style={{
             flexDirection: 'row',
             alignItems: 'center',
@@ -89,14 +215,36 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
           }}
         >
           <text style={{ fg: theme.error }}>●</text>
-          <text style={{ fg: theme.muted }}> Claude</text>
-          {claudeResetTime && (
-            <text style={{ fg: theme.muted }}>{` · resets in ${formatResetTime(claudeResetTime)}`}</text>
+          {claudeHoverDetail ?? (
+            <>
+              <text style={{ fg: theme.muted }}> Claude</text>
+              {claudeResetTime && (
+                <text style={{ fg: theme.muted }}>{` · resets in ${formatResetTime(claudeResetTime)}`}</text>
+              )}
+            </>
           )}
         </box>
       )}
     </box>
   )
+}
+
+/** Format "last used" label — shows "just now" for recent, otherwise "Xm ago" */
+const formatLastUsed = (elapsedSeconds: number): string => {
+  if (elapsedSeconds < 10) return 'just now'
+  return `${formatElapsedTime(elapsedSeconds)} ago`
+}
+
+/** Format session stats for the hippo hover display */
+const formatSessionStats = (saves: number, recalls: number): string => {
+  const parts: string[] = []
+  if (saves > 0) {
+    parts.push(`${saves} ${saves === 1 ? 'save' : 'saves'}`)
+  }
+  if (recalls > 0) {
+    parts.push(`${recalls} ${recalls === 1 ? 'recall' : 'recalls'}`)
+  }
+  return parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
 }
 
 /** Battery indicator width in characters */

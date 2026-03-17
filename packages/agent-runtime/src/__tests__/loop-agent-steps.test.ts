@@ -7,6 +7,7 @@ import {
 import { setupDbSpies } from '@codebuff/common/testing/mocks/database'
 import { getInitialSessionState } from '@codebuff/common/types/session-state'
 import { AbortError, promptSuccess } from '@codebuff/common/util/error'
+import { APICallError } from 'ai'
 import { assistantMessage, userMessage } from '@codebuff/common/util/messages'
 import db from '@codebuff/internal/db'
 import {
@@ -806,6 +807,172 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
 
     // Should have output set
     expect(result.agentState.output).toEqual({ result: 'done' })
+  })
+
+  describe('transient API error retry', () => {
+    it('should retry runAgentStep on transient 500 errors and succeed on second attempt', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        if (promptCallCount === 1) {
+          // First attempt: throw a transient 500 error
+          throw new APICallError({
+            message: 'Internal server error',
+            url: 'https://api.anthropic.com/v1/messages',
+            requestBodyValues: {},
+            statusCode: 500,
+            responseHeaders: undefined,
+            responseBody: undefined,
+            isRetryable: true,
+            data: undefined,
+          })
+        }
+        // Second attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // Should have called LLM twice (first attempt failed, second succeeded)
+      expect(promptCallCount).toBe(2)
+      expect(result.output.type).not.toBe('error')
+    })
+
+    it('should not retry non-retryable errors (e.g. 402 payment required)', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        throw new APICallError({
+          message: 'Not found',
+          url: 'https://api.anthropic.com/v1/messages',
+          requestBodyValues: {},
+          statusCode: 404,
+          responseHeaders: undefined,
+          responseBody: undefined,
+          isRetryable: false,
+          data: undefined,
+        })
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // Should have only tried once
+      expect(promptCallCount).toBe(1)
+      expect(result.output.type).toBe('error')
+      if (result.output.type === 'error') {
+        expect(result.output.message).toContain('Not found')
+      }
+    })
+
+    it('should exhaust retries and return error after MAX_STEP_RETRIES + 1 attempts', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        // Always throw 500
+        throw new APICallError({
+          message: 'Internal server error',
+          url: 'https://api.anthropic.com/v1/messages',
+          requestBodyValues: {},
+          statusCode: 500,
+          responseHeaders: undefined,
+          responseBody: undefined,
+          isRetryable: true,
+          data: undefined,
+        })
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // Should have tried 3 times total (1 initial + 2 retries)
+      expect(promptCallCount).toBe(3)
+      expect(result.output.type).toBe('error')
+      if (result.output.type === 'error') {
+        expect(result.output.message).toContain('Internal server error')
+      }
+    })
+
+    it('should not retry when signal is aborted', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const abortController = new AbortController()
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        // Abort after the first attempt
+        abortController.abort()
+        throw new APICallError({
+          message: 'Internal server error',
+          url: 'https://api.anthropic.com/v1/messages',
+          requestBodyValues: {},
+          statusCode: 500,
+          responseHeaders: undefined,
+          responseBody: undefined,
+          isRetryable: true,
+          data: undefined,
+        })
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        signal: abortController.signal,
+      })
+
+      // Should have only tried once since signal was aborted
+      expect(promptCallCount).toBe(1)
+      // The error is caught by the outer catch and returned as cancelled or error
+      expect(result.output.type).toBe('error')
+    })
   })
 
   describe('abort handling', () => {

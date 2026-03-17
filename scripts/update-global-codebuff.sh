@@ -28,32 +28,32 @@ echo "Current global version: $CURRENT_VERSION"
 # --- Git: Rebase patch branch on latest origin/main ---
 cd "$PROJECT_ROOT"
 
-# Ensure we're on the patch branch
-CURRENT_BRANCH=$(git branch --show-current)
-if [ "$CURRENT_BRANCH" != "$PATCH_BRANCH" ]; then
-  echo "🔀 Switching to $PATCH_BRANCH..."
-  git checkout "$PATCH_BRANCH"
-fi
+# # Ensure we're on the patch branch
+# CURRENT_BRANCH=$(git branch --show-current)
+# if [ "$CURRENT_BRANCH" != "$PATCH_BRANCH" ]; then
+#   echo "🔀 Switching to $PATCH_BRANCH..."
+#   git checkout "$PATCH_BRANCH"
+# fi
 
-# Fetch latest from origin
-echo "⬇️  Fetching latest from origin..."
-git fetch origin main
+# # Fetch latest from origin
+# echo "⬇️  Fetching latest from origin..."
+# git fetch origin main
 
-# Rebase our patches on top of latest main
-echo "🔀 Rebasing $PATCH_BRANCH on origin/main..."
-git rebase origin/main || {
-  echo ""
-  echo "⚠️  Rebase had conflicts! Please resolve them:"
-  echo "   1. Fix conflicts in the listed files"
-  echo "   2. git add <resolved-files>"
-  echo "   3. git rebase --continue"
-  echo "   4. Re-run this script"
-  echo ""
-  echo "   Or abort with: git rebase --abort"
-  exit 1
-}
+# # Rebase our patches on top of latest main
+# echo "🔀 Rebasing $PATCH_BRANCH on origin/main..."
+# git rebase origin/main || {
+#   echo ""
+#   echo "⚠️  Rebase had conflicts! Please resolve them:"
+#   echo "   1. Fix conflicts in the listed files"
+#   echo "   2. git add <resolved-files>"
+#   echo "   3. git rebase --continue"
+#   echo "   4. Re-run this script"
+#   echo ""
+#   echo "   Or abort with: git rebase --abort"
+#   exit 1
+# }
 
-echo "✅ Patches rebased successfully"
+# echo "✅ Patches rebased successfully"
 
 # Reinstall dependencies in case they changed
 echo "📦 Installing dependencies..."

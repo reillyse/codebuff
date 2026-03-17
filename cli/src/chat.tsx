@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import fs from 'fs'
 import { useShallow } from 'zustand/react/shallow'
 
 import { getAdsEnabled, handleAdsDisable } from './commands/ads'
@@ -16,6 +17,9 @@ import { routeUserPrompt, addBashMessageToHistory } from './commands/router'
 import { AdBanner } from './components/ad-banner'
 import { BottomStatusLine } from './components/bottom-status-line'
 import { ChatInputBar } from './components/chat-input-bar'
+import { HIPPO_BINARY, getHippoSessionStats } from './utils/hippo-hooks'
+
+import type { HippoSessionStats } from './utils/hippo-hooks'
 import { LoadPreviousButton } from './components/load-previous-button'
 import { ReviewScreen } from './components/review-screen'
 import { MessageWithAgents } from './components/message-with-agents'
@@ -1296,6 +1300,43 @@ export const Chat = ({
 
   const isClaudeOAuthActive = getClaudeOAuthStatus().connected
 
+  // Subscribe to hippo enabled state reactively (updates when /hippo enable/disable runs)
+  const hippoEnabled = useChatStore((state) => state.hippoEnabled)
+  const isHippoBinaryInstalled = useMemo(
+    () => hippoEnabled && fs.existsSync(HIPPO_BINARY),
+    [hippoEnabled],
+  )
+
+  // Track when hippo was last used (transition from searching → not searching)
+  const [hippoLastUsedAt, setHippoLastUsedAt] = useState<number | null>(null)
+  const prevSearchingMemoryRef = useRef(isSearchingMemory)
+  useEffect(() => {
+    if (prevSearchingMemoryRef.current && !isSearchingMemory) {
+      setHippoLastUsedAt(Date.now())
+    }
+    prevSearchingMemoryRef.current = isSearchingMemory
+  }, [isSearchingMemory])
+
+  // Fetch hippo session stats when enabled and binary is installed, refresh after each memory search
+  const chatSessionId = useChatStore((state) => state.chatSessionId)
+
+  // Reset hippoLastUsedAt when session changes (e.g. /new command)
+  useEffect(() => {
+    setHippoLastUsedAt(null)
+  }, [chatSessionId])
+  const hippoRecalls = useChatStore((state) => state.hippoRecalls)
+  const hippoConnectionOk = useChatStore((state) => state.hippoConnectionOk)
+  const [hippoStats, setHippoStats] = useState<HippoSessionStats | null>(null)
+  useEffect(() => {
+    if (!isHippoBinaryInstalled) {
+      setHippoStats(null)
+      return
+    }
+    if (!isSearchingMemory) {
+      getHippoSessionStats(chatSessionId).then(setHippoStats).catch(() => setHippoStats(null))
+    }
+  }, [isHippoBinaryInstalled, isSearchingMemory, chatSessionId])
+
   // Fetch Claude quota when OAuth is active
   const { data: claudeQuota } = useClaudeQuotaQuery({
     enabled: isClaudeOAuthActive,
@@ -1526,6 +1567,13 @@ export const Chat = ({
           isClaudeConnected={isClaudeOAuthActive}
           isClaudeActive={isClaudeActive}
           claudeQuota={claudeQuota}
+          isHippoEnabled={hippoEnabled}
+          isHippoBinaryInstalled={isHippoBinaryInstalled}
+          isHippoActive={isSearchingMemory}
+          hippoStats={hippoStats}
+          hippoRecalls={hippoRecalls}
+          hippoConnectionOk={hippoConnectionOk}
+          hippoLastUsedAt={hippoLastUsedAt}
         />
       </box>
     </box>

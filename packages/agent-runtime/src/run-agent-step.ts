@@ -3,6 +3,7 @@ import { supportsCacheControl } from '@codebuff/common/old-constants'
 import { TOOLS_WHICH_WONT_FORCE_NEXT_STEP } from '@codebuff/common/tools/constants'
 import { buildArray } from '@codebuff/common/util/array'
 import { AbortError, getErrorObject, isAbortError } from '@codebuff/common/util/error'
+import { sleep } from '@codebuff/common/util/promise'
 import { systemMessage, userMessage } from '@codebuff/common/util/messages'
 import { APICallError, type ToolSet } from 'ai'
 import { cloneDeep, mapValues } from 'lodash'
@@ -56,6 +57,36 @@ import type {
   CustomToolDefinitions,
   ProjectFileContext,
 } from '@codebuff/common/util/file'
+
+/** Status codes from upstream providers that are transient and safe to retry */
+const RETRYABLE_API_STATUS_CODES = new Set([500, 502, 503, 504])
+
+/** Max additional retry attempts for a single agent step on transient API errors */
+const MAX_STEP_RETRIES = 2
+
+/** Base delay in ms before the first retry (doubles each attempt, with jitter) */
+const STEP_RETRY_BASE_DELAY_MS = 2000
+
+/** Check if an error is a transient API error that is safe to retry.
+ * Note: 429 is deliberately excluded — the AI SDK handles rate limits via its own maxRetries. */
+function isRetryableApiError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  // Check 'status' (AI SDK's APICallError convention)
+  if ('status' in error) {
+    const status = (error as { status: unknown }).status
+    if (typeof status === 'number' && RETRYABLE_API_STATUS_CODES.has(status)) {
+      return true
+    }
+  }
+  // Check 'statusCode' (our convention)
+  if ('statusCode' in error) {
+    const statusCode = (error as { statusCode: unknown }).statusCode
+    if (typeof statusCode === 'number' && RETRYABLE_API_STATUS_CODES.has(statusCode)) {
+      return true
+    }
+  }
+  return false
+}
 
 async function additionalToolDefinitions(
   params: {
@@ -863,24 +894,61 @@ export async function loopAgentSteps(
 
       const creditsBefore = currentAgentState.directCreditsUsed
       const childrenBefore = currentAgentState.childRunIds.length
+
+      // Retry transient API errors (e.g. Anthropic 500s) with exponential backoff
+      let stepError: unknown
+      let stepResult: Awaited<ReturnType<typeof runAgentStep>> | undefined
+      for (let retryAttempt = 0; retryAttempt <= MAX_STEP_RETRIES; retryAttempt++) {
+        if (retryAttempt > 0) {
+          if (signal.aborted) throw new AbortError()
+          const baseDelay = STEP_RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1)
+          const jitter = 0.8 + Math.random() * 0.4
+          const delay = Math.round(baseDelay * jitter)
+          logger.warn(
+            {
+              attempt: retryAttempt + 1,
+              maxAttempts: MAX_STEP_RETRIES + 1,
+              delayMs: delay,
+              error: getErrorObject(stepError),
+            },
+            'Retrying agent step after transient API error',
+          )
+          await sleep(delay)
+        }
+        try {
+          stepResult = await runAgentStep({
+            ...params,
+
+            agentState: currentAgentState,
+            agentTemplate,
+            n,
+            prompt: currentPrompt,
+            runId,
+            spawnParams: currentParams,
+            system,
+            tools,
+            additionalToolDefinitions: additionalToolDefinitionsWithCache,
+          })
+          break
+        } catch (error) {
+          stepError = error
+          if (
+            !signal.aborted &&
+            retryAttempt < MAX_STEP_RETRIES &&
+            isRetryableApiError(error)
+          ) {
+            continue
+          }
+          throw error
+        }
+      }
+
       const {
         agentState: newAgentState,
         shouldEndTurn: llmShouldEndTurn,
         messageId,
         nResponses: generatedResponses,
-      } = await runAgentStep({
-        ...params,
-
-        agentState: currentAgentState,
-        agentTemplate,
-        n,
-        prompt: currentPrompt,
-        runId,
-        spawnParams: currentParams,
-        system,
-        tools,
-        additionalToolDefinitions: additionalToolDefinitionsWithCache,
-      })
+      } = stepResult!
 
       if (newAgentState.runId) {
         await addAgentStep({
@@ -1024,6 +1092,7 @@ export async function loopAgentSteps(
         type: 'error',
         message: 'Agent run error: ' + errorMessage,
         ...(statusCode !== undefined && { statusCode }),
+        // ...(params.prompt ? { details: `Error occurred during response to prompt: "${params.prompt}"` } : {}),
       },
     }
   }

@@ -1,8 +1,10 @@
 import fs from 'fs'
+import path from 'path'
 
 import { HIPPO_BINARY } from '../utils/hippo-hooks'
 import { logger } from '../utils/logger'
 import { getSystemMessage } from '../utils/message-history'
+import { getProjectRoot } from '../project-files'
 import { saveSettings, loadSettings } from '../utils/settings'
 
 import type { ChatMessage } from '../types/chat'
@@ -68,14 +70,25 @@ export const handleHippoStatus = (): {
 } => {
   const enabled = getHippoEnabled()
   const binaryExists = fs.existsSync(HIPPO_BINARY)
+  const loggingEnabled = loadSettings().hippoLoggingEnabled === true
   
   const statusLines = [
     `Hippo memory: ${enabled ? 'enabled' : 'disabled'}`,
     `Binary: ${binaryExists ? 'installed' : 'not found'} (${HIPPO_BINARY})`,
+    `Debug logging: ${loggingEnabled ? 'enabled' : 'disabled'}`,
   ]
   
   if (enabled && !binaryExists) {
     statusLines.push('⚠️  Hippo is enabled but binary not found. Install hippo to use memory features.')
+  }
+
+  if (loggingEnabled) {
+    try {
+      const debugDir = path.join(getProjectRoot(), 'debug')
+      statusLines.push(`Log files: ${debugDir}/hippo-interactions.log, ${debugDir}/hippo-prompts.log`)
+    } catch {
+      // Ignore if project root unavailable
+    }
   }
   
   return {
@@ -84,4 +97,47 @@ export const handleHippoStatus = (): {
       getSystemMessage(statusLines.join('\n')),
     ],
   }
+}
+
+export const handleHippoLogEnable = (): {
+  postUserMessage: (messages: ChatMessage[]) => ChatMessage[]
+} => {
+  logger.info('[hippo] Enabling Hippo debug logging')
+  saveSettings({ hippoLoggingEnabled: true })
+
+  let logDir = 'debug'
+  try {
+    logDir = path.join(getProjectRoot(), 'debug')
+  } catch {
+    // Ignore
+  }
+
+  return {
+    postUserMessage: (messages) => [
+      ...messages,
+      getSystemMessage(`Hippo debug logging enabled. Logs written to:\n  ${logDir}/hippo-interactions.log\n  ${logDir}/hippo-prompts.log\nLogs truncate at 20MB.`),
+    ],
+  }
+}
+
+export const handleHippoLogDisable = (): {
+  postUserMessage: (messages: ChatMessage[]) => ChatMessage[]
+} => {
+  logger.info('[hippo] Disabling Hippo debug logging')
+  saveSettings({ hippoLoggingEnabled: false })
+
+  return {
+    postUserMessage: (messages) => [
+      ...messages,
+      getSystemMessage('Hippo debug logging disabled.'),
+    ],
+  }
+}
+
+export const handleHippoLogToggle = (): {
+  postUserMessage: (messages: ChatMessage[]) => ChatMessage[]
+} => {
+  const current = loadSettings().hippoLoggingEnabled === true
+  if (current) return handleHippoLogDisable()
+  return handleHippoLogEnable()
 }

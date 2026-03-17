@@ -366,13 +366,22 @@ export const useSendMessage = ({
       )
 
       // Extract relevant context from hippo memories (async local CLI call, no server needed)
+      const { chatSessionId } = useChatStore.getState()
       setStreamStatus('waiting')
       setIsSearchingMemory(true)
       let hippoContext: string
       try {
-        hippoContext = await getHippoContext(effectivePrompt, previousRunStateRef.current)
+        const hippoResult = await getHippoContext(effectivePrompt, previousRunStateRef.current, chatSessionId)
+        hippoContext = hippoResult.context
+        if (hippoResult.connectionOk !== null) {
+          useChatStore.getState().setHippoConnectionOk(hippoResult.connectionOk)
+        }
       } finally {
         setIsSearchingMemory(false)
+      }
+
+      if (hippoContext) {
+        useChatStore.getState().incrementHippoRecalls()
       }
 
       const promptWithHippoContext = hippoContext
@@ -491,6 +500,7 @@ export const useSendMessage = ({
           actualCredits,
           agentMode,
           prompt: effectivePrompt, // Use original prompt without hippo context for storage
+          sessionId: chatSessionId,
           timerController,
           updater,
           aiMessageId,
@@ -506,8 +516,6 @@ export const useSendMessage = ({
       } catch (error) {
         handleRunError({
           error,
-          prompt: effectivePrompt,
-          agentMode,
           timerController,
           updater,
           setIsRetrying,
