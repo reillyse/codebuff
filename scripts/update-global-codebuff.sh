@@ -1,81 +1,52 @@
 #!/bin/bash
-# Build and install local codebuff CLI globally
+# Fetch latest upstream codebuff, rebase patches, then build and install globally
 # Usage: ./scripts/update-global-codebuff.sh
 #
 # This script:
 # 1. Fetches latest from origin/main
 # 2. Rebases your patch branch on top of origin/main
-# 3. Builds the CLI and installs it globally
+# 3. Delegates to build-codebuff.sh to build and install globally
 #
-# Works with nvm, fnm, or system node.
+# If you just want to build without pulling upstream changes,
+# use build-codebuff.sh instead.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CLI_DIR="$PROJECT_ROOT/cli"
 
 # Your personal patch branch
 PATCH_BRANCH="reillyse/hippo-integration"
 
-echo "🔄 Updating codebuff: rebase patches on latest main + install globally"
+echo "🔄 Updating codebuff: fetch upstream + rebase patches + build"
 echo ""
-
-# Get current version before update
-CURRENT_VERSION=$(codebuff --version 2>/dev/null || echo "not installed")
-echo "Current global version: $CURRENT_VERSION"
 
 cd "$PROJECT_ROOT"
 
-# Reinstall dependencies in case they changed
-echo "📦 Installing dependencies..."
-bun install
+# Fetch latest from upstream
+echo "⬇️  Fetching latest from origin/main..."
+git fetch origin main
 
-echo ""
-
-# Find where global npm binaries are installed
-GLOBAL_BIN=$(npm config get prefix)/bin
-if [ ! -d "$GLOBAL_BIN" ]; then
-  echo "❌ Could not find global npm bin directory: $GLOBAL_BIN"
-  exit 1
+# Switch to patch branch if not already on it
+CURRENT_BRANCH=$(git branch --show-current)
+if [ "$CURRENT_BRANCH" != "$PATCH_BRANCH" ]; then
+  echo "🔀 Switching to $PATCH_BRANCH..."
+  git checkout "$PATCH_BRANCH"
 fi
-echo "Global bin directory: $GLOBAL_BIN"
 
-# Use a dev version number for local builds
-VERSION="0.0.0-local.$(date +%Y%m%d%H%M%S)"
-echo "Building version: $VERSION"
-echo ""
-
-# Build the binary
-echo "📦 Building CLI binary..."
-cd "$CLI_DIR"
-export npm_package_version="$VERSION"
-bun run build:binary
-
-# Check if binary was created
-BINARY_PATH="$CLI_DIR/bin/codebuff"
-if [ ! -f "$BINARY_PATH" ]; then
-  echo "❌ Binary not found at: $BINARY_PATH"
+# Rebase patch branch on top of latest origin/main
+echo "🔁 Rebasing $PATCH_BRANCH onto origin/main..."
+if ! git rebase origin/main; then
+  echo ""
+  echo "❌ Rebase failed! Resolve conflicts, then run:"
+  echo "   git rebase --continue"
+  echo "   ./scripts/build-codebuff.sh"
   exit 1
 fi
 
-# Copy to global bin directory
 echo ""
-echo "📋 Installing to $GLOBAL_BIN/codebuff..."
-
-# Remove existing binary first (may need to handle permissions)
-if [ -f "$GLOBAL_BIN/codebuff" ]; then
-  rm -f "$GLOBAL_BIN/codebuff" 2>/dev/null || {
-    echo "⚠️  Need elevated permissions to replace existing binary"
-    sudo rm -f "$GLOBAL_BIN/codebuff"
-  }
-fi
-
-cp "$BINARY_PATH" "$GLOBAL_BIN/codebuff"
-chmod +x "$GLOBAL_BIN/codebuff"
-
-# Verify installation
+echo "✅ Rebase successful"
 echo ""
-NEW_VERSION=$(codebuff --version 2>/dev/null || echo "unknown")
-echo "✅ Installed: $NEW_VERSION"
-echo "   Location: $(which codebuff)"
+
+# Delegate to build script
+exec "$SCRIPT_DIR/build-codebuff.sh"

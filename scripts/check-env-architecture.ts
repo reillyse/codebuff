@@ -82,6 +82,7 @@ const packageConfigs: PackageConfig[] = [
     enforceRestrictedImports: true,
     additionalProcessEnvAllowlist: [
       'cli/src/init/init-direnv.ts', // Loads direnv vars into process.env at startup
+      'cli/src/utils/hippo-hooks.ts', // Reads HIPPO_PATH for local hippo binary location
     ],
   },
   {
