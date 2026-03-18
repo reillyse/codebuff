@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 
-import { HIPPO_BINARY } from '../utils/hippo-hooks'
+import { HIPPO_BINARY, resetHippoEnabledCache } from '../utils/hippo-hooks'
 import { resetHippoLoggingCache } from '../utils/hippo-logger'
 import { logger } from '../utils/logger'
 import { getSystemMessage } from '../utils/message-history'
@@ -16,6 +16,7 @@ export const handleHippoEnable = (): {
   logger.info('[hippo] Enabling Hippo memory integration')
 
   saveSettings({ hippoEnabled: true })
+  resetHippoEnabledCache()
 
   // Warn if hippo binary is not installed
   if (!fs.existsSync(HIPPO_BINARY)) {
@@ -40,6 +41,7 @@ export const handleHippoDisable = (): {
 } => {
   logger.info('[hippo] Disabling Hippo memory integration')
   saveSettings({ hippoEnabled: false })
+  resetHippoEnabledCache()
 
   return {
     postUserMessage: (messages) => [

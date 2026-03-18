@@ -815,6 +815,7 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       mock.module('@codebuff/common/util/promise', () => ({
         ...promiseUtils,
         sleep: async () => {},
+        abortableSleep: async () => {},
       }))
     })
 
@@ -937,6 +938,55 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(result.output.type).toBe('error')
       if (result.output.type === 'error') {
         expect(result.output.message).toContain('Internal server error')
+      }
+    })
+
+    it('should abort immediately when signal fires during retry sleep', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const abortController = new AbortController()
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        throw new APICallError({
+          message: 'Internal server error',
+          url: 'https://api.anthropic.com/v1/messages',
+          requestBodyValues: {},
+          statusCode: 500,
+          responseHeaders: undefined,
+          responseBody: undefined,
+          isRetryable: true,
+          data: undefined,
+        })
+      }
+
+      // Abort the signal when the retry message is displayed (simulates user cancel during sleep)
+      loopAgentStepsBaseParams.onResponseChunk = (chunk) => {
+        if (typeof chunk === 'string' && chunk.includes('retrying')) {
+          abortController.abort()
+        }
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        signal: abortController.signal,
+      })
+
+      // Should have only tried once - abort during sleep prevents second attempt
+      expect(promptCallCount).toBe(1)
+      expect(result.output.type).toBe('error')
+      if (result.output.type === 'error') {
+        expect(result.output.message).toBe('Run cancelled by user')
       }
     })
 

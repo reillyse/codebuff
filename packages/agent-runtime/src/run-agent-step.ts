@@ -3,7 +3,7 @@ import { supportsCacheControl } from '@codebuff/common/old-constants'
 import { TOOLS_WHICH_WONT_FORCE_NEXT_STEP } from '@codebuff/common/tools/constants'
 import { buildArray } from '@codebuff/common/util/array'
 import { AbortError, getErrorObject, isAbortError } from '@codebuff/common/util/error'
-import { sleep } from '@codebuff/common/util/promise'
+import { abortableSleep } from '@codebuff/common/util/promise'
 import { systemMessage, userMessage } from '@codebuff/common/util/messages'
 import { APICallError, type ToolSet } from 'ai'
 import { cloneDeep, mapValues } from 'lodash'
@@ -922,7 +922,8 @@ export async function loopAgentSteps(
           onResponseChunk(
             `⚠️ Transient API error${statusCode ? ` (${statusCode})` : ''}, retrying in ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`,
           )
-          await sleep(delay)
+          await abortableSleep(delay, signal)
+          if (signal.aborted) throw new AbortError()
         }
         try {
           stepResult = await runAgentStep({

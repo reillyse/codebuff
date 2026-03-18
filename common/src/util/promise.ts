@@ -44,6 +44,28 @@ export async function withRetry<T>(
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /**
+ * Sleep that resolves early (without throwing) when the given AbortSignal fires.
+ * Callers should check `signal.aborted` after awaiting to handle the abort.
+ */
+export const abortableSleep = (ms: number, signal: AbortSignal): Promise<void> => {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve()
+      return
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
  * Wraps a promise with a timeout
  * @param promise The promise to wrap
  * @param timeoutMs Timeout in milliseconds

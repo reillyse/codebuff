@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'child_process'
+import { spawn } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -247,12 +247,23 @@ const getOutcome = (runState: RunState, filesChanged: string[], filesRead: strin
   return 'success'
 }
 
+let cachedHippoEnabled: boolean | null = null
+
+/**
+ * Reset the cached hippoEnabled value. Call after saveSettings({ hippoEnabled: ... }).
+ */
+export const resetHippoEnabledCache = (): void => {
+  cachedHippoEnabled = null
+}
+
 /**
  * Check if hippo is enabled and available
  */
 const isHippoAvailable = (): boolean => {
-  const settings = loadSettings()
-  if (settings.hippoEnabled === false) {
+  if (cachedHippoEnabled === null) {
+    cachedHippoEnabled = loadSettings().hippoEnabled !== false
+  }
+  if (!cachedHippoEnabled) {
     logger.debug({}, 'Hippo is disabled in settings')
     return false
   }
@@ -269,43 +280,7 @@ const isHippoAvailable = (): boolean => {
 }
 
 /**
- * Run a hippo CLI command synchronously with timeout. Returns stdout or null on failure.
- */
-const runHippoSync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): string | null => {
-  const startTime = Date.now()
-  try {
-    const result = spawnSync(HIPPO_BINARY, [...args, '--quiet'], {
-      encoding: 'utf-8',
-      timeout: timeoutMs,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: process.cwd(),
-    })
-
-    if (result.signal || result.error || result.status !== 0) {
-      logger.debug(
-        { signal: result.signal, error: result.error?.message, status: result.status, args: args.slice(0, 2) },
-        'Hippo command failed'
-      )
-      logHippoInteraction(args, null, Date.now() - startTime)
-      return null
-    }
-
-    const output = result.stdout?.trim() ?? null
-    logHippoInteraction(args, output, Date.now() - startTime)
-    return output
-  } catch (error) {
-    logger.debug(
-      { error: error instanceof Error ? error.message : String(error) },
-      'Failed to run hippo command'
-    )
-    logHippoInteraction(args, null, Date.now() - startTime)
-    return null
-  }
-}
-
-/**
  * Run a hippo CLI command asynchronously with timeout. Returns stdout or null on failure.
- * Unlike runHippoSync, this doesn't block the event loop — the UI stays responsive.
  */
 const runHippoAsync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): Promise<string | null> => {
   const startTime = Date.now()
@@ -341,7 +316,7 @@ const runHippoAsync = (args: string[], timeoutMs = HIPPO_SEARCH_TIMEOUT_MS): Pro
           resolve(null)
           return
         }
-        resolve(Buffer.concat(chunks).toString('utf-8').trim() || null)
+        resolve(Buffer.concat(chunks).toString('utf-8').trim())
       })
 
       child.on('error', (error) => {
@@ -459,8 +434,8 @@ export const getHippoContext = async (
     }
 
     const result = await runHippoAsync(args, HIPPO_CONTEXT_SEARCH_TIMEOUT_MS)
-    if (!result) {
-      logHippoPrompt('response', '(no results)')
+    if (result === null) {
+      logHippoPrompt('response', '(command failed)')
       return { context: '', connectionOk: false }
     }
 
@@ -591,65 +566,73 @@ export const storePruningSummaryToHippo = (params: {
   sessionId: string
 }): void => {
   try {
-    if (!isHippoAvailable()) return
-
     const { runState, sessionId } = params
     const messageHistory = runState.sessionState?.mainAgentState?.messageHistory ?? []
 
-    // Quick check: skip full scan if no message contains a conversation summary
-    const hasSummary = messageHistory.some((m) =>
-      m.role === 'user' &&
-      Array.isArray(m.content) &&
-      m.content.some((b) => b.type === 'text' && typeof b.text === 'string' && (b.text as string).includes('<conversation_summary>')),
-    )
-    if (!hasSummary) return
-
-    for (const message of messageHistory) {
-      if (message.role !== 'user' || !Array.isArray(message.content)) continue
-
-      for (const block of message.content) {
-        if (block.type !== 'text' || typeof block.text !== 'string') continue
-
-        const match = (block.text as string).match(
-          /<conversation_summary>([\s\S]*?)<\/conversation_summary>/,
-        )
-        if (!match) continue
-
-        let summary = match[1].trim()
-        if (summary.length > 2000) {
-          summary = summary.substring(0, 2000) + '...'
-        }
-
-        // Deduplicate: skip if we already stored this exact summary
-        const prefix = summary.substring(0, 100)
-        const suffix = summary.substring(Math.max(0, summary.length - 100))
-        const fingerprint = `${summary.length}:${prefix}:${suffix}`
-        if (fingerprint === lastStoredSummaryHash) {
-          logger.debug({ sessionId }, 'Pruning summary already stored, skipping')
-          return
-        }
-        lastStoredSummaryHash = fingerprint
-
-        logger.debug(
-          { sessionId, summaryLength: summary.length },
-          'Storing pruning summary to hippo',
-        )
-
-        logHippoPrompt('store', summary, { 'Session': sessionId, 'Type': 'pruning-summary' })
-
-        spawnHippoStore([
-          'store',
-          '--agent', 'codebuff',
-          '--session', sessionId,
-          '--input', 'Context pruning summary',
-          '--output', summary,
-          '--outcome', 'discovery',
-        ])
-        return
+    // The context-pruner places the summary in the first user message of the pruned
+    // history, so we only need to check the first few messages — not the entire array.
+    // This makes the common case (no pruning) O(1) instead of O(n).
+    const SUMMARY_SEARCH_LIMIT = 5
+    let summaryMessageIndex = -1
+    for (let i = 0; i < Math.min(messageHistory.length, SUMMARY_SEARCH_LIMIT); i++) {
+      const m = messageHistory[i]
+      if (
+        m.role === 'user' &&
+        Array.isArray(m.content) &&
+        m.content.some((b) => b.type === 'text' && typeof b.text === 'string' && (b.text as string).includes('<conversation_summary>'))
+      ) {
+        summaryMessageIndex = i
+        break
       }
     }
-  } catch {
+    if (summaryMessageIndex === -1) return
 
+    // Only check hippo availability after confirming pruning happened
+    if (!isHippoAvailable()) return
+
+    const message = messageHistory[summaryMessageIndex]
+
+    for (const block of message.content as Array<{ type: string; text?: unknown }>) {
+      if (block.type !== 'text' || typeof block.text !== 'string') continue
+
+      const match = (block.text as string).match(
+        /<conversation_summary>([\s\S]*?)<\/conversation_summary>/,
+      )
+      if (!match) continue
+
+      let summary = match[1].trim()
+      if (summary.length > 2000) {
+        summary = summary.substring(0, 2000) + '...'
+      }
+
+      // Deduplicate: skip if we already stored this exact summary
+      const prefix = summary.substring(0, 100)
+      const suffix = summary.substring(Math.max(0, summary.length - 100))
+      const fingerprint = `${summary.length}:${prefix}:${suffix}`
+      if (fingerprint === lastStoredSummaryHash) {
+        logger.debug({ sessionId }, 'Pruning summary already stored, skipping')
+        return
+      }
+      lastStoredSummaryHash = fingerprint
+
+      logger.debug(
+        { sessionId, summaryLength: summary.length },
+        'Storing pruning summary to hippo',
+      )
+
+      logHippoPrompt('store', summary, { 'Session': sessionId, 'Type': 'pruning-summary' })
+
+      spawnHippoStore([
+        'store',
+        '--agent', 'codebuff',
+        '--session', sessionId,
+        '--input', 'Context pruning summary',
+        '--output', summary,
+        '--outcome', 'discovery',
+      ])
+      return
+    }
+  } catch {
     logger.error({ sessionId: params.sessionId }, 'Failed to store pruning summary to hippo')
   }
 }
@@ -681,20 +664,26 @@ const isErrorWorthStoring = (error: unknown): boolean => {
 export const storeErrorToHippo = (params: {
   error: unknown
   sessionId: string
+  elapsedMs?: number
 }): void => {
   if (!isHippoAvailable()) return
 
-  const { error, sessionId } = params
+  const { error, sessionId, elapsedMs } = params
   if (!isErrorWorthStoring(error)) return
 
   const errorMessage = error instanceof Error ? error.message : String(error)
   const truncated = errorMessage.length > 500 ? errorMessage.substring(0, 500) + '...' : errorMessage
 
-  logger.debug({ sessionId, errorLength: errorMessage.length }, 'Storing error to hippo memory')
+  const elapsedSeconds = elapsedMs != null ? Math.floor(elapsedMs / 1000) : null
+  const elapsedSuffix = elapsedSeconds != null ? ` (${elapsedSeconds}s)` : ''
+  const outputLine = `Error${elapsedSuffix}: ${truncated}`
 
-  logHippoPrompt('store', `Error: ${truncated}`, {
+  logger.debug({ sessionId, errorLength: errorMessage.length, elapsedMs }, 'Storing error to hippo memory')
+
+  logHippoPrompt('store', outputLine, {
     'Session': sessionId,
     'Type': 'error',
+    ...(elapsedSeconds != null && { 'Elapsed': `${elapsedSeconds}s` }),
   })
 
   spawnHippoStore([
@@ -702,7 +691,7 @@ export const storeErrorToHippo = (params: {
     '--agent', 'codebuff',
     '--session', sessionId,
     '--input', 'Error during run',
-    '--output', `Error: ${truncated}`,
+    '--output', outputLine,
     '--outcome', 'failure',
   ])
 }

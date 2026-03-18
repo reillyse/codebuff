@@ -429,12 +429,13 @@ export const handleRunError = (params: {
     isProcessingQueueRef,
     isQueuePausedRef,
   })
-  timerController.stop('error')
+  const timerResult = timerController.stop('error')
 
   // Store meaningful errors to hippo memory (background, non-blocking)
   storeErrorToHippo({
     error,
     sessionId: useChatStore.getState().chatSessionId,
+    elapsedMs: timerResult?.elapsedMs,
   })
 
   if (isOutOfCreditsError(error)) {

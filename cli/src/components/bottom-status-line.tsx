@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 
 import { useTheme } from '../hooks/use-theme'
+
 import { formatElapsedTime } from '../utils/format-elapsed-time'
 import { formatResetTime } from '../utils/time-format'
 
@@ -32,7 +33,7 @@ interface BottomStatusLineProps {
 
 /**
  * Bottom status line component - shows below the input box
- * Displays Claude subscription status and/or Codebuff Strong status
+ * Displays hippo memory status and/or Claude subscription status
  */
 export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
   isClaudeConnected,
@@ -115,7 +116,7 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
         ? theme.success
         : theme.muted
 
-  // Shared hover detail for Claude (used in both exhausted and non-exhausted branches)
+  // Shared hover detail for Claude
   const claudeHoverDetail = isClaudeHovered && claudeQuota ? (
     <>
       <text style={{ fg: theme.foreground }}> Claude</text>
@@ -164,6 +165,8 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
               </text>
             ) : lastUsedElapsed != null ? (
               <text style={{ fg: theme.muted }}>{` · ${formatLastUsed(lastUsedElapsed)}`}</text>
+            ) : hippoConnectionOk === true ? (
+              <text style={{ fg: theme.muted }}> · connected</text>
             ) : (
               <text style={{ fg: theme.muted }}> · idle</text>
             )

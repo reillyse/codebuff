@@ -1389,12 +1389,12 @@ export const Chat = ({
     return ` ${segments.join('   ')} `
   }, [queuePreviewTitle, pausedQueueText])
 
+  // Determine if Claude is actively streaming/waiting
+  const isClaudeActive = isStreaming || isWaitingForResponse
+
   const shouldShowStatusLine =
     !feedbackMode &&
     (hasStatusIndicatorContent || shouldShowQueuePreview || !isAtBottom)
-
-  // Determine if Claude is actively streaming/waiting
-  const isClaudeActive = isStreaming || isWaitingForResponse
 
   // Track mouse movement for ad activity (throttled)
   const lastMouseActivityRef = useRef<number>(0)
