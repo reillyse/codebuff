@@ -1,4 +1,4 @@
-import { spawn } from 'child_process'
+import { execFileSync, spawn } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -10,8 +10,21 @@ import { loadSettings } from './settings'
 import type { RunState } from '@codebuff/sdk'
 import type { AgentMode } from './constants'
 
-// Path to hippo binary - can be overridden via HIPPO_PATH env var
-export const HIPPO_BINARY = process.env.HIPPO_PATH ?? path.join(os.homedir(), 'Programming/hippo/build/hippo')
+// Resolve the hippo binary path: env override → PATH lookup → dev fallback
+export const resolveHippoBinary = (): string => {
+  if (process.env.HIPPO_PATH) return process.env.HIPPO_PATH
+
+  try {
+    const result = execFileSync('which', ['hippo'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    if (result) return result
+  } catch {
+    // hippo not found in PATH
+  }
+
+  return path.join(os.homedir(), 'Programming/hippo/build/hippo')
+}
+
+export const HIPPO_BINARY = resolveHippoBinary()
 // Constants for hippo search
 const HIPPO_SEARCH_TIMEOUT_MS = 5000 // 5 second timeout for search
 const HIPPO_CONTEXT_SEARCH_TIMEOUT_MS = 15000 // 15 second timeout for hippo context-search
