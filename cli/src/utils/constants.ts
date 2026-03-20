@@ -1,5 +1,11 @@
 import type { ToolName } from '@codebuff/sdk'
 
+/**
+ * Whether this build is running in Freebuff mode.
+ * Always false in this fork.
+ */
+export const IS_FREEBUFF = false
+
 // Agent IDs that should not be rendered in the CLI UI
 export const HIDDEN_AGENT_IDS = ['codebuff/context-pruner'] as const
 
