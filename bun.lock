@@ -81,6 +81,20 @@
         "strip-ansi": "^7.1.2",
       },
     },
+    "cli-lite": {
+      "name": "@codebuff/cli-lite",
+      "version": "0.1.0",
+      "bin": {
+        "codebuff-lite": "./src/index.ts",
+      },
+      "dependencies": {
+        "@codebuff/sdk": "workspace:*",
+        "commander": "^14.0.1",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.3.5",
+      },
+    },
     "common": {
       "name": "@codebuff/common",
       "version": "1.0.0",
@@ -438,6 +452,8 @@
     "@codebuff/build-tools": ["@codebuff/build-tools@workspace:packages/build-tools"],
 
     "@codebuff/cli": ["@codebuff/cli@workspace:cli"],
+
+    "@codebuff/cli-lite": ["@codebuff/cli-lite@workspace:cli-lite"],
 
     "@codebuff/code-map": ["@codebuff/code-map@workspace:packages/code-map"],
 
