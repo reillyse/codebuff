@@ -27,6 +27,12 @@ interface BottomStatusLineProps {
   hippoRecalls?: number
   /** Whether hippo CLI is confirmed reachable (null = unknown, true = ok, false = failed) */
   hippoConnectionOk?: boolean | null
+  /** Last error message from hippo connection failure */
+  hippoLastError?: string | null
+  /** Whether a hippo connection retry is in progress */
+  isHippoRetrying?: boolean
+  /** Callback to trigger a hippo connection retry */
+  onHippoRetry?: () => void
   /** Timestamp (ms) when hippo was last used in this session */
   hippoLastUsedAt?: number | null
 }
@@ -45,6 +51,9 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
   hippoStats,
   hippoRecalls = 0,
   hippoConnectionOk,
+  hippoLastError,
+  isHippoRetrying,
+  onHippoRetry,
   hippoLastUsedAt,
 }) => {
   const theme = useTheme()
@@ -110,11 +119,13 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
   const hasSessionStats = (hippoStats != null && hippoStats.runs > 0) || hippoRecalls > 0
   const hippoDotColor = !isHippoBinaryInstalled
     ? theme.error
-    : hippoConnectionOk === false
-      ? theme.warning
-      : hippoConnectionOk === true && (isHippoActive || hasConfirmedSuccess)
-        ? theme.success
-        : theme.muted
+    : isHippoRetrying
+      ? theme.info
+      : hippoConnectionOk === false
+        ? theme.warning
+        : hippoConnectionOk === true && (isHippoActive || hasConfirmedSuccess)
+          ? theme.success
+          : theme.muted
 
   // Shared hover detail for Claude
   const claudeHoverDetail = isClaudeHovered && claudeQuota ? (
@@ -156,8 +167,15 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
               <text style={{ fg: theme.info }}> · searching...</text>
             ) : !isHippoBinaryInstalled ? (
               <text style={{ fg: theme.error }}> · not found</text>
+            ) : isHippoRetrying ? (
+              <text style={{ fg: theme.info }}> · retrying...</text>
             ) : hippoConnectionOk === false ? (
-              <text style={{ fg: theme.warning }}> · disconnected</text>
+              <>
+                <text style={{ fg: theme.warning }}>{` · ${formatHippoError(hippoLastError)}`}</text>
+                {onHippoRetry && (
+                  <text style={{ fg: theme.info }} selectable={false} onMouseDown={onHippoRetry}> [retry]</text>
+                )}
+              </>
             ) : hasSessionStats ? (
               <text style={{ fg: theme.muted }}>
                 {formatSessionStats(hippoStats?.runs ?? 0, hippoRecalls)}
@@ -173,6 +191,8 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
           ) : (
             !isHippoBinaryInstalled ? (
               <text style={{ fg: theme.muted }}> · not found</text>
+            ) : isHippoRetrying ? (
+              <text style={{ fg: theme.muted }}> · retrying...</text>
             ) : hippoConnectionOk === false ? (
               <text style={{ fg: theme.muted }}> · disconnected</text>
             ) : null
@@ -230,6 +250,13 @@ export const BottomStatusLine: React.FC<BottomStatusLineProps> = ({
       )}
     </box>
   )
+}
+
+/** Format hippo error for the hover display — shows error detail or generic 'disconnected' */
+const formatHippoError = (lastError: string | null | undefined): string => {
+  if (!lastError) return 'disconnected'
+  const truncated = lastError.length > 40 ? lastError.substring(0, 40) + '…' : lastError
+  return `disconnected: ${truncated}`
 }
 
 /** Format "last used" label — shows "just now" for recent, otherwise "Xm ago" */

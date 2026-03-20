@@ -375,6 +375,7 @@ export const useSendMessage = ({
         hippoContext = hippoResult.context
         if (hippoResult.connectionOk !== null) {
           useChatStore.getState().setHippoConnectionOk(hippoResult.connectionOk)
+          useChatStore.getState().setHippoLastError(hippoResult.lastError)
         }
       } finally {
         setIsSearchingMemory(false)

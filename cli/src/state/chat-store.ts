@@ -76,6 +76,7 @@ export type ChatStoreState = {
   hippoEnabled: boolean
   hippoRecalls: number
   hippoConnectionOk: boolean | null
+  hippoLastError: string | null
   askUserState: AskUserState
   pendingAttachments: PendingAttachment[]
   pendingBashMessages: PendingBashMessage[]
@@ -148,6 +149,7 @@ type ChatStoreActions = {
   setHippoEnabled: (enabled: boolean) => void
   incrementHippoRecalls: () => void
   setHippoConnectionOk: (ok: boolean | null) => void
+  setHippoLastError: (error: string | null) => void
   setAskUserState: (state: AskUserState) => void
   updateAskUserAnswer: (questionIndex: number, optionIndex: number) => void
   updateAskUserOtherText: (questionIndex: number, text: string) => void
@@ -203,6 +205,7 @@ const initialState: ChatStoreState = {
   hippoEnabled: loadSettings().hippoEnabled !== false,
   hippoRecalls: 0,
   hippoConnectionOk: null,
+  hippoLastError: null,
   askUserState: null,
   pendingAttachments: [],
   pendingBashMessages: [],
@@ -344,6 +347,7 @@ export const useChatStore = create<ChatStore>()(
         state.hippoEnabled = enabled
         state.hippoRecalls = 0
         state.hippoConnectionOk = null
+        state.hippoLastError = null
       }),
 
     incrementHippoRecalls: () =>
@@ -354,6 +358,14 @@ export const useChatStore = create<ChatStore>()(
     setHippoConnectionOk: (ok) =>
       set((state) => {
         state.hippoConnectionOk = ok
+        if (ok !== false) {
+          state.hippoLastError = null
+        }
+      }),
+
+    setHippoLastError: (error) =>
+      set((state) => {
+        state.hippoLastError = error
       }),
 
     setAskUserState: (askUserState) =>
@@ -540,6 +552,7 @@ export const useChatStore = create<ChatStore>()(
         state.hippoEnabled = loadSettings().hippoEnabled !== false
         state.hippoRecalls = initialState.hippoRecalls
         state.hippoConnectionOk = initialState.hippoConnectionOk
+        state.hippoLastError = initialState.hippoLastError
         state.askUserState = initialState.askUserState
         state.pendingAttachments = []
         state.pendingBashMessages = []

@@ -2,12 +2,16 @@ import fs from 'fs'
 import path from 'node:path'
 import os from 'os'
 
+import {
+  CHATGPT_OAUTH_CLIENT_ID,
+  CHATGPT_OAUTH_TOKEN_URL,
+} from '@codebuff/common/constants/chatgpt-oauth'
 import { CLAUDE_OAUTH_CLIENT_ID } from '@codebuff/common/constants/claude-oauth'
 import { env } from '@codebuff/common/env'
 import { userSchema } from '@codebuff/common/util/credentials'
 import { z } from 'zod/v4'
 
-import { getClaudeOAuthTokenFromEnv } from './env'
+import { getChatGptOAuthTokenFromEnv, getClaudeOAuthRefreshTokenFromEnv, getClaudeOAuthTokenFromEnv } from './env'
 
 import type { ClientEnv } from '@codebuff/common/types/contracts/env'
 import type { User } from '@codebuff/common/util/credentials'
@@ -22,6 +26,13 @@ const claudeOAuthSchema = z.object({
   connectedAt: z.number(),
 })
 
+const chatGptOAuthSchema = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string(),
+  expiresAt: z.number(),
+  connectedAt: z.number(),
+})
+
 /**
  * Unified schema for the credentials file.
  * Contains both Codebuff user credentials and Claude OAuth credentials.
@@ -29,6 +40,7 @@ const claudeOAuthSchema = z.object({
 const credentialsFileSchema = z.object({
   default: userSchema.optional(),
   claudeOAuth: claudeOAuthSchema.optional(),
+  chatgptOAuth: chatGptOAuthSchema.optional(),
 })
 
 const ensureDirectoryExistsSync = (dir: string) => {
@@ -92,19 +104,62 @@ export interface ClaudeOAuthCredentials {
   connectedAt: number // Unix timestamp in milliseconds
 }
 
+export interface ChatGptOAuthCredentials {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number // Unix timestamp in milliseconds
+  connectedAt: number // Unix timestamp in milliseconds
+}
+
+/**
+ * In-memory cache for credentials obtained by refreshing env-var-provided refresh tokens.
+ * Without this cache, every call to getClaudeOAuthCredentials would return expiresAt=0
+ * (since env vars are stateless), causing a refresh on every API call.
+ */
+let envRefreshCredentialCache: { accessToken: string; expiresAt: number; connectedAt: number } | null = null
+
+export const _resetEnvRefreshCacheForTesting = () => { envRefreshCredentialCache = null }
+
 /**
  * Get Claude OAuth credentials from file or environment variable.
- * Environment variable takes precedence.
+ * Environment variables take precedence over file-based credentials.
+ *
+ * Supports three env var modes:
+ * - CODEBUFF_CLAUDE_OAUTH_REFRESH_TOKEN only: forces immediate token refresh
+ * - Both CODEBUFF_CLAUDE_OAUTH_TOKEN + REFRESH_TOKEN: uses access token until expired, then refreshes
+ * - CODEBUFF_CLAUDE_OAUTH_TOKEN only: legacy mode, assumes token is long-lived
+ *
  * @returns OAuth credentials or null if not found
  */
 export const getClaudeOAuthCredentials = (
   clientEnv: ClientEnv = env,
 ): ClaudeOAuthCredentials | null => {
-  // Check environment variable first
+  // Check environment variables first
   const envToken = getClaudeOAuthTokenFromEnv()
+  const envRefreshToken = getClaudeOAuthRefreshTokenFromEnv()
+
+  if (envRefreshToken) {
+    const bufferMs = 5 * 60 * 1000
+    // If we have a cached access token from a previous refresh that's still valid, use it
+    if (envRefreshCredentialCache && envRefreshCredentialCache.expiresAt > Date.now() + bufferMs) {
+      return {
+        accessToken: envRefreshCredentialCache.accessToken,
+        refreshToken: envRefreshToken,
+        expiresAt: envRefreshCredentialCache.expiresAt,
+        connectedAt: envRefreshCredentialCache.connectedAt,
+      }
+    }
+    // No valid cache — return credentials that will trigger a refresh via getValidClaudeOAuthCredentials
+    return {
+      accessToken: envToken ?? '',
+      refreshToken: envRefreshToken,
+      expiresAt: 0, // Forces immediate refresh
+      connectedAt: Date.now(),
+    }
+  }
+
   if (envToken) {
-    // Return a synthetic credentials object for env var tokens
-    // These tokens are assumed to be valid and non-expiring for simplicity
+    // Legacy: access token only, no refresh capability
     return {
       accessToken: envToken,
       refreshToken: '',
@@ -236,8 +291,7 @@ export const refreshClaudeOAuthToken = async (
       )
 
       if (!response.ok) {
-        // Refresh failed, clear credentials
-        clearClaudeOAuthCredentials(clientEnv)
+        console.debug(`Claude OAuth token refresh failed (status ${response.status})`)
         return null
       }
 
@@ -250,13 +304,25 @@ export const refreshClaudeOAuthToken = async (
         connectedAt: credentials.connectedAt,
       }
 
-      // Save updated credentials
-      saveClaudeOAuthCredentials(newCredentials, clientEnv)
+      // Update in-memory cache for env-var-based refresh tokens
+      if (getClaudeOAuthRefreshTokenFromEnv()) {
+        envRefreshCredentialCache = {
+          accessToken: newCredentials.accessToken,
+          expiresAt: newCredentials.expiresAt,
+          connectedAt: newCredentials.connectedAt,
+        }
+      }
+
+      // Persist refreshed credentials to file (best-effort for read-only environments like K8s)
+      try {
+        saveClaudeOAuthCredentials(newCredentials, clientEnv)
+      } catch (saveError) {
+        console.debug('Failed to save refreshed Claude OAuth credentials:', saveError instanceof Error ? saveError.message : String(saveError))
+      }
 
       return newCredentials
-    } catch {
-      // Refresh failed, clear credentials
-      clearClaudeOAuthCredentials(clientEnv)
+    } catch (error) {
+      console.debug('Claude OAuth token refresh failed:', error instanceof Error ? error.message : String(error))
       return null
     } finally {
       // Clear the mutex after completion
@@ -283,18 +349,194 @@ export const getValidClaudeOAuthCredentials = async (
     return null
   }
 
-  // Check if token is from environment variable (synthetic credentials, no refresh needed)
+  const bufferMs = 5 * 60 * 1000
+
+  // No refresh token (e.g. env var override) — return only if still valid
   if (!credentials.refreshToken) {
-    // Environment variable tokens are assumed valid
-    return credentials
+    return credentials.expiresAt > Date.now() + bufferMs ? credentials : null
   }
 
   // Check if token is valid with 5 minute buffer
-  const bufferMs = 5 * 60 * 1000
   if (credentials.expiresAt > Date.now() + bufferMs) {
     return credentials
   }
 
   // Token is expired or expiring soon, try to refresh
   return refreshClaudeOAuthToken(clientEnv)
+}
+
+/**
+ * Get ChatGPT OAuth credentials from environment variable or stored file.
+ * Environment variable takes precedence.
+ */
+export const getChatGptOAuthCredentials = (
+  clientEnv: ClientEnv = env,
+): ChatGptOAuthCredentials | null => {
+  // 1. Environment variable takes highest precedence
+  const envToken = getChatGptOAuthTokenFromEnv()
+  if (envToken) {
+    return {
+      accessToken: envToken,
+      refreshToken: '',
+      expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000,
+      connectedAt: Date.now(),
+    }
+  }
+
+  // 2. Codebuff's own stored credentials
+  const credentialsPath = getCredentialsPath(clientEnv)
+  if (fs.existsSync(credentialsPath)) {
+    try {
+      const credentialsFile = fs.readFileSync(credentialsPath, 'utf8')
+      const parsed = credentialsFileSchema.safeParse(JSON.parse(credentialsFile))
+      if (parsed.success && parsed.data.chatgptOAuth) {
+        return parsed.data.chatgptOAuth
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  return null
+}
+
+export const saveChatGptOAuthCredentials = (
+  credentials: ChatGptOAuthCredentials,
+  clientEnv: ClientEnv = env,
+): void => {
+  const configDir = getConfigDir(clientEnv)
+  const credentialsPath = getCredentialsPath(clientEnv)
+
+  ensureDirectoryExistsSync(configDir)
+
+  let existingData: Record<string, unknown> = {}
+  if (fs.existsSync(credentialsPath)) {
+    try {
+      existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
+    } catch {
+      // Ignore parse errors, start fresh
+    }
+  }
+
+  const updatedData = {
+    ...existingData,
+    chatgptOAuth: credentials,
+  }
+
+  fs.writeFileSync(credentialsPath, JSON.stringify(updatedData, null, 2))
+}
+
+export const clearChatGptOAuthCredentials = (
+  clientEnv: ClientEnv = env,
+): void => {
+  const credentialsPath = getCredentialsPath(clientEnv)
+  if (!fs.existsSync(credentialsPath)) {
+    return
+  }
+
+  try {
+    const existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
+    delete existingData.chatgptOAuth
+    fs.writeFileSync(credentialsPath, JSON.stringify(existingData, null, 2))
+  } catch {
+    // Ignore errors
+  }
+}
+
+export const isChatGptOAuthValid = (clientEnv: ClientEnv = env): boolean => {
+  const credentials = getChatGptOAuthCredentials(clientEnv)
+  if (!credentials) {
+    return false
+  }
+  const bufferMs = 5 * 60 * 1000
+  return credentials.expiresAt > Date.now() + bufferMs
+}
+
+let chatGptRefreshPromise: Promise<ChatGptOAuthCredentials | null> | null = null
+
+export const refreshChatGptOAuthToken = async (
+  clientEnv: ClientEnv = env,
+): Promise<ChatGptOAuthCredentials | null> => {
+  if (chatGptRefreshPromise) {
+    return chatGptRefreshPromise
+  }
+
+  const credentials = getChatGptOAuthCredentials(clientEnv)
+  if (!credentials?.refreshToken) {
+    return null
+  }
+
+  chatGptRefreshPromise = (async () => {
+    try {
+      const response = await fetch(CHATGPT_OAUTH_TOKEN_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          grant_type: 'refresh_token',
+          refresh_token: credentials.refreshToken,
+          client_id: CHATGPT_OAUTH_CLIENT_ID,
+        }),
+      })
+
+      if (!response.ok) {
+        console.debug(`ChatGPT OAuth token refresh failed (status ${response.status})`)
+        return null
+      }
+
+      const data = await response.json()
+
+      if (
+        typeof data?.access_token !== 'string' ||
+        data.access_token.trim().length === 0
+      ) {
+        console.debug('ChatGPT OAuth token refresh returned empty access token')
+        return null
+      }
+
+      const expiresIn =
+        typeof data.expires_in === 'number' ? data.expires_in * 1000 : 3600 * 1000
+
+      const newCredentials: ChatGptOAuthCredentials = {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token ?? credentials.refreshToken,
+        expiresAt: Date.now() + expiresIn,
+        connectedAt: credentials.connectedAt,
+      }
+
+      saveChatGptOAuthCredentials(newCredentials, clientEnv)
+
+      return newCredentials
+    } catch (error) {
+      console.debug('ChatGPT OAuth token refresh failed:', error instanceof Error ? error.message : String(error))
+      return null
+    } finally {
+      chatGptRefreshPromise = null
+    }
+  })()
+
+  return chatGptRefreshPromise
+}
+
+export const getValidChatGptOAuthCredentials = async (
+  clientEnv: ClientEnv = env,
+): Promise<ChatGptOAuthCredentials | null> => {
+  const credentials = getChatGptOAuthCredentials(clientEnv)
+  if (!credentials) {
+    return null
+  }
+
+  const bufferMs = 5 * 60 * 1000
+
+  // No refresh token (e.g. env var override) — return only if still valid
+  if (!credentials.refreshToken) {
+    return credentials.expiresAt > Date.now() + bufferMs ? credentials : null
+  }
+
+  if (credentials.expiresAt > Date.now() + bufferMs) {
+    return credentials
+  }
+
+  return refreshChatGptOAuthToken(clientEnv)
 }

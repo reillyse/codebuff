@@ -61,7 +61,7 @@ import { getClaudeOAuthStatus } from './utils/claude-oauth'
 import { showClipboardMessage } from './utils/clipboard'
 import { readClipboardImage } from './utils/clipboard-image'
 import { IS_FREEBUFF } from './utils/constants'
-import { HIPPO_BINARY, getHippoSessionStats } from './utils/hippo-hooks'
+import { HIPPO_BINARY, checkHippoConnection, getHippoSessionStats } from './utils/hippo-hooks'
 import { getInputModeConfig } from './utils/input-modes'
 
 import {
@@ -1327,6 +1327,18 @@ export const Chat = ({
   }, [chatSessionId])
   const hippoRecalls = useChatStore((state) => state.hippoRecalls)
   const hippoConnectionOk = useChatStore((state) => state.hippoConnectionOk)
+  const hippoLastError = useChatStore((state) => state.hippoLastError)
+  const [isHippoRetrying, setIsHippoRetrying] = useState(false)
+  const handleHippoRetry = useCallback(async () => {
+    setIsHippoRetrying(true)
+    try {
+      const result = await checkHippoConnection()
+      useChatStore.getState().setHippoConnectionOk(result.connectionOk)
+      useChatStore.getState().setHippoLastError(result.lastError)
+    } finally {
+      setIsHippoRetrying(false)
+    }
+  }, [])
   const hippoFetchIdRef = useRef(0)
   const [hippoStats, setHippoStats] = useState<HippoSessionStats | null>(null)
   useEffect(() => {
@@ -1585,6 +1597,9 @@ export const Chat = ({
           hippoStats={hippoStats}
           hippoRecalls={hippoRecalls}
           hippoConnectionOk={hippoConnectionOk}
+          hippoLastError={hippoLastError}
+          isHippoRetrying={isHippoRetrying}
+          onHippoRetry={handleHippoRetry}
           hippoLastUsedAt={hippoLastUsedAt}
         />
       </box>

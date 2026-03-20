@@ -1,7 +1,8 @@
 import fs from 'fs'
 import path from 'path'
 
-import { HIPPO_BINARY, resetHippoEnabledCache } from '../utils/hippo-hooks'
+import { useChatStore } from '../state/chat-store'
+import { HIPPO_BINARY, checkHippoConnection, resetHippoEnabledCache } from '../utils/hippo-hooks'
 import { resetHippoLoggingCache } from '../utils/hippo-logger'
 import { logger } from '../utils/logger'
 import { getSystemMessage } from '../utils/message-history'
@@ -58,9 +59,18 @@ export const handleHippoStatus = (): {
   const binaryExists = fs.existsSync(HIPPO_BINARY)
   const loggingEnabled = loadSettings().hippoLoggingEnabled === true
   
+  const { hippoConnectionOk, hippoLastError } = useChatStore.getState()
+  
+  let connectionStatus = 'not checked'
+  if (hippoConnectionOk === true) connectionStatus = 'connected'
+  if (hippoConnectionOk === false) {
+    connectionStatus = hippoLastError ? `disconnected (${hippoLastError})` : 'disconnected'
+  }
+
   const statusLines = [
     `Hippo memory: ${enabled ? 'enabled' : 'disabled'}`,
     `Binary: ${binaryExists ? 'installed' : 'not found'} (${HIPPO_BINARY})`,
+    `Connection: ${connectionStatus}`,
     `Debug logging: ${loggingEnabled ? 'enabled' : 'disabled'}`,
   ]
   
@@ -81,6 +91,29 @@ export const handleHippoStatus = (): {
     postUserMessage: (messages) => [
       ...messages,
       getSystemMessage(statusLines.join('\n')),
+    ],
+  }
+}
+
+export const handleHippoRetry = async (): Promise<{
+  postUserMessage: (messages: ChatMessage[]) => ChatMessage[]
+}> => {
+  const { connectionOk, lastError } = await checkHippoConnection()
+
+  const { setHippoConnectionOk, setHippoLastError } = useChatStore.getState()
+  setHippoConnectionOk(connectionOk)
+  if (!connectionOk) {
+    setHippoLastError(lastError)
+  }
+
+  const message = connectionOk
+    ? 'Hippo connection OK.'
+    : lastError ? `Hippo connection failed: ${lastError}` : 'Hippo connection failed.'
+
+  return {
+    postUserMessage: (messages) => [
+      ...messages,
+      getSystemMessage(message),
     ],
   }
 }

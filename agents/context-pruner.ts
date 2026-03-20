@@ -954,7 +954,9 @@ This is a summary of the conversation so far. The original messages have been co
 ${summaryText}
 </conversation_summary>
 
-Please continue the conversation from here. In particular, try to address the user's latest request detailed in the summary above. You may need to re-gather context (e.g. read some files) to get up to speed and then tackle the user's request. Additional context from earlier in the conversation may be available via the user's Hippo memory system — if the "## Relevant Context from Past Sessions" section is present in the user's message, it may contain relevant details about pruned context.`,
+Please continue the conversation from here. In particular, try to address the user's latest request detailed in the summary above. You may need to re-gather context (e.g. read some files) to get up to speed and then tackle the user's request.
+
+Earlier pruned context from this session will be automatically surfaced by the system via hippo context-search. If a "## Relevant Context from Past Sessions" section is present in the user's message, it may contain details from before this pruning event.`,
     }
     // Build content array with text and any preserved images
     const summaryContentParts: (TextPart | ImagePart | FilePart)[] = [textPart]

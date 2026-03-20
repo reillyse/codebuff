@@ -3,6 +3,16 @@
  * These are used by the CLI for the OAuth PKCE flow and by the SDK for direct Anthropic API calls.
  */
 
+/**
+ * Feature flag for Claude OAuth (connect:claude) functionality.
+ * Enabled by default in this fork. Set CODEBUFF_CLAUDE_OAUTH_ENABLED=false to disable.
+ * Controls:
+ * - CLI: /connect:claude command, OAuth banner, usage display
+ * - SDK: Direct Anthropic API routing via OAuth token
+ * - Init: Background credential refresh on startup
+ */
+export const CLAUDE_OAUTH_ENABLED = process.env.CODEBUFF_CLAUDE_OAUTH_ENABLED !== 'false'
+
 // OAuth client ID used by Claude Code and third-party apps like opencode
 export const CLAUDE_OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 
@@ -15,6 +25,9 @@ export const ANTHROPIC_API_BASE_URL = 'https://api.anthropic.com'
 
 // Environment variable for OAuth token override
 export const CLAUDE_OAUTH_TOKEN_ENV_VAR = 'CODEBUFF_CLAUDE_OAUTH_TOKEN'
+
+// Environment variable for OAuth refresh token (enables auto-refresh in headless/K8s environments)
+export const CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR = 'CODEBUFF_CLAUDE_OAUTH_REFRESH_TOKEN'
 
 // Required Anthropic API version header
 export const ANTHROPIC_API_VERSION = '2023-06-01'

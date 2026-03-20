@@ -15,16 +15,6 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLI_DIR="$PROJECT_ROOT/cli"
-CLAUDE_OAUTH_FILE="$PROJECT_ROOT/common/src/constants/claude-oauth.ts"
-
-# Restore CLAUDE_OAUTH_ENABLED to false on exit (even on failure)
-cleanup() {
-  if [ -f "$CLAUDE_OAUTH_FILE" ]; then
-    sed -i.bak 's/export const CLAUDE_OAUTH_ENABLED = true/export const CLAUDE_OAUTH_ENABLED = false/' "$CLAUDE_OAUTH_FILE"
-    rm -f "${CLAUDE_OAUTH_FILE}.bak"
-  fi
-}
-trap cleanup EXIT
 
 echo "🔨 Building and installing codebuff globally"
 echo ""
@@ -54,12 +44,8 @@ VERSION="0.0.0-local.$(date +%Y%m%d%H%M%S)"
 echo "Building version: $VERSION"
 echo ""
 
-# Enable Claude OAuth for local builds
-echo "🔑 Enabling CLAUDE_OAUTH_ENABLED for local build..."
-sed -i.bak 's/export const CLAUDE_OAUTH_ENABLED = false/export const CLAUDE_OAUTH_ENABLED = true/' "$CLAUDE_OAUTH_FILE"
-rm -f "${CLAUDE_OAUTH_FILE}.bak"
-
 # Build the binary
+# Note: Claude OAuth is enabled by default in this fork (see common/src/constants/claude-oauth.ts)
 echo "📦 Building CLI binary..."
 cd "$CLI_DIR"
 export npm_package_version="$VERSION"

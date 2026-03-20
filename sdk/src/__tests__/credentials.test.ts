@@ -7,18 +7,27 @@ import {
   getConfigDir,
   getCredentialsPath,
   getUserCredentials,
+  getChatGptOAuthCredentials,
   getClaudeOAuthCredentials,
+  saveChatGptOAuthCredentials,
   saveClaudeOAuthCredentials,
+  clearChatGptOAuthCredentials,
   clearClaudeOAuthCredentials,
+  isChatGptOAuthValid,
   isClaudeOAuthValid,
+  refreshChatGptOAuthToken,
   refreshClaudeOAuthToken,
+  getValidChatGptOAuthCredentials,
   getValidClaudeOAuthCredentials,
   userFromJson,
+  _resetEnvRefreshCacheForTesting,
+  type ChatGptOAuthCredentials,
   type ClaudeOAuthCredentials,
 } from '../credentials'
 
 // Need to import to check env var name
-import { CLAUDE_OAUTH_TOKEN_ENV_VAR } from '@codebuff/common/constants/claude-oauth'
+import { CHATGPT_OAUTH_TOKEN_ENV_VAR } from '@codebuff/common/constants/chatgpt-oauth'
+import { CLAUDE_OAUTH_TOKEN_ENV_VAR, CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR } from '@codebuff/common/constants/claude-oauth'
 
 describe('credentials', () => {
   const testEnv = {
@@ -107,6 +116,100 @@ describe('credentials', () => {
       }
     })
 
+    test('returns credentials with refresh token env var for auto-refresh', () => {
+      const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+      const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'env-refresh-token-123'
+
+      try {
+        const creds = getClaudeOAuthCredentials(testEnv as any)
+        expect(creds).not.toBeNull()
+        expect(creds?.accessToken).toBe('')
+        expect(creds?.refreshToken).toBe('env-refresh-token-123')
+        expect(creds?.expiresAt).toBe(0)
+      } finally {
+        if (originalToken) {
+          process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+        }
+        if (originalRefreshToken) {
+          process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = originalRefreshToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+        }
+      }
+    })
+
+    test('uses both access and refresh token env vars together', () => {
+      const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+      process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = 'env-access-123'
+      process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'env-refresh-123'
+
+      try {
+        const creds = getClaudeOAuthCredentials(testEnv as any)
+        expect(creds).not.toBeNull()
+        expect(creds?.accessToken).toBe('env-access-123')
+        expect(creds?.refreshToken).toBe('env-refresh-123')
+        expect(creds?.expiresAt).toBe(0)
+      } finally {
+        if (originalToken) {
+          process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+        }
+        if (originalRefreshToken) {
+          process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = originalRefreshToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+        }
+      }
+    })
+
+    test('refresh token env var takes precedence over file', () => {
+      const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+      const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'env-refresh-override'
+
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'refresh-precedence-test-'))
+      const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
+      const configDir = getConfigDir(env)
+      fs.mkdirSync(configDir, { recursive: true })
+      fs.writeFileSync(path.join(configDir, 'credentials.json'), JSON.stringify({
+        claudeOAuth: {
+          accessToken: 'file-token',
+          refreshToken: 'file-refresh',
+          expiresAt: Date.now() + 3600000,
+          connectedAt: Date.now(),
+        },
+      }))
+
+      try {
+        const creds = getClaudeOAuthCredentials(env)
+        expect(creds?.refreshToken).toBe('env-refresh-override')
+        expect(creds?.expiresAt).toBe(0)
+      } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
+        if (originalToken) {
+          process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+        }
+        if (originalRefreshToken) {
+          process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = originalRefreshToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+        }
+      }
+    })
+
     test('environment variable takes precedence over file', () => {
       const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
       process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = 'env-token-override'
@@ -140,6 +243,42 @@ describe('credentials', () => {
           process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
         } else {
           delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+        }
+      }
+    })
+  })
+
+  describe('getChatGptOAuthCredentials', () => {
+    test('returns null when no credentials exist', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chatgpt-nocreds-'))
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
+      try {
+        const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'chatgpt-nonexistent-env' } as any
+        const creds = getChatGptOAuthCredentials(env)
+        expect(creds).toBeNull()
+      } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
+      }
+    })
+
+    test('returns credentials from environment variable when set', () => {
+      const originalToken = process.env[CHATGPT_OAUTH_TOKEN_ENV_VAR]
+      process.env[CHATGPT_OAUTH_TOKEN_ENV_VAR] = 'chatgpt-env-token-123'
+
+      try {
+        const creds = getChatGptOAuthCredentials(testEnv as any)
+        expect(creds).not.toBeNull()
+        expect(creds?.accessToken).toBe('chatgpt-env-token-123')
+        expect(creds?.refreshToken).toBe('')
+        expect(creds?.expiresAt).toBeGreaterThan(Date.now())
+      } finally {
+        if (originalToken) {
+          process.env[CHATGPT_OAUTH_TOKEN_ENV_VAR] = originalToken
+        } else {
+          delete process.env[CHATGPT_OAUTH_TOKEN_ENV_VAR]
         }
       }
     })
@@ -209,6 +348,55 @@ describe('credentials', () => {
 
         expect(parsed.default.userId).toBe('user-789')
         expect(parsed.claudeOAuth.accessToken).toBe('oauth-access')
+      } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
+      }
+    })
+  })
+
+  describe('save/clear ChatGPT OAuth credentials', () => {
+    test('saves and clears ChatGPT OAuth credentials while preserving user credentials', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chatgpt-save-clear-test-'))
+      const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
+      try {
+        const configDir = getConfigDir(env)
+        fs.mkdirSync(configDir, { recursive: true })
+
+        const initial = {
+          default: {
+            userId: 'user-chatgpt',
+            email: 'user-chatgpt@test.com',
+            token: 'token-chatgpt',
+          },
+        }
+        fs.writeFileSync(path.join(configDir, 'credentials.json'), JSON.stringify(initial))
+
+        const newCreds: ChatGptOAuthCredentials = {
+          accessToken: 'chatgpt-access',
+          refreshToken: 'chatgpt-refresh',
+          expiresAt: Date.now() + 3_600_000,
+          connectedAt: Date.now(),
+        }
+
+        saveChatGptOAuthCredentials(newCreds, env)
+
+        let parsed = JSON.parse(
+          fs.readFileSync(path.join(configDir, 'credentials.json'), 'utf8'),
+        )
+        expect(parsed.default.userId).toBe('user-chatgpt')
+        expect(parsed.chatgptOAuth.accessToken).toBe('chatgpt-access')
+
+        clearChatGptOAuthCredentials(env)
+
+        parsed = JSON.parse(
+          fs.readFileSync(path.join(configDir, 'credentials.json'), 'utf8'),
+        )
+        expect(parsed.chatgptOAuth).toBeUndefined()
+        expect(parsed.default.userId).toBe('user-chatgpt')
       } finally {
         ;(os as any).homedir = originalHomedir
         fs.rmSync(tmpDir, { recursive: true })
@@ -338,11 +526,29 @@ describe('credentials', () => {
     })
   })
 
+  describe('isChatGptOAuthValid', () => {
+    test('returns false when no credentials exist', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chatgpt-novalid-'))
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
+      try {
+        const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'chatgpt-novalid-env' } as any
+        const valid = isChatGptOAuthValid(env)
+        expect(valid).toBe(false)
+      } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
+      }
+    })
+  })
+
   describe('refreshClaudeOAuthToken', () => {
     const originalFetch = globalThis.fetch
 
     afterEach(() => {
       globalThis.fetch = originalFetch
+      _resetEnvRefreshCacheForTesting()
     })
 
     test('returns null when no credentials exist', async () => {
@@ -417,7 +623,7 @@ describe('credentials', () => {
       }
     })
 
-    test('clears credentials and returns null on refresh failure', async () => {
+    test('preserves credentials and returns null on refresh failure', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'refresh-fail-test-'))
       const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
       const originalHomedir = os.homedir
@@ -448,12 +654,64 @@ describe('credentials', () => {
         const result = await refreshClaudeOAuthToken(env)
 
         expect(result).toBeNull()
-        // Credentials should be cleared
+        // Credentials should be preserved (not cleared) so future retries can attempt refresh again
         const saved = JSON.parse(fs.readFileSync(path.join(configDir, 'credentials.json'), 'utf8'))
-        expect(saved.claudeOAuth).toBeUndefined()
+        expect(saved.claudeOAuth).toBeDefined()
+        expect(saved.claudeOAuth.refreshToken).toBe('invalid-refresh')
       } finally {
         ;(os as any).homedir = originalHomedir
         fs.rmSync(tmpDir, { recursive: true })
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('refresh succeeds on read-only filesystem', async () => {
+      const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+      delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'k8s-refresh-readonly'
+
+      const originalWriteFileSync = fs.writeFileSync
+
+      try {
+        const mockFetch = mock(() =>
+          Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                access_token: 'readonly-fresh-token',
+                refresh_token: 'readonly-new-refresh',
+                expires_in: 3600,
+              }),
+          } as Response),
+        )
+        globalThis.fetch = mockFetch as unknown as typeof fetch
+
+        // Simulate read-only filesystem
+        ;(fs as any).writeFileSync = () => {
+          const err = new Error('EROFS: read-only file system') as NodeJS.ErrnoException
+          err.code = 'EROFS'
+          throw err
+        }
+
+        const result = await refreshClaudeOAuthToken(testEnv as any)
+
+        expect(result).not.toBeNull()
+        expect(result?.accessToken).toBe('readonly-fresh-token')
+        expect(result?.refreshToken).toBe('readonly-new-refresh')
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+      } finally {
+        ;(fs as any).writeFileSync = originalWriteFileSync
+        if (originalToken) {
+          process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+        }
+        if (originalRefreshToken) {
+          process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = originalRefreshToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+        }
         globalThis.fetch = originalFetch
       }
     })
@@ -515,11 +773,79 @@ describe('credentials', () => {
     })
   })
 
+  describe('refreshChatGptOAuthToken', () => {
+    const originalFetch = globalThis.fetch
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch
+    })
+
+    test('returns null when no credentials exist', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chatgpt-norefresh-'))
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
+      try {
+        const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'chatgpt-norefresh-env' } as any
+        const result = await refreshChatGptOAuthToken(env)
+        expect(result).toBeNull()
+      } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
+      }
+    })
+
+    test('successfully refreshes token', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chatgpt-refresh-test-'))
+      const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
+      try {
+        const configDir = getConfigDir(env)
+        fs.mkdirSync(configDir, { recursive: true })
+
+        const credentials = {
+          chatgptOAuth: {
+            accessToken: 'old-chatgpt-access',
+            refreshToken: 'chatgpt-refresh-token-123',
+            expiresAt: Date.now() - 1_000,
+            connectedAt: Date.now() - 7_200_000,
+          },
+        }
+        fs.writeFileSync(path.join(configDir, 'credentials.json'), JSON.stringify(credentials))
+
+        const mockFetch = mock(() =>
+          Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                access_token: 'new-chatgpt-access-token',
+                refresh_token: 'new-chatgpt-refresh-token',
+                expires_in: 3600,
+              }),
+          } as Response),
+        )
+        globalThis.fetch = mockFetch as unknown as typeof fetch
+
+        const result = await refreshChatGptOAuthToken(env)
+
+        expect(result).not.toBeNull()
+        expect(result?.accessToken).toBe('new-chatgpt-access-token')
+        expect(result?.refreshToken).toBe('new-chatgpt-refresh-token')
+      } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
+      }
+    })
+  })
+
   describe('getValidClaudeOAuthCredentials', () => {
     const originalFetch = globalThis.fetch
 
     afterEach(() => {
       globalThis.fetch = originalFetch
+      _resetEnvRefreshCacheForTesting()
     })
 
     test('returns null when no credentials exist', async () => {
@@ -616,6 +942,92 @@ describe('credentials', () => {
       }
     })
 
+    test('auto-refreshes when refresh token env var is set', async () => {
+      const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+      delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'k8s-refresh-token'
+
+      try {
+        const mockFetch = mock(() =>
+          Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                access_token: 'fresh-k8s-token',
+                refresh_token: 'new-refresh',
+                expires_in: 3600,
+              }),
+          } as Response),
+        )
+        globalThis.fetch = mockFetch as unknown as typeof fetch
+
+        const result = await getValidClaudeOAuthCredentials(testEnv as any)
+
+        expect(result).not.toBeNull()
+        expect(result?.accessToken).toBe('fresh-k8s-token')
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+      } finally {
+        if (originalToken) {
+          process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+        }
+        if (originalRefreshToken) {
+          process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = originalRefreshToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+        }
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('uses in-memory cache on subsequent calls after env var refresh', async () => {
+      const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+      delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'k8s-cache-refresh-token'
+
+      try {
+        const mockFetch = mock(() =>
+          Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                access_token: 'cached-k8s-token',
+                refresh_token: 'new-refresh',
+                expires_in: 3600,
+              }),
+          } as Response),
+        )
+        globalThis.fetch = mockFetch as unknown as typeof fetch
+
+        // First call triggers a refresh
+        const result = await getValidClaudeOAuthCredentials(testEnv as any)
+        expect(result?.accessToken).toBe('cached-k8s-token')
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+
+        // Second call should use in-memory cache — no additional fetch
+        const cached = getClaudeOAuthCredentials(testEnv as any)
+        expect(cached).not.toBeNull()
+        expect(cached?.accessToken).toBe('cached-k8s-token')
+        expect(cached?.expiresAt).toBeGreaterThan(Date.now())
+        expect(mockFetch).toHaveBeenCalledTimes(1)
+      } finally {
+        if (originalToken) {
+          process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+        }
+        if (originalRefreshToken) {
+          process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = originalRefreshToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+        }
+        globalThis.fetch = originalFetch
+      }
+    })
+
     test('returns null when refresh fails', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'refresh-fail-valid-test-'))
       const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
@@ -651,6 +1063,23 @@ describe('credentials', () => {
         ;(os as any).homedir = originalHomedir
         fs.rmSync(tmpDir, { recursive: true })
         globalThis.fetch = originalFetch
+      }
+    })
+  })
+
+  describe('getValidChatGptOAuthCredentials', () => {
+    test('returns null when no credentials exist', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chatgpt-nocreds2-'))
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
+      try {
+        const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'chatgpt-no-creds' } as any
+        const result = await getValidChatGptOAuthCredentials(env)
+        expect(result).toBeNull()
+      } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
       }
     })
   })
