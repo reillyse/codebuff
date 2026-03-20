@@ -130,6 +130,27 @@ Save this refresh token — you'll store it as a K8s Secret.
 
 ### Step 3: Create K8s Secrets
 
+The easiest way is to use the included script that extracts all tokens and generates both Secret manifests:
+
+```bash
+# Generate and apply secrets in one shot
+./scripts/generate-k8s-secrets.sh -n codebuff | kubectl apply -f -
+
+# Or write to a file for review first
+./scripts/generate-k8s-secrets.sh -n codebuff -o k8s-secrets.yaml
+cat k8s-secrets.yaml   # review
+kubectl apply -f k8s-secrets.yaml
+```
+
+The script reads `~/.config/manicode/credentials.json` and generates two Secrets:
+- `codebuff-claude` — the refresh token (for the `CODEBUFF_CLAUDE_OAUTH_REFRESH_TOKEN` env var)
+- `codebuff-credentials` — the full credentials file (mounted into the pod)
+
+Run `./scripts/generate-k8s-secrets.sh --help` for all options (custom namespace, custom credentials path, etc.).
+
+<details>
+<summary>Manual alternative (without the script)</summary>
+
 ```bash
 # Create the secret with the refresh token
 kubectl create secret generic codebuff-claude \
@@ -139,6 +160,8 @@ kubectl create secret generic codebuff-claude \
 kubectl create secret generic codebuff-credentials \
   --from-file=credentials.json=$HOME/.config/manicode/credentials.json
 ```
+
+</details>
 
 ---
 
@@ -538,17 +561,24 @@ When the refresh token needs rotation (rare — typically only if revoked):
 codebuff
 /connect:claude
 
-# 2. Extract new refresh token
-NEW_TOKEN=$(cat ~/.config/manicode/credentials.json | jq -r '.claudeOAuth.refreshToken')
+# 2. Regenerate and apply secrets
+./scripts/generate-k8s-secrets.sh -n codebuff | kubectl apply -f -
 
-# 3. Update the K8s Secret
+# 3. Restart pods to pick up new secret
+kubectl rollout restart deployment/codebuff -n codebuff
+```
+
+<details>
+<summary>Manual alternative</summary>
+
+```bash
+NEW_TOKEN=$(cat ~/.config/manicode/credentials.json | jq -r '.claudeOAuth.refreshToken')
 kubectl create secret generic codebuff-claude \
   --from-literal=refresh-token="$NEW_TOKEN" \
   --dry-run=client -o yaml | kubectl apply -f -
-
-# 4. Restart pods to pick up new secret
-kubectl rollout restart deployment/codebuff -n codebuff
 ```
+
+</details>
 
 ---
 
@@ -556,8 +586,7 @@ kubectl rollout restart deployment/codebuff -n codebuff
 
 - [ ] Build the Codebuff binary from the `reillyse/hippo-integration` branch
 - [ ] Authenticate locally: `codebuff` → login → `/connect:claude`
-- [ ] Extract refresh token: `jq -r '.claudeOAuth.refreshToken' ~/.config/manicode/credentials.json`
-- [ ] Create K8s Secrets for refresh token and credentials
+- [ ] Generate K8s Secrets: `./scripts/generate-k8s-secrets.sh -n codebuff | kubectl apply -f -`
 - [ ] Build and push container image with binary + git
 - [ ] Deploy with the env vars and volume mounts from this guide
 - [ ] Verify: exec into pod, run `codebuff --version`, confirm Claude OAuth works
