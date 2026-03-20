@@ -26,16 +26,16 @@ export interface LogResponseParams {
 
 /**
  * Resolve the log file path from the CODEBUFF_PROMPT_LOG env var.
- * Returns null if logging is not enabled.
+ * Logging is ON by default (writes to ./debug/prompt-log.txt).
  *
- *  - '1' or 'true'  → ./debug/prompt-log.txt (relative to cwd)
- *  - any other value → treated as a file path
- *  - unset / '0' / 'false' → null (disabled)
+ *  - unset / '1' / 'true' → ./debug/prompt-log.txt (relative to cwd)
+ *  - '0' / 'false'         → null (disabled)
+ *  - any other value        → treated as a custom file path
  */
 export const getPromptLogPath = (): string | null => {
   const val = process.env.CODEBUFF_PROMPT_LOG
-  if (!val || val === '0' || val === 'false') return null
-  if (val === '1' || val === 'true') {
+  if (val === '0' || val === 'false') return null
+  if (!val || val === '1' || val === 'true') {
     return path.resolve(process.cwd(), 'debug', 'prompt-log.txt')
   }
   return path.resolve(val)

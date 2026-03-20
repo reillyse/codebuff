@@ -7,8 +7,10 @@
     "codebuff-lite": "./src/index.ts"
   },
   "scripts": {
-    "dev": "bun run src/index.ts --cwd ..",
-    "typecheck": "tsc --noEmit -p ."
+    "dev": "bun run prebuild:agents && bun run src/index.ts --cwd ..",
+    "typecheck": "tsc --noEmit -p .",
+    "build:binary": "bun ./scripts/build-binary.ts codebuff-lite $npm_package_version",
+    "prebuild:agents": "bun run scripts/prebuild-agents.ts"
   },
   "dependencies": {
     "@codebuff/sdk": "workspace:*",

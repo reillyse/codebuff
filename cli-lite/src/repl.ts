@@ -28,6 +28,7 @@ import {
   bold,
 } from './output'
 import { logPrompt, logResponse, isPromptLoggingEnabled, getPromptLogPath } from './prompt-logger'
+import { initializeAgentRegistry, getAgentDefinitions, getAgentSummary, getAgentList, getAgentById, getAgentSource } from './agent-registry'
 
 import type { AgentMode } from './hippo'
 import type { PrintModeEvent, RunState } from '@codebuff/sdk'
@@ -74,9 +75,18 @@ async function enrichPromptWithHippo(
 export async function startRepl(options: ReplOptions): Promise<void> {
   const { apiKey, agent, cwd, verbose } = options
 
-  const client = new CodebuffClient({ apiKey, cwd })
+  // Initialize agent registry (loads bundled + user agents, MCP, skills)
+  await initializeAgentRegistry()
+  const agentDefinitions = getAgentDefinitions()
+
+  const client = new CodebuffClient({ apiKey, cwd, agentDefinitions })
 
   printBanner()
+
+  const agentSummary = getAgentSummary()
+  if (agentSummary) {
+    process.stderr.write(dim(agentSummary) + '\n')
+  }
 
   if (isHippoAvailable()) {
     process.stderr.write(dim('Hippo memory: enabled') + '\n')
@@ -245,6 +255,19 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       return
     }
 
+    if (trimmed === '/agents') {
+      printAgents()
+      rl.prompt()
+      return
+    }
+
+    if (trimmed.startsWith('/agent:')) {
+      const agentId = trimmed.slice('/agent:'.length).trim()
+      printAgentDetail(agentId)
+      rl.prompt()
+      return
+    }
+
     // Hippo commands
     if (trimmed === '/hippo:status') {
       await handleHippoStatus()
@@ -304,7 +327,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 export async function runOnce(options: ReplOptions & { prompt: string }): Promise<void> {
   const { apiKey, agent, cwd, verbose, prompt } = options
 
-  const client = new CodebuffClient({ apiKey, cwd })
+  await initializeAgentRegistry()
+  const agentDefinitions = getAgentDefinitions()
+
+  const client = new CodebuffClient({ apiKey, cwd, agentDefinitions })
   const abortController = new AbortController()
   const sessionId = generateHippoSessionId(DEFAULT_AGENT_MODE)
   const startTime = Date.now()
@@ -466,10 +492,104 @@ async function handleHippoStatus(): Promise<void> {
   process.stderr.write(lines.join('\n') + '\n\n')
 }
 
+function printAgents(): void {
+  const agents = getAgentList()
+
+  if (agents.length === 0) {
+    process.stderr.write(dim('No agents loaded.') + '\n\n')
+    return
+  }
+
+  const bundled = agents.filter((a) => a.source === 'bundled')
+  const user = agents.filter((a) => a.source === 'user')
+
+  process.stderr.write('\n')
+
+  if (bundled.length > 0) {
+    process.stderr.write(bold('Bundled Agents') + dim(` (${bundled.length})`) + '\n')
+    for (const agent of bundled) {
+      const name = cyan(agent.displayName)
+      const id = dim(` (${agent.id})`)
+      process.stderr.write(`  ${name}${id}\n`)
+    }
+    process.stderr.write('\n')
+  }
+
+  if (user.length > 0) {
+    process.stderr.write(bold('User Agents') + dim(` (${user.length})`) + '\n')
+    for (const agent of user) {
+      const name = green(agent.displayName)
+      const id = dim(` (${agent.id})`)
+      process.stderr.write(`  ${name}${id}\n`)
+    }
+    process.stderr.write('\n')
+  }
+}
+
+function printAgentDetail(id: string): void {
+  const agent = getAgentById(id)
+  if (!agent) {
+    process.stderr.write(yellow(`Agent not found: ${id}`) + '\n')
+    process.stderr.write(dim('Use /agents to see all available agents.') + '\n\n')
+    return
+  }
+
+  const source = getAgentSource(id)
+  const sourceLabel = source === 'user' ? green('user') : cyan('bundled')
+
+  process.stderr.write('\n')
+  process.stderr.write(bold(agent.displayName ?? id) + dim(` (${id})`) + '\n')
+  process.stderr.write(dim('─'.repeat(40)) + '\n')
+
+  process.stderr.write(`  ${dim('Source:')}        ${sourceLabel}\n`)
+  process.stderr.write(`  ${dim('Model:')}         ${String(agent.model ?? 'default')}\n`)
+  process.stderr.write(`  ${dim('Output mode:')}   ${agent.outputMode ?? 'last_message'}\n`)
+
+  // Tools
+  const tools = agent.toolNames ?? []
+  process.stderr.write(`  ${dim('Tools:')}         ${tools.length > 0 ? tools.join(', ') : dim('none')}\n`)
+
+  // Spawnable agents
+  const spawnable = agent.spawnableAgents ?? []
+  if (spawnable.length > 0) {
+    process.stderr.write(`  ${dim('Spawnable:')}     ${spawnable.join(', ')}\n`)
+  } else {
+    process.stderr.write(`  ${dim('Spawnable:')}     ${dim('none')}\n`)
+  }
+
+  // MCP servers
+  const mcpKeys = Object.keys(agent.mcpServers ?? {})
+  if (mcpKeys.length > 0) {
+    process.stderr.write(`  ${dim('MCP servers:')}   ${mcpKeys.join(', ')}\n`)
+  }
+
+  // Flags
+  const flags: string[] = []
+  if (agent.includeMessageHistory) flags.push('includeMessageHistory')
+  if (agent.inheritParentSystemPrompt) flags.push('inheritParentSystemPrompt')
+  if (flags.length > 0) {
+    process.stderr.write(`  ${dim('Flags:')}         ${flags.join(', ')}\n`)
+  }
+
+  // Spawner prompt (description)
+  if (agent.spawnerPrompt) {
+    const desc = agent.spawnerPrompt.length > 200
+      ? agent.spawnerPrompt.slice(0, 200) + '...'
+      : agent.spawnerPrompt
+    process.stderr.write('\n')
+    process.stderr.write(`  ${dim('Description:')}\n`)
+    process.stderr.write(`  ${desc}\n`)
+  }
+
+  process.stderr.write('\n')
+}
+
 function printHelp(): void {
   process.stderr.write(`
 ${bold('Commands')}
   /new, /clear       Clear conversation and start fresh
+  /agents            List all loaded agents
+  /agent:<id>        Show detailed info about an agent
   /help              Show this help message
   /exit, /quit       Exit the CLI
 
