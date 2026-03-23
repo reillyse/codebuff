@@ -22,7 +22,6 @@ import {
   mock,
   spyOn,
 } from 'bun:test'
-import { APICallError } from 'ai'
 import { z } from 'zod/v4'
 
 import { loopAgentSteps } from '../run-agent-step'

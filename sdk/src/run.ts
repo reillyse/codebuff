@@ -511,7 +511,7 @@ async function runOnce({
     userId,
     signal: signal ?? new AbortController().signal,
   }).catch((error) => {
-    const errorMessage =
+    let errorMessage =
       error instanceof Error ? error.message : String(error ?? '')
     const statusCode = getErrorStatusCode(error)
 
