@@ -16,7 +16,7 @@ import {
   TypeValidationError,
 } from 'ai'
 
-import { getModelForRequest, markClaudeOAuthRateLimited, fetchClaudeOAuthResetTime } from './model-provider'
+import { getModelForRequest, markClaudeOAuthRateLimited, fetchClaudeOAuthResetTime, isClaudeOAuthFallbackEnabled } from './model-provider'
 import { getValidClaudeOAuthCredentials } from '../credentials'
 import { getErrorStatusCode } from '../error-utils'
 
@@ -230,8 +230,8 @@ export async function* promptAiSdkStream(
     prompt: undefined,
     model: aiSDKModel,
     messages: convertCbToModelMessages(params),
-    // When using Claude OAuth, disable retries so we can immediately fall back to Codebuff
-    // backend on rate limit errors instead of retrying 4 times first
+    // When using Claude OAuth, disable retries so errors surface immediately
+    // instead of retrying 4 times first
     ...(isClaudeOAuth && { maxRetries: 0 }),
     providerOptions: getProviderOptions({
       ...params,
@@ -414,7 +414,7 @@ export async function* promptAiSdkStream(
       ) {
         logger.info(
           { error: getErrorObject(chunkValue.error) },
-          'Claude OAuth rate limited during stream, falling back to Codebuff backend',
+          'Claude OAuth rate limited during stream',
         )
         // Track the rate limit event
         trackEvent({
@@ -426,6 +426,9 @@ export async function* promptAiSdkStream(
           },
           logger,
         })
+        if (!isClaudeOAuthFallbackEnabled()) {
+          throw chunkValue.error
+        }
         // Try to get the actual reset time from the quota API, fall back to default cooldown
         const credentials = await getValidClaudeOAuthCredentials()
         const resetTime = credentials?.accessToken 
@@ -453,7 +456,7 @@ export async function* promptAiSdkStream(
       ) {
         logger.info(
           { error: getErrorObject(chunkValue.error) },
-          'Claude OAuth auth error during stream, falling back to Codebuff backend',
+          'Claude OAuth auth error during stream',
         )
         // Track the auth error event
         trackEvent({
@@ -465,6 +468,9 @@ export async function* promptAiSdkStream(
           },
           logger,
         })
+        if (!isClaudeOAuthFallbackEnabled()) {
+          throw chunkValue.error
+        }
         if (params.onClaudeOAuthStatusChange) {
           params.onClaudeOAuthStatusChange(false)
         }

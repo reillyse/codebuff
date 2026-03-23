@@ -5,6 +5,8 @@ import path from 'path'
 
 import type { RunState } from '@codebuff/sdk'
 
+import { writeErr } from './tty'
+
 // ---------------------------------------------------------------------------
 // Lightweight replacements for TUI-specific dependencies
 // ---------------------------------------------------------------------------
@@ -13,7 +15,7 @@ export type AgentMode = 'DEFAULT' | 'FREE' | 'MAX' | 'PLAN'
 
 const debug = (...args: unknown[]): void => {
   if (process.env.HIPPO_DEBUG) {
-    process.stderr.write(`[hippo] ${args.map(String).join(' ')}\n`)
+    writeErr(`[hippo] ${args.map(String).join(' ')}\n`)
   }
 }
 

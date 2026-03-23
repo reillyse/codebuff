@@ -69,6 +69,29 @@ export function resetClaudeOAuthRateLimit(): void {
 }
 
 // ============================================================================
+// Claude OAuth Fallback Configuration
+// ============================================================================
+
+/** Whether to fall back to Codebuff backend when Claude OAuth fails (rate limit or auth error) */
+let claudeOAuthFallbackEnabled = false
+
+/**
+ * Enable or disable fallback to Codebuff backend when Claude OAuth fails.
+ * When disabled, Claude OAuth errors (rate limit, auth) will throw instead of
+ * silently falling back to the Codebuff backend (which burns credits).
+ */
+export function setClaudeOAuthFallbackEnabled(enabled: boolean): void {
+  claudeOAuthFallbackEnabled = enabled
+}
+
+/**
+ * Check if Claude OAuth fallback is enabled.
+ */
+export function isClaudeOAuthFallbackEnabled(): boolean {
+  return claudeOAuthFallbackEnabled
+}
+
+// ============================================================================
 // Claude OAuth Quota Fetching
 // ============================================================================
 
@@ -171,17 +194,26 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
   const { apiKey, model, skipClaudeOAuth } = params
 
   // Check if we should use Claude OAuth direct
-  // Skip if explicitly requested, if rate-limited, or if not a Claude model
-  if (!skipClaudeOAuth && !isClaudeOAuthRateLimited() && isClaudeModel(model)) {
-    // Get valid credentials (will refresh if needed)
-    const claudeOAuthCredentials = await getValidClaudeOAuthCredentials()
-    if (claudeOAuthCredentials) {
-      return {
-        model: createAnthropicOAuthModel(
-          model,
-          claudeOAuthCredentials.accessToken,
-        ),
-        isClaudeOAuth: true,
+  // Skip if explicitly requested or if not a Claude model
+  if (!skipClaudeOAuth && isClaudeModel(model)) {
+    if (isClaudeOAuthRateLimited()) {
+      if (!claudeOAuthFallbackEnabled) {
+        throw new Error('Claude OAuth is rate-limited and fallback to Codebuff backend is disabled')
+      }
+    } else {
+      // Get valid credentials (will refresh if needed)
+      const claudeOAuthCredentials = await getValidClaudeOAuthCredentials()
+      if (claudeOAuthCredentials) {
+        return {
+          model: createAnthropicOAuthModel(
+            model,
+            claudeOAuthCredentials.accessToken,
+          ),
+          isClaudeOAuth: true,
+        }
+      }
+      if (!claudeOAuthFallbackEnabled) {
+        throw new Error('Claude OAuth credentials expired and could not be refreshed')
       }
     }
   }

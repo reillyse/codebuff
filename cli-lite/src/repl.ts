@@ -1,6 +1,6 @@
 import { createInterface } from 'readline'
 
-import { CodebuffClient } from '@codebuff/sdk'
+import { CodebuffClient, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, setClaudeOAuthFallbackEnabled } from '@codebuff/sdk'
 
 import {
   getHippoContext,
@@ -29,6 +29,8 @@ import {
 } from './output'
 import { logPrompt, logResponse, isPromptLoggingEnabled, getPromptLogPath } from './prompt-logger'
 import { initializeAgentRegistry, getAgentDefinitions, getAgentSummary, getAgentList, getAgentById, getAgentSource } from './agent-registry'
+import { createMarkdownStream } from './markdown'
+import { writeOut, writeErr } from './tty'
 
 import type { AgentMode } from './hippo'
 import type { PrintModeEvent, RunState } from '@codebuff/sdk'
@@ -40,7 +42,80 @@ interface ReplOptions {
   verbose: boolean
 }
 
-const DEFAULT_AGENT_MODE: AgentMode = 'DEFAULT'
+function getTerminalSize(): { columns: number; rows: number } {
+  return {
+    columns: process.stdout.columns ?? 80,
+    rows: process.stdout.rows ?? 24,
+  }
+}
+
+function getDefaultMode(): AgentMode {
+  const envMode = process.env.CODEBUFF_DEFAULT_MODE?.toUpperCase()
+  if (envMode === 'DEFAULT' || envMode === 'MAX' || envMode === 'PLAN') return envMode
+  if (process.env.CODEBUFF_DEFAULT_MODE) {
+    writeErr(`\x1b[33mWarning: Unknown CODEBUFF_DEFAULT_MODE '${process.env.CODEBUFF_DEFAULT_MODE}'. Using MAX. Valid: default, max, plan\x1b[0m\n`)
+  }
+  return 'MAX'
+}
+
+export const DEFAULT_AGENT_MODE: AgentMode = getDefaultMode()
+
+const AGENT_MODE_TO_ID: Partial<Record<AgentMode, string>> & Record<'DEFAULT' | 'MAX' | 'PLAN', string> = {
+  DEFAULT: 'codebuff/base2@latest',
+  MAX: 'codebuff/base2-max@latest',
+  PLAN: 'codebuff/base2-plan@latest',
+}
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+const WEBSITE_URL = process.env.NEXT_PUBLIC_CODEBUFF_APP_URL ?? 'https://www.codebuff.com'
+
+export function getAgentForMode(mode: AgentMode): string {
+  return AGENT_MODE_TO_ID[mode] ?? AGENT_MODE_TO_ID.DEFAULT
+}
+
+function getModePrompt(mode: AgentMode): string {
+  if (mode === 'DEFAULT') return `${cyan(bold('> '))}`
+  return `${dim(`[${mode}]`)} ${cyan(bold('> '))}`
+}
+
+function createSpinner() {
+  let timer: NodeJS.Timeout | null = null
+  return {
+    start(message = 'Thinking...') {
+      if (timer) clearInterval(timer)
+      let i = 0
+      timer = setInterval(() => {
+        const frame = SPINNER_FRAMES[i % SPINNER_FRAMES.length]
+        writeErr(`\r\x1b[2m${frame} ${message}\x1b[0m\x1b[K`)
+        i++
+      }, 80)
+    },
+    stop() {
+      if (timer) {
+        clearInterval(timer)
+        timer = null
+        writeErr('\r\x1b[K')
+      }
+    },
+  }
+}
+
+async function checkClaudeSubscription(): Promise<{ configured: boolean; valid: boolean }> {
+  const credentials = getClaudeOAuthCredentials()
+  if (!credentials) return { configured: false, valid: true }
+
+  const valid = await getValidClaudeOAuthCredentials()
+  if (valid) return { configured: true, valid: true }
+
+  printError(
+    'Claude subscription credentials are expired and could not be refreshed.\n' +
+    'Exiting to avoid using Codebuff credits.\n\n' +
+    'To fix this, reconnect your Claude account using /connect:claude in the main Codebuff CLI,\n' +
+    'or remove your Claude OAuth credentials to use Codebuff credits instead.',
+  )
+  return { configured: true, valid: false }
+}
 
 /**
  * Fetch hippo context for a prompt and return the enriched prompt.
@@ -53,7 +128,7 @@ async function enrichPromptWithHippo(
 ): Promise<string> {
   if (!isHippoAvailable()) return prompt
 
-  process.stderr.write(dim('Searching memory...'))
+  writeErr(dim('Searching memory...'))
 
   const hippoResult = await getHippoContext(
     prompt,
@@ -61,11 +136,11 @@ async function enrichPromptWithHippo(
     sessionId,
   )
 
-  // Clear the "Searching memory..." line
-  process.stderr.write('\r\x1b[K')
+  // Clear the "Searching memory..." line (cursor control only, no newlines)
+  writeErr('\r\x1b[K')
 
   if (hippoResult.context) {
-    process.stderr.write(dim('Found relevant context from past sessions.') + '\n')
+    writeErr(dim('Found relevant context from past sessions.') + '\n')
     return `## Relevant Context from Past Sessions\n${hippoResult.context}\n\n${prompt}`
   }
 
@@ -73,42 +148,55 @@ async function enrichPromptWithHippo(
 }
 
 export async function startRepl(options: ReplOptions): Promise<void> {
-  const { apiKey, agent, cwd, verbose } = options
+  const { apiKey, cwd, verbose } = options
 
   // Initialize agent registry (loads bundled + user agents, MCP, skills)
   await initializeAgentRegistry()
   const agentDefinitions = getAgentDefinitions()
 
-  const client = new CodebuffClient({ apiKey, cwd, agentDefinitions })
+  const termSize = getTerminalSize()
+  const client = new CodebuffClient({ apiKey, cwd, agentDefinitions, terminalColumns: termSize.columns, terminalRows: termSize.rows })
+
+  let currentMode: AgentMode = DEFAULT_AGENT_MODE
 
   printBanner()
 
   const agentSummary = getAgentSummary()
   if (agentSummary) {
-    process.stderr.write(dim(agentSummary) + '\n')
+    writeErr(dim(agentSummary) + '\n')
   }
 
+  writeErr(dim(`Mode: ${currentMode}`) + '\n')
+  writeErr(dim(`Terminal: ${termSize.columns}×${termSize.rows}`) + '\n')
+
   if (isHippoAvailable()) {
-    process.stderr.write(dim('Hippo memory: enabled') + '\n')
+    writeErr(dim('Hippo memory: enabled') + '\n')
   }
 
   if (isPromptLoggingEnabled()) {
-    process.stderr.write(dim(`Prompt logging: ${getPromptLogPath()}`) + '\n')
+    writeErr(dim(`Prompt logging: ${getPromptLogPath()}`) + '\n')
   }
 
-  process.stderr.write('\n')
+  const claude = await checkClaudeSubscription()
+  if (!claude.valid) process.exit(1)
+  if (claude.configured) {
+    setClaudeOAuthFallbackEnabled(false)
+    writeErr(dim('Claude subscription: connected') + '\n')
+  }
+
+  writeErr('\n')
 
   const rl = createInterface({
     input: process.stdin,
     output: process.stderr,
-    prompt: `${cyan(bold('> '))}`,
+    prompt: getModePrompt(currentMode),
     terminal: process.stdin.isTTY ?? false,
   })
 
   let previousRun: RunState | undefined
   let running = false
   let abortController: AbortController | undefined
-  let sessionId = generateHippoSessionId(DEFAULT_AGENT_MODE)
+  let sessionId = generateHippoSessionId(currentMode)
 
   const runPrompt = async (prompt: string): Promise<void> => {
     if (!prompt.trim()) return
@@ -116,11 +204,15 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     running = true
     abortController = new AbortController()
     printDivider()
-    process.stdout.write('\n')
+    writeOut('\n')
 
     const startTime = Date.now()
     let lastTotalCost = 0
     const streamedChunks: string[] = []
+
+    const spinner = createSpinner()
+    spinner.start()
+    const md = createMarkdownStream()
 
     try {
       // Enrich prompt with hippo context
@@ -131,35 +223,50 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         prompt,
         enrichedPrompt,
         sessionId,
-        agentMode: DEFAULT_AGENT_MODE,
+        agentMode: currentMode,
       })
 
+      const { columns, rows } = getTerminalSize()
       const result = await client.run({
-        agent,
+        agent: getAgentForMode(currentMode),
         prompt: enrichedPrompt,
         previousRun,
         signal: abortController.signal,
+        terminalColumns: columns,
+        terminalRows: rows,
         handleEvent: (event) => {
           if (event.type === 'finish') {
             lastTotalCost = event.totalCost
           }
+          spinner.stop()
           handleEvent(event, verbose)
+          if (event.type === 'subagent_start') {
+            spinner.start('Agent thinking...')
+          } else if (event.type === 'tool_call') {
+            spinner.start('Running tool...')
+          }
         },
         handleStreamChunk: (chunk) => {
           if (typeof chunk === 'string') {
+            spinner.stop()
             streamedChunks.push(chunk)
-            process.stdout.write(chunk)
+            const formatted = md.write(chunk)
+            if (formatted) writeOut(formatted)
           } else if (chunk.type === 'subagent_chunk') {
             if (verbose) {
-              process.stderr.write(dim(chunk.chunk))
+              spinner.stop()
+              writeErr(dim(chunk.chunk))
             }
           }
         },
       })
 
+      spinner.stop()
+      const remaining = md.flush()
+      if (remaining) writeOut(remaining)
       previousRun = result
 
-      process.stdout.write('\n\n')
+      writeOut('\n\n')
 
       const elapsedMs = Date.now() - startTime
 
@@ -171,7 +278,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       logResponse({
         prompt,
         sessionId,
-        agentMode: DEFAULT_AGENT_MODE,
+        agentMode: currentMode,
         streamedText: streamedChunks.join(''),
         elapsedMs,
         totalCost: lastTotalCost,
@@ -183,20 +290,21 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       storeRunToHippo({
         runState: result,
         prompt,
-        agentMode: DEFAULT_AGENT_MODE,
+        agentMode: currentMode,
         elapsedMs,
         sessionId,
       })
     } catch (error) {
+      spinner.stop()
       const elapsedMs = Date.now() - startTime
 
       if (error instanceof Error && error.name === 'AbortError') {
-        process.stderr.write('\n')
+        writeErr('\n')
 
         logResponse({
           prompt,
           sessionId,
-          agentMode: DEFAULT_AGENT_MODE,
+          agentMode: currentMode,
           streamedText: streamedChunks.join(''),
           elapsedMs,
           outputType: 'cancelled',
@@ -209,7 +317,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         logResponse({
           prompt,
           sessionId,
-          agentMode: DEFAULT_AGENT_MODE,
+          agentMode: currentMode,
           streamedText: streamedChunks.join(''),
           elapsedMs,
           outputType: 'error',
@@ -224,6 +332,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
         })
       }
     } finally {
+      spinner.stop()
       running = false
       abortController = undefined
     }
@@ -243,8 +352,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
     if (trimmed === '/new' || trimmed === '/clear') {
       previousRun = undefined
-      sessionId = generateHippoSessionId(DEFAULT_AGENT_MODE)
-      process.stderr.write(`${green('Conversation cleared.')}\n\n`)
+      currentMode = DEFAULT_AGENT_MODE
+      sessionId = generateHippoSessionId(currentMode)
+      rl.setPrompt(getModePrompt(currentMode))
+      writeErr(`${green('Conversation cleared.')}\n\n`)
       rl.prompt()
       return
     }
@@ -268,6 +379,46 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       return
     }
 
+    // Mode commands
+    if (trimmed === '/mode') {
+      writeErr(`Current mode: ${bold(currentMode)}\n\n`)
+      rl.prompt()
+      return
+    }
+
+    if (trimmed.startsWith('/mode:')) {
+      const modeArg = trimmed.slice('/mode:'.length).toUpperCase()
+      if (modeArg !== 'DEFAULT' && modeArg !== 'MAX' && modeArg !== 'PLAN') {
+        writeErr(yellow(`Unknown mode: ${modeArg}. Available: default, max, plan`) + '\n\n')
+        rl.prompt()
+        return
+      }
+      currentMode = modeArg
+      sessionId = generateHippoSessionId(currentMode)
+      rl.setPrompt(getModePrompt(currentMode))
+      writeErr(`${green(`Mode set to ${currentMode}.`)}\n\n`)
+      rl.prompt()
+      return
+    }
+
+    // Usage command
+    if (trimmed === '/usage') {
+      await handleUsageCommand(apiKey)
+      rl.prompt()
+      return
+    }
+
+    // Review command
+    if (trimmed === '/review' || trimmed.startsWith('/review ')) {
+      const reviewArgs = trimmed.slice('/review'.length).trim()
+      const reviewPrompt = reviewArgs
+        ? `@GPT-5 Agent Please review: ${reviewArgs}`
+        : '@GPT-5 Agent Please review: uncommitted changes'
+      await runPrompt(reviewPrompt)
+      rl.prompt()
+      return
+    }
+
     // Hippo commands
     if (trimmed === '/hippo:status') {
       await handleHippoStatus()
@@ -277,14 +428,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
     if (trimmed === '/hippo:on') {
       saveHippoEnabled(true)
-      process.stderr.write(`${green('Hippo memory enabled.')}\n\n`)
+      writeErr(`${green('Hippo memory enabled.')}\n\n`)
       rl.prompt()
       return
     }
 
     if (trimmed === '/hippo:off') {
       saveHippoEnabled(false)
-      process.stderr.write(`${yellow('Hippo memory disabled.')}\n\n`)
+      writeErr(`${yellow('Hippo memory disabled.')}\n\n`)
       rl.prompt()
       return
     }
@@ -292,9 +443,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     if (trimmed === '/hippo:retry') {
       const result = await checkHippoConnection()
       if (result.connectionOk) {
-        process.stderr.write(`${green('Hippo connection OK.')}\n\n`)
+        writeErr(`${green('Hippo connection OK.')}\n\n`)
       } else {
-        process.stderr.write(`${yellow(`Hippo connection failed: ${result.lastError ?? 'unknown'}`)}\n\n`)
+        writeErr(`${yellow(`Hippo connection failed: ${result.lastError ?? 'unknown'}`)}\n\n`)
       }
       rl.prompt()
       return
@@ -309,15 +460,22 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     rl.prompt()
   })
 
+  process.stdout.on('resize', () => {
+    const { columns, rows } = getTerminalSize()
+    if (verbose) {
+      writeErr(dim(`Terminal resized: ${columns}×${rows}`) + '\n')
+    }
+  })
+
   rl.on('close', () => {
-    process.stderr.write('\nGoodbye!\n')
+    writeErr('\nGoodbye!\n')
     process.exit(0)
   })
 
   rl.on('SIGINT', () => {
     if (running && abortController) {
       abortController.abort()
-      process.stderr.write('\n(Cancelled)\n')
+      writeErr('\n(Cancelled)\n')
     } else {
       rl.close()
     }
@@ -330,12 +488,23 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
   await initializeAgentRegistry()
   const agentDefinitions = getAgentDefinitions()
 
-  const client = new CodebuffClient({ apiKey, cwd, agentDefinitions })
+  const claude = await checkClaudeSubscription()
+  if (!claude.valid) process.exit(1)
+  if (claude.configured) {
+    setClaudeOAuthFallbackEnabled(false)
+  }
+
+  const { columns, rows } = getTerminalSize()
+  const client = new CodebuffClient({ apiKey, cwd, agentDefinitions, terminalColumns: columns, terminalRows: rows })
   const abortController = new AbortController()
   const sessionId = generateHippoSessionId(DEFAULT_AGENT_MODE)
   const startTime = Date.now()
   let lastTotalCost = 0
   const streamedChunks: string[] = []
+
+  const spinner = createSpinner()
+  spinner.start()
+  const md = createMarkdownStream()
 
   const onSigint = () => {
     abortController.abort()
@@ -358,21 +527,34 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
       agent,
       prompt: enrichedPrompt,
       signal: abortController.signal,
+      terminalColumns: columns,
+      terminalRows: rows,
       handleEvent: (event) => {
         if (event.type === 'finish') {
           lastTotalCost = event.totalCost
         }
+        spinner.stop()
         handleEvent(event, verbose)
+        if (event.type === 'subagent_start') {
+          spinner.start('Agent thinking...')
+        } else if (event.type === 'tool_call') {
+          spinner.start('Running tool...')
+        }
       },
       handleStreamChunk: (chunk) => {
         if (typeof chunk === 'string') {
+          spinner.stop()
           streamedChunks.push(chunk)
-          process.stdout.write(chunk)
+          const formatted = md.write(chunk)
+          if (formatted) writeOut(formatted)
         }
       },
     })
 
-    process.stdout.write('\n')
+    spinner.stop()
+    const remaining = md.flush()
+    if (remaining) writeOut(remaining)
+    writeOut('\n')
 
     const elapsedMs = Date.now() - startTime
 
@@ -402,10 +584,11 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
       process.exit(1)
     }
   } catch (error) {
+    spinner.stop()
     const elapsedMs = Date.now() - startTime
 
     if (error instanceof Error && error.name === 'AbortError') {
-      process.stderr.write('\nCancelled.\n')
+      writeErr('\nCancelled.\n')
 
       logResponse({
         prompt,
@@ -441,6 +624,7 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
 
     process.exit(1)
   } finally {
+    spinner.stop()
     process.off('SIGINT', onSigint)
   }
 }
@@ -489,78 +673,78 @@ async function handleHippoStatus(): Promise<void> {
     `Connection: ${connectionOk ? green('connected') : yellow(lastError ?? 'disconnected')}`,
   ]
 
-  process.stderr.write(lines.join('\n') + '\n\n')
+  writeErr(lines.join('\n') + '\n\n')
 }
 
 function printAgents(): void {
   const agents = getAgentList()
 
   if (agents.length === 0) {
-    process.stderr.write(dim('No agents loaded.') + '\n\n')
+    writeErr(dim('No agents loaded.') + '\n\n')
     return
   }
 
   const bundled = agents.filter((a) => a.source === 'bundled')
   const user = agents.filter((a) => a.source === 'user')
 
-  process.stderr.write('\n')
+  writeErr('\n')
 
   if (bundled.length > 0) {
-    process.stderr.write(bold('Bundled Agents') + dim(` (${bundled.length})`) + '\n')
+    writeErr(bold('Bundled Agents') + dim(` (${bundled.length})`) + '\n')
     for (const agent of bundled) {
       const name = cyan(agent.displayName)
       const id = dim(` (${agent.id})`)
-      process.stderr.write(`  ${name}${id}\n`)
+      writeErr(`  ${name}${id}\n`)
     }
-    process.stderr.write('\n')
+    writeErr('\n')
   }
 
   if (user.length > 0) {
-    process.stderr.write(bold('User Agents') + dim(` (${user.length})`) + '\n')
+    writeErr(bold('User Agents') + dim(` (${user.length})`) + '\n')
     for (const agent of user) {
       const name = green(agent.displayName)
       const id = dim(` (${agent.id})`)
-      process.stderr.write(`  ${name}${id}\n`)
+      writeErr(`  ${name}${id}\n`)
     }
-    process.stderr.write('\n')
+    writeErr('\n')
   }
 }
 
 function printAgentDetail(id: string): void {
   const agent = getAgentById(id)
   if (!agent) {
-    process.stderr.write(yellow(`Agent not found: ${id}`) + '\n')
-    process.stderr.write(dim('Use /agents to see all available agents.') + '\n\n')
+    writeErr(yellow(`Agent not found: ${id}`) + '\n')
+    writeErr(dim('Use /agents to see all available agents.') + '\n\n')
     return
   }
 
   const source = getAgentSource(id)
   const sourceLabel = source === 'user' ? green('user') : cyan('bundled')
 
-  process.stderr.write('\n')
-  process.stderr.write(bold(agent.displayName ?? id) + dim(` (${id})`) + '\n')
-  process.stderr.write(dim('─'.repeat(40)) + '\n')
+  writeErr('\n')
+  writeErr(bold(agent.displayName ?? id) + dim(` (${id})`) + '\n')
+  writeErr(dim('─'.repeat(40)) + '\n')
 
-  process.stderr.write(`  ${dim('Source:')}        ${sourceLabel}\n`)
-  process.stderr.write(`  ${dim('Model:')}         ${String(agent.model ?? 'default')}\n`)
-  process.stderr.write(`  ${dim('Output mode:')}   ${agent.outputMode ?? 'last_message'}\n`)
+  writeErr(`  ${dim('Source:')}        ${sourceLabel}\n`)
+  writeErr(`  ${dim('Model:')}         ${String(agent.model ?? 'default')}\n`)
+  writeErr(`  ${dim('Output mode:')}   ${agent.outputMode ?? 'last_message'}\n`)
 
   // Tools
   const tools = agent.toolNames ?? []
-  process.stderr.write(`  ${dim('Tools:')}         ${tools.length > 0 ? tools.join(', ') : dim('none')}\n`)
+  writeErr(`  ${dim('Tools:')}         ${tools.length > 0 ? tools.join(', ') : dim('none')}\n`)
 
   // Spawnable agents
   const spawnable = agent.spawnableAgents ?? []
   if (spawnable.length > 0) {
-    process.stderr.write(`  ${dim('Spawnable:')}     ${spawnable.join(', ')}\n`)
+    writeErr(`  ${dim('Spawnable:')}     ${spawnable.join(', ')}\n`)
   } else {
-    process.stderr.write(`  ${dim('Spawnable:')}     ${dim('none')}\n`)
+    writeErr(`  ${dim('Spawnable:')}     ${dim('none')}\n`)
   }
 
   // MCP servers
   const mcpKeys = Object.keys(agent.mcpServers ?? {})
   if (mcpKeys.length > 0) {
-    process.stderr.write(`  ${dim('MCP servers:')}   ${mcpKeys.join(', ')}\n`)
+    writeErr(`  ${dim('MCP servers:')}   ${mcpKeys.join(', ')}\n`)
   }
 
   // Flags
@@ -568,7 +752,7 @@ function printAgentDetail(id: string): void {
   if (agent.includeMessageHistory) flags.push('includeMessageHistory')
   if (agent.inheritParentSystemPrompt) flags.push('inheritParentSystemPrompt')
   if (flags.length > 0) {
-    process.stderr.write(`  ${dim('Flags:')}         ${flags.join(', ')}\n`)
+    writeErr(`  ${dim('Flags:')}         ${flags.join(', ')}\n`)
   }
 
   // Spawner prompt (description)
@@ -576,18 +760,81 @@ function printAgentDetail(id: string): void {
     const desc = agent.spawnerPrompt.length > 200
       ? agent.spawnerPrompt.slice(0, 200) + '...'
       : agent.spawnerPrompt
-    process.stderr.write('\n')
-    process.stderr.write(`  ${dim('Description:')}\n`)
-    process.stderr.write(`  ${desc}\n`)
+    writeErr('\n')
+    writeErr(`  ${dim('Description:')}\n`)
+    writeErr(`  ${desc}\n`)
   }
 
-  process.stderr.write('\n')
+  writeErr('\n')
+}
+
+async function handleUsageCommand(apiKey: string): Promise<void> {
+  writeErr(dim('Fetching usage...') + '\n')
+
+  try {
+    const res = await fetch(`${WEBSITE_URL}/api/v1/usage`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10_000),
+    })
+
+    if (!res.ok) {
+      writeErr(yellow(`Failed to fetch usage (HTTP ${res.status})`) + '\n\n')
+      return
+    }
+
+    const data = (await res.json()) as {
+      usage?: number
+      remainingBalance?: number | null
+      balanceBreakdown?: Record<string, number>
+      next_quota_reset?: string | null
+    }
+
+    writeErr('\n')
+    writeErr(bold('Credit Usage') + '\n')
+    writeErr(dim('─'.repeat(40)) + '\n')
+
+    if (typeof data.usage === 'number') {
+      writeErr(`  ${dim('Session credits used:')}  ${data.usage.toLocaleString()}\n`)
+    }
+
+    if (data.remainingBalance != null) {
+      writeErr(`  ${dim('Remaining balance:')}    ${data.remainingBalance.toLocaleString()}\n`)
+    }
+
+    if (data.balanceBreakdown && Object.keys(data.balanceBreakdown).length > 0) {
+      writeErr('\n' + dim('  Balance breakdown:') + '\n')
+      for (const [source, amount] of Object.entries(data.balanceBreakdown)) {
+        writeErr(`    ${dim(source + ':')}  ${amount.toLocaleString()}\n`)
+      }
+    }
+
+    if (data.next_quota_reset) {
+      const resetDate = new Date(data.next_quota_reset)
+      writeErr(`\n  ${dim('Next reset:')}           ${resetDate.toLocaleDateString()}\n`)
+    }
+
+    writeErr('\n')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    writeErr(yellow(`Failed to fetch usage: ${message}`) + '\n\n')
+  }
 }
 
 function printHelp(): void {
-  process.stderr.write(`
+  writeErr(`
 ${bold('Commands')}
   /new, /clear       Clear conversation and start fresh
+  /mode              Show current agent mode
+  /mode:default      Switch to DEFAULT mode
+  /mode:max          Switch to MAX mode (more powerful, costs more)
+  /mode:plan         Switch to PLAN mode
+  /usage             Show credit usage and remaining balance
+  /review [text]     Review code (defaults to uncommitted changes)
   /agents            List all loaded agents
   /agent:<id>        Show detailed info about an agent
   /help              Show this help message
@@ -600,13 +847,15 @@ ${bold('Hippo Memory')}
   /hippo:retry       Test hippo connection
 
 ${bold('Environment Variables')}
+  CODEBUFF_DEFAULT_MODE Set default agent mode (default, max, plan). Default: max
+  CODEBUFF_VERBOSE      Enable verbose output (equivalent to -v flag)
   CODEBUFF_PROMPT_LOG   Log prompts and responses to a file (rolling, 5MB limit)
                         Set to '1' for ./debug/prompt-log.txt, or a custom path
 
 ${bold('Usage')}
   Type your prompt and press Enter to send.
   The agent will stream its response to stdout.
-  Tool calls and status are shown on stderr (use -v flag).
+  Tool calls and status are shown on stderr (use -v flag or CODEBUFF_VERBOSE env var).
 
 `)
 }

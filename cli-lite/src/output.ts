@@ -3,16 +3,8 @@
  * Handles ANSI colors, streaming text, tool call display, etc.
  */
 
-const RESET = '\x1b[0m'
-const BOLD = '\x1b[1m'
-const DIM = '\x1b[2m'
-const CYAN = '\x1b[36m'
-const GREEN = '\x1b[32m'
-const YELLOW = '\x1b[33m'
-const RED = '\x1b[31m'
-const MAGENTA = '\x1b[35m'
-const BLUE = '\x1b[34m'
-const GRAY = '\x1b[90m'
+import { RESET, BOLD, DIM, CYAN, GREEN, YELLOW, RED, MAGENTA, BLUE, GRAY } from './ansi'
+import { writeErr } from './tty'
 
 export function bold(text: string): string {
   return `${BOLD}${text}${RESET}`
@@ -52,14 +44,14 @@ export function gray(text: string): string {
 
 export function printToolCall(toolName: string, input?: unknown): void {
   const displayName = toolName.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
-  process.stderr.write(`${DIM}${CYAN}⚡ ${displayName}${RESET}`)
+  writeErr(`${DIM}${CYAN}⚡ ${displayName}${RESET}`)
   if (input && typeof input === 'object') {
     const summary = getToolInputSummary(toolName, input as Record<string, unknown>)
     if (summary) {
-      process.stderr.write(`${DIM} ${summary}${RESET}`)
+      writeErr(`${DIM} ${summary}${RESET}`)
     }
   }
-  process.stderr.write('\n')
+  writeErr('\n')
 }
 
 function getToolInputSummary(toolName: string, input: Record<string, unknown>): string {
@@ -107,41 +99,41 @@ function getToolInputSummary(toolName: string, input: Record<string, unknown>): 
 export function printToolResult(toolName: string, success: boolean): void {
   const icon = success ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`
   const displayName = toolName.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
-  process.stderr.write(`${DIM}  ${icon} ${displayName} done${RESET}\n`)
+  writeErr(`${DIM}  ${icon} ${displayName} done${RESET}\n`)
 }
 
 export function printError(message: string): void {
-  process.stderr.write(`${RED}${BOLD}Error:${RESET} ${RED}${message}${RESET}\n`)
+  writeErr(`${RED}${BOLD}Error:${RESET} ${RED}${message}${RESET}\n`)
 }
 
 export function printWarning(message: string): void {
-  process.stderr.write(`${YELLOW}${BOLD}Warning:${RESET} ${YELLOW}${message}${RESET}\n`)
+  writeErr(`${YELLOW}${BOLD}Warning:${RESET} ${YELLOW}${message}${RESET}\n`)
 }
 
 export function printInfo(message: string): void {
-  process.stderr.write(`${BLUE}${message}${RESET}\n`)
+  writeErr(`${BLUE}${message}${RESET}\n`)
 }
 
 export function printSubagentStart(agentId: string, agentType: string): void {
-  process.stderr.write(`${DIM}${MAGENTA}◆ Agent: ${agentType}${RESET}\n`)
+  writeErr(`${DIM}${MAGENTA}◆ Agent: ${agentType}${RESET}\n`)
 }
 
 export function printSubagentEnd(agentId: string): void {
-  process.stderr.write(`${DIM}${MAGENTA}◆ Agent finished${RESET}\n`)
+  writeErr(`${DIM}${MAGENTA}◆ Agent finished${RESET}\n`)
 }
 
 export function printDivider(): void {
   const width = Math.min(process.stdout.columns || 80, 80)
-  process.stderr.write(`${DIM}${'─'.repeat(width)}${RESET}\n`)
+  writeErr(`${DIM}${'─'.repeat(width)}${RESET}\n`)
 }
 
 export function printFinish(totalCost: number): void {
   const costStr = totalCost > 0 ? ` (cost: $${totalCost.toFixed(4)})` : ''
-  process.stderr.write(`${DIM}${GREEN}✓ Done${costStr}${RESET}\n`)
+  writeErr(`${DIM}${GREEN}✓ Done${costStr}${RESET}\n`)
 }
 
 export function printBanner(): void {
-  process.stderr.write(`\n${BOLD}${CYAN}Codebuff Lite${RESET} ${DIM}(TUI-free mode)${RESET}\n`)
-  process.stderr.write(`${DIM}Type your prompt, then press Enter. Use Ctrl+C to exit.${RESET}\n`)
-  process.stderr.write(`${DIM}Use /help for commands.${RESET}\n\n`)
+  writeErr(`\n${BOLD}${CYAN}Codebuff Lite${RESET} ${DIM}(TUI-free mode)${RESET}\n`)
+  writeErr(`${DIM}Type your prompt, then press Enter. Use Ctrl+C to exit.${RESET}\n`)
+  writeErr(`${DIM}Use /help for commands.${RESET}\n\n`)
 }

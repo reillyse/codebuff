@@ -84,6 +84,9 @@ export const ProjectFileContextSchema = z.object({
     arch: z.string(),
     homedir: z.string(),
     cpus: z.number(),
+    chromeAvailable: z.boolean(),
+    terminalColumns: z.number().optional(),
+    terminalRows: z.number().optional(),
   }),
 })
 
@@ -113,6 +116,9 @@ export type ProjectFileContext = {
     arch: string
     homedir: string
     cpus: number
+    chromeAvailable: boolean
+    terminalColumns?: number
+    terminalRows?: number
   }
 }
 
@@ -157,6 +163,7 @@ export const getStubProjectFileContext = (): ProjectFileContext => ({
     arch: '',
     homedir: '',
     cpus: 0,
+    chromeAvailable: false,
   },
 })
 

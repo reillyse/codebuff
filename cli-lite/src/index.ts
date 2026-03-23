@@ -5,10 +5,11 @@ import './env-setup'
 
 import { Command } from 'commander'
 
+import pkg from '../package.json'
 import { printError } from './output'
-import { runOnce, startRepl } from './repl'
+import { runOnce, startRepl, DEFAULT_AGENT_MODE, getAgentForMode } from './repl'
 
-const DEFAULT_AGENT = 'codebuff/base2@latest'
+const DEFAULT_AGENT = getAgentForMode(DEFAULT_AGENT_MODE)
 
 function getApiKey(): string | undefined {
   return process.env.CODEBUFF_API_KEY
@@ -17,10 +18,10 @@ function getApiKey(): string | undefined {
 const program = new Command()
   .name('codebuff-lite')
   .description('Codebuff Lite — TUI-free AI coding agent powered by the Codebuff SDK')
-  .version('0.1.0')
+  .version(pkg.version)
   .option('-a, --agent <id>', 'Agent to use', DEFAULT_AGENT)
   .option('-c, --cwd <dir>', 'Working directory', process.cwd())
-  .option('-v, --verbose', 'Show tool calls and subagent activity', false)
+  .option('-v, --verbose', 'Show tool calls and subagent activity', !!process.env.CODEBUFF_VERBOSE)
   .option('-k, --api-key <key>', 'Codebuff API key (or set CODEBUFF_API_KEY env var)')
   .argument('[prompt...]', 'Prompt to send (omit for interactive REPL mode)')
   .action(async (promptParts: string[], opts: {

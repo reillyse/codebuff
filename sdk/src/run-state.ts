@@ -2,6 +2,7 @@ import * as os from 'os'
 import path from 'path'
 
 import { getFileTokenScores } from '@codebuff/code-map/parse'
+import { getSystemInfo } from '@codebuff/common/util/system-info'
 import {
   KNOWLEDGE_FILE_NAMES_LOWERCASE,
   isKnowledgeFile,
@@ -76,6 +77,10 @@ export type InitialSessionStateOptions = {
   agentDefinitions?: AgentDefinition[]
   customToolDefinitions?: CustomToolDefinition[]
   maxAgentSteps?: number
+  /** Terminal width in columns, passed to the agent via system prompt */
+  terminalColumns?: number
+  /** Terminal height in rows, passed to the agent via system prompt */
+  terminalRows?: number
   fs?: CodebuffFileSystem
   spawn?: CodebuffSpawn
   logger?: Logger
@@ -409,7 +414,7 @@ function deriveKnowledgeFiles(
 export async function initialSessionState(
   params: InitialSessionStateOptions,
 ): Promise<SessionState> {
-  const { cwd, maxAgentSteps, skillsDir } = params
+  const { cwd, maxAgentSteps, skillsDir, terminalColumns, terminalRows } = params
   let {
     agentDefinitions,
     customToolDefinitions,
@@ -507,12 +512,9 @@ export async function initialSessionState(
     changesSinceLastChat: {},
     shellConfigFiles: {},
     systemInfo: {
-      platform: process.platform,
-      shell: 'bash',
-      nodeVersion: process.version,
-      arch: process.arch,
-      homedir: os.homedir(),
-      cpus: os.cpus().length ?? 1,
+      ...getSystemInfo(),
+      ...(terminalColumns !== undefined && { terminalColumns }),
+      ...(terminalRows !== undefined && { terminalRows }),
     },
   })
 

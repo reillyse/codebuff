@@ -163,7 +163,7 @@ export function getAgentList(): AgentListEntry[] {
     entries.push({
       id,
       displayName: def.displayName ?? id,
-      source: id in bundledAgentsCache ? 'user' : 'user',
+      source: 'user',
       model: typeof def.model === 'string' ? def.model : undefined,
     })
   }

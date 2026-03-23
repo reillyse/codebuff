@@ -83,6 +83,10 @@ export type CodebuffClientOptions = {
   agentDefinitions?: AgentDefinition[]
   maxAgentSteps?: number
   env?: Record<string, string>
+  /** Terminal width in columns. The agent uses this to format output (tables, code) to fit. */
+  terminalColumns?: number
+  /** Terminal height in rows. */
+  terminalRows?: number
 
   handleEvent?: (event: PrintModeEvent) => void | Promise<void>
   handleStreamChunk?: (
@@ -193,6 +197,8 @@ async function runOnce({
   agentDefinitions,
   maxAgentSteps = MAX_AGENT_STEPS_DEFAULT,
   env,
+  terminalColumns,
+  terminalRows,
 
   handleEvent,
   handleStreamChunk,
@@ -258,10 +264,20 @@ async function runOnce({
       customToolDefinitions,
       projectFiles,
       maxAgentSteps,
+      terminalColumns,
+      terminalRows,
       fs,
       spawn,
       logger,
     })
+  }
+
+  // Update terminal dimensions on every run (terminal may have been resized)
+  if (terminalColumns !== undefined) {
+    sessionState.fileContext.systemInfo.terminalColumns = terminalColumns
+  }
+  if (terminalRows !== undefined) {
+    sessionState.fileContext.systemInfo.terminalRows = terminalRows
   }
 
   let resolve: (value: RunReturnType) => any = () => {}
