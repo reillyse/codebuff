@@ -39,6 +39,7 @@ interface AppProps {
   initialMode?: AgentMode
   showProjectPicker: boolean
   onProjectChange: (projectPath: string) => void
+  claudeOAuthExpired: boolean
 }
 
 export const App = ({
@@ -52,6 +53,7 @@ export const App = ({
   initialMode,
   showProjectPicker,
   onProjectChange,
+  claudeOAuthExpired,
 }: AppProps) => {
   const { contentMaxWidth, terminalWidth } = useTerminalDimensions()
   const theme = useTheme()
@@ -136,17 +138,26 @@ export const App = ({
     setGitRootBannerDismissed(false)
   }, [projectRoot])
 
+  // Track dismissal of both banner types using the shared prevTopBannerRef
+  const [claudeOAuthBannerDismissed, setClaudeOAuthBannerDismissed] = useState(false)
+
   useEffect(() => {
     const prevBanner = prevTopBannerRef.current
-    if (
-      prevBanner === 'gitRoot' &&
-      activeTopBanner === null &&
-      showGitRootBanner
-    ) {
+    if (prevBanner === 'gitRoot' && activeTopBanner === null && showGitRootBanner) {
       setGitRootBannerDismissed(true)
+    }
+    if (prevBanner === 'claudeOAuthExpired' && activeTopBanner === null) {
+      setClaudeOAuthBannerDismissed(true)
     }
     prevTopBannerRef.current = activeTopBanner
   }, [activeTopBanner, showGitRootBanner])
+
+  // Show Claude OAuth expired banner on startup (takes priority over gitRoot)
+  useEffect(() => {
+    if (claudeOAuthExpired && !claudeOAuthBannerDismissed) {
+      setActiveTopBanner('claudeOAuthExpired')
+    }
+  }, [claudeOAuthExpired, claudeOAuthBannerDismissed, setActiveTopBanner])
 
   useEffect(() => {
     if (!showGitRootBanner) {
@@ -155,11 +166,13 @@ export const App = ({
       }
       return
     }
-    if (!gitRootBannerDismissed && activeTopBanner === null) {
+    if (!gitRootBannerDismissed && activeTopBanner === null && (!claudeOAuthExpired || claudeOAuthBannerDismissed)) {
       setActiveTopBanner('gitRoot')
     }
   }, [
     activeTopBanner,
+    claudeOAuthExpired,
+    claudeOAuthBannerDismissed,
     closeTopBanner,
     gitRootBannerDismissed,
     setActiveTopBanner,

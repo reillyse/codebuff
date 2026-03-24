@@ -110,7 +110,6 @@ async function checkClaudeSubscription(): Promise<{ configured: boolean; valid: 
 
   printError(
     'Claude subscription credentials are expired and could not be refreshed.\n' +
-    'Exiting to avoid using Codebuff credits.\n\n' +
     'To fix this, reconnect your Claude account using /connect:claude in the main Codebuff CLI,\n' +
     'or remove your Claude OAuth credentials to use Codebuff credits instead.',
   )
@@ -200,6 +199,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
   const runPrompt = async (prompt: string): Promise<void> => {
     if (!prompt.trim()) return
+
+    // Per-prompt credential check: validate Claude OAuth before each prompt
+    const claudeCheck = await checkClaudeSubscription()
+    if (!claudeCheck.valid) return
 
     running = true
     abortController = new AbortController()

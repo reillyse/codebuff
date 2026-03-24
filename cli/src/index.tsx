@@ -180,7 +180,7 @@ async function main(): Promise<void> {
   const isPublishCommand = process.argv[2] === 'publish'
   const hasAgentOverride = Boolean(agent?.trim())
 
-  await initializeApp({ cwd })
+  const { claudeOAuthExpired } = await initializeApp({ cwd })
 
   // Set the auth token for the API client
   setApiClientAuthToken(getAuthToken())
@@ -340,6 +340,7 @@ async function main(): Promise<void> {
         initialMode={initialMode}
         showProjectPicker={showProjectPickerScreen}
         onProjectChange={handleProjectChange}
+        claudeOAuthExpired={claudeOAuthExpired}
       />
     )
   }

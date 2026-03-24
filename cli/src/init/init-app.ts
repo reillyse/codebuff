@@ -1,6 +1,7 @@
 import {
   getClaudeOAuthCredentials,
   getValidClaudeOAuthCredentials,
+  setClaudeOAuthFallbackEnabled,
 } from '@codebuff/sdk'
 import { enableMapSet } from 'immer'
 
@@ -10,7 +11,7 @@ import { initTimestampFormatter } from '../utils/helpers'
 import { enableManualThemeRefresh } from '../utils/theme-system'
 import { initializeDirenv } from './init-direnv'
 
-export async function initializeApp(params: { cwd?: string }): Promise<void> {
+export async function initializeApp(params: { cwd?: string }): Promise<{ claudeOAuthExpired: boolean }> {
   if (params.cwd) {
     process.chdir(params.cwd)
   }
@@ -25,13 +26,23 @@ export async function initializeApp(params: { cwd?: string }): Promise<void> {
   enableManualThemeRefresh()
   initTimestampFormatter()
 
-  // Refresh Claude OAuth credentials in the background if they exist
-  // This ensures the subscription status is up-to-date on startup
+  // Validate Claude OAuth credentials on startup
   const claudeCredentials = getClaudeOAuthCredentials()
-  if (claudeCredentials) {
-    getValidClaudeOAuthCredentials().catch((error) => {
-      // Log refresh errors at debug level - will be retried on next API call
-      console.debug('Failed to refresh Claude OAuth credentials:', error)
-    })
+  if (!claudeCredentials) {
+    return { claudeOAuthExpired: false }
+  }
+
+  // Disable fallback to Codebuff backend when Claude OAuth fails,
+  // so we don't silently burn Codebuff credits
+  setClaudeOAuthFallbackEnabled(false)
+  try {
+    const validCredentials = await Promise.race([
+      getValidClaudeOAuthCredentials(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+    ])
+    return { claudeOAuthExpired: !validCredentials }
+  } catch (error) {
+    console.debug('Failed to refresh Claude OAuth credentials:', error)
+    return { claudeOAuthExpired: true }
   }
 }

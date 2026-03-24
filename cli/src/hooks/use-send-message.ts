@@ -10,6 +10,7 @@ import { createRunConfig } from '../utils/create-run-config'
 import { getHippoContext } from '../utils/hippo-hooks'
 import { loadAgentDefinitions } from '../utils/local-agent-registry'
 import { logger } from '../utils/logger'
+import { logPrompt, logResponse } from '../utils/prompt-logger'
 import {
   loadMostRecentChatState,
   saveChatState,
@@ -38,7 +39,15 @@ import type { ChatMessage } from '../types/chat'
 import type { SendMessageFn } from '../types/contracts/send-message'
 import type { AgentMode } from '../utils/constants'
 import type { SendMessageTimerEvent } from '../utils/send-message-timer'
-import type { AgentDefinition, MessageContent, RunState } from '@codebuff/sdk'
+import {
+  getClaudeOAuthCredentials,
+  getValidClaudeOAuthCredentials,
+} from '@codebuff/sdk'
+import type {
+  AgentDefinition,
+  MessageContent,
+  RunState,
+} from '@codebuff/sdk'
 import { isCoveredBySubscription } from '../utils/subscription'
 
 import type { SubscriptionResponse } from './use-subscription-query'
@@ -247,6 +256,40 @@ export const useSendMessage = ({
       })
       setIsRetrying(false)
 
+      // Pre-flight Claude OAuth credential check
+      // Validates credentials can be refreshed before sending, matching cli-lite's checkClaudeSubscription behavior
+      const claudeCredentials = getClaudeOAuthCredentials()
+      if (claudeCredentials) {
+        let credentialsValid = false
+        try {
+          const validCredentials = await Promise.race([
+            getValidClaudeOAuthCredentials(),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+          ])
+          credentialsValid = !!validCredentials
+        } catch (error) {
+          logger.warn({ error }, '[send-message] Claude OAuth credential check failed')
+        }
+        if (!credentialsValid) {
+          logger.warn({}, '[send-message] Claude OAuth credentials expired and could not be refreshed')
+          setMessages((prev) => [
+            ...prev,
+            createErrorChatMessage(
+              '⚠️ Claude OAuth credentials are expired and could not be refreshed. Reconnect via /connect:claude, or remove your credentials to use Codebuff credits.',
+            ),
+          ])
+          await yieldToEventLoop()
+          setTimeout(() => scrollToLatest(), 0)
+          resetEarlyReturnState({
+            setCanProcessQueue,
+            updateChainInProgress,
+            isProcessingQueueRef,
+            isQueuePausedRef,
+          })
+          return
+        }
+      }
+
       // Prepare user message (bash context, images, text attachments, mode divider)
       let userMessageId: string
       let messageContent: MessageContent[] | undefined
@@ -445,6 +488,7 @@ export const useSendMessage = ({
       // called at the start of sendMessage to ensure they happen synchronously
       // before any async work, so the router can correctly detect busy state.
       let actualCredits: number | undefined
+      const promptLogStartTime = Date.now()
 
       // Execute SDK run with streaming handlers
       try {
@@ -485,6 +529,12 @@ export const useSendMessage = ({
         })
 
         logger.info({ runConfig }, '[send-message] Sending message with sdk run config')
+        logPrompt({
+          prompt: effectivePrompt,
+          enrichedPrompt: promptWithHippoContext,
+          sessionId: chatSessionId,
+          agentMode,
+        })
         const runState = await client.run(runConfig)
 
         // Finalize: persist state and mark complete
@@ -514,6 +564,18 @@ export const useSendMessage = ({
           isProcessingQueueRef,
           isQueuePausedRef,
         })
+        if (!streamRefs.state.wasAbortedByUser) {
+          logResponse({
+            prompt: effectivePrompt,
+            sessionId: chatSessionId,
+            agentMode,
+            streamedText: streamRefs.state.rootStreamBuffer,
+            elapsedMs: Date.now() - promptLogStartTime,
+            totalCost: actualCredits,
+            outputType: runState.output.type,
+            errorMessage: runState.output.type === 'error' ? runState.output.message : undefined,
+          })
+        }
       } catch (error) {
         handleRunError({
           error,
@@ -525,6 +587,16 @@ export const useSendMessage = ({
           updateChainInProgress,
           isProcessingQueueRef,
           isQueuePausedRef,
+        })
+        const isAbort = error instanceof Error && error.name === 'AbortError'
+        logResponse({
+          prompt: effectivePrompt,
+          sessionId: chatSessionId,
+          agentMode,
+          streamedText: streamRefs.state.rootStreamBuffer,
+          elapsedMs: Date.now() - promptLogStartTime,
+          outputType: isAbort ? 'cancelled' : 'error',
+          errorMessage: isAbort ? undefined : (error instanceof Error ? error.message : String(error)),
         })
       } finally {
         if (isChainInProgressRef.current) {

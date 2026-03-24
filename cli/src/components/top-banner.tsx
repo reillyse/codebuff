@@ -39,6 +39,12 @@ type BannerConfig = {
  * 2. Add the configuration here
  */
 const TOP_BANNER_REGISTRY: Record<NonNullable<TopBannerType>, BannerConfig> = {
+  claudeOAuthExpired: {
+    borderColorKey: 'warning',
+    textColorKey: 'foreground',
+    content:
+      '⚠ Claude OAuth credentials are expired and could not be refreshed.\nClaude model requests will fail until you reconnect.\nReconnect via /connect:claude, or remove your credentials to use Codebuff credits.',
+  },
   homeDir: {
     borderColorKey: 'warning',
     textColorKey: 'foreground',
