@@ -24,6 +24,9 @@ npm-app/src/__tests__/data/
 
 debug/
 
+# cli-lite build artifacts
+cli-lite/bin/
+
 # Nx cache directories
 .nx/cache
 .nx/workspace-data
