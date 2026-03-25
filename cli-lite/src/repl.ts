@@ -21,11 +21,6 @@ import {
   printToolResult,
   printSubagentStart,
   printSubagentEnd,
-  dim,
-  green,
-  yellow,
-  cyan,
-  bold,
 } from './output'
 import { logPrompt, logResponse, isPromptLoggingEnabled, getPromptLogPath } from './prompt-logger'
 import { initializeAgentRegistry, getAgentDefinitions, getAgentSummary, getAgentList, getAgentById, getAgentSource } from './agent-registry'
@@ -53,7 +48,7 @@ function getDefaultMode(): AgentMode {
   const envMode = process.env.CODEBUFF_DEFAULT_MODE?.toUpperCase()
   if (envMode === 'DEFAULT' || envMode === 'MAX' || envMode === 'PLAN') return envMode
   if (process.env.CODEBUFF_DEFAULT_MODE) {
-    writeErr(`\x1b[33mWarning: Unknown CODEBUFF_DEFAULT_MODE '${process.env.CODEBUFF_DEFAULT_MODE}'. Using MAX. Valid: default, max, plan\x1b[0m\n`)
+    writeErr(`Warning: Unknown CODEBUFF_DEFAULT_MODE '${process.env.CODEBUFF_DEFAULT_MODE}'. Using MAX. Valid: default, max, plan\n`)
   }
   return 'MAX'
 }
@@ -66,8 +61,6 @@ const AGENT_MODE_TO_ID: Partial<Record<AgentMode, string>> & Record<'DEFAULT' | 
   PLAN: 'codebuff/base2-plan@latest',
 }
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-
 const WEBSITE_URL = process.env.NEXT_PUBLIC_CODEBUFF_APP_URL ?? 'https://www.codebuff.com'
 
 export function getAgentForMode(mode: AgentMode): string {
@@ -75,29 +68,16 @@ export function getAgentForMode(mode: AgentMode): string {
 }
 
 function getModePrompt(mode: AgentMode): string {
-  if (mode === 'DEFAULT') return `${cyan(bold('> '))}`
-  return `${dim(`[${mode}]`)} ${cyan(bold('> '))}`
+  if (mode === 'DEFAULT') return '> '
+  return `[${mode}] > `
 }
 
 function createSpinner() {
-  let timer: NodeJS.Timeout | null = null
   return {
     start(message = 'Thinking...') {
-      if (timer) clearInterval(timer)
-      let i = 0
-      timer = setInterval(() => {
-        const frame = SPINNER_FRAMES[i % SPINNER_FRAMES.length]
-        writeErr(`\r\x1b[2m${frame} ${message}\x1b[0m\x1b[K`)
-        i++
-      }, 80)
+      writeErr(message + '\n')
     },
-    stop() {
-      if (timer) {
-        clearInterval(timer)
-        timer = null
-        writeErr('\r\x1b[K')
-      }
-    },
+    stop() {},
   }
 }
 
@@ -127,7 +107,7 @@ async function enrichPromptWithHippo(
 ): Promise<string> {
   if (!isHippoAvailable()) return prompt
 
-  writeErr(dim('Searching memory...'))
+  writeErr('Searching memory...\n')
 
   const hippoResult = await getHippoContext(
     prompt,
@@ -135,11 +115,8 @@ async function enrichPromptWithHippo(
     sessionId,
   )
 
-  // Clear the "Searching memory..." line (cursor control only, no newlines)
-  writeErr('\r\x1b[K')
-
   if (hippoResult.context) {
-    writeErr(dim('Found relevant context from past sessions.') + '\n')
+    writeErr('Found relevant context from past sessions.\n')
     return `## Relevant Context from Past Sessions\n${hippoResult.context}\n\n${prompt}`
   }
 
@@ -162,25 +139,25 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
   const agentSummary = getAgentSummary()
   if (agentSummary) {
-    writeErr(dim(agentSummary) + '\n')
+    writeErr(agentSummary + '\n')
   }
 
-  writeErr(dim(`Mode: ${currentMode}`) + '\n')
-  writeErr(dim(`Terminal: ${termSize.columns}×${termSize.rows}`) + '\n')
+  writeErr(`Mode: ${currentMode}\n`)
+  writeErr(`Terminal: ${termSize.columns}x${termSize.rows}\n`)
 
   if (isHippoAvailable()) {
-    writeErr(dim('Hippo memory: enabled') + '\n')
+    writeErr('Hippo memory: enabled\n')
   }
 
   if (isPromptLoggingEnabled()) {
-    writeErr(dim(`Prompt logging: ${getPromptLogPath()}`) + '\n')
+    writeErr(`Prompt logging: ${getPromptLogPath()}\n`)
   }
 
   const claude = await checkClaudeSubscription()
   if (!claude.valid) process.exit(1)
   if (claude.configured) {
     setClaudeOAuthFallbackEnabled(false)
-    writeErr(dim('Claude subscription: connected') + '\n')
+    writeErr('Claude subscription: connected\n')
   }
 
   writeErr('\n')
@@ -258,7 +235,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
           } else if (chunk.type === 'subagent_chunk') {
             if (verbose) {
               spinner.stop()
-              writeErr(dim(chunk.chunk))
+              writeErr(chunk.chunk)
             }
           }
         },
@@ -358,7 +335,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       currentMode = DEFAULT_AGENT_MODE
       sessionId = generateHippoSessionId(currentMode)
       rl.setPrompt(getModePrompt(currentMode))
-      writeErr(`${green('Conversation cleared.')}\n\n`)
+      writeErr('Conversation cleared.\n\n')
       rl.prompt()
       return
     }
@@ -384,7 +361,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
     // Mode commands
     if (trimmed === '/mode') {
-      writeErr(`Current mode: ${bold(currentMode)}\n\n`)
+      writeErr(`Current mode: ${currentMode}\n\n`)
       rl.prompt()
       return
     }
@@ -392,14 +369,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     if (trimmed.startsWith('/mode:')) {
       const modeArg = trimmed.slice('/mode:'.length).toUpperCase()
       if (modeArg !== 'DEFAULT' && modeArg !== 'MAX' && modeArg !== 'PLAN') {
-        writeErr(yellow(`Unknown mode: ${modeArg}. Available: default, max, plan`) + '\n\n')
+        writeErr(`Unknown mode: ${modeArg}. Available: default, max, plan\n\n`)
         rl.prompt()
         return
       }
       currentMode = modeArg
       sessionId = generateHippoSessionId(currentMode)
       rl.setPrompt(getModePrompt(currentMode))
-      writeErr(`${green(`Mode set to ${currentMode}.`)}\n\n`)
+      writeErr(`Mode set to ${currentMode}.\n\n`)
       rl.prompt()
       return
     }
@@ -431,14 +408,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
     if (trimmed === '/hippo:on') {
       saveHippoEnabled(true)
-      writeErr(`${green('Hippo memory enabled.')}\n\n`)
+      writeErr('Hippo memory enabled.\n\n')
       rl.prompt()
       return
     }
 
     if (trimmed === '/hippo:off') {
       saveHippoEnabled(false)
-      writeErr(`${yellow('Hippo memory disabled.')}\n\n`)
+      writeErr('Hippo memory disabled.\n\n')
       rl.prompt()
       return
     }
@@ -446,9 +423,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     if (trimmed === '/hippo:retry') {
       const result = await checkHippoConnection()
       if (result.connectionOk) {
-        writeErr(`${green('Hippo connection OK.')}\n\n`)
+        writeErr('Hippo connection OK.\n\n')
       } else {
-        writeErr(`${yellow(`Hippo connection failed: ${result.lastError ?? 'unknown'}`)}\n\n`)
+        writeErr(`Hippo connection failed: ${result.lastError ?? 'unknown'}\n\n`)
       }
       rl.prompt()
       return
@@ -466,7 +443,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   process.stdout.on('resize', () => {
     const { columns, rows } = getTerminalSize()
     if (verbose) {
-      writeErr(dim(`Terminal resized: ${columns}×${rows}`) + '\n')
+      writeErr(`Terminal resized: ${columns}x${rows}\n`)
     }
   })
 
@@ -673,7 +650,7 @@ async function handleHippoStatus(): Promise<void> {
   const lines = [
     `Hippo memory: ${available ? 'enabled' : 'disabled'}`,
     `Binary: ${HIPPO_BINARY}`,
-    `Connection: ${connectionOk ? green('connected') : yellow(lastError ?? 'disconnected')}`,
+    `Connection: ${connectionOk ? 'connected' : (lastError ?? 'disconnected')}`,
   ]
 
   writeErr(lines.join('\n') + '\n\n')
@@ -683,7 +660,7 @@ function printAgents(): void {
   const agents = getAgentList()
 
   if (agents.length === 0) {
-    writeErr(dim('No agents loaded.') + '\n\n')
+    writeErr('No agents loaded.\n\n')
     return
   }
 
@@ -693,21 +670,17 @@ function printAgents(): void {
   writeErr('\n')
 
   if (bundled.length > 0) {
-    writeErr(bold('Bundled Agents') + dim(` (${bundled.length})`) + '\n')
+    writeErr(`Bundled Agents (${bundled.length})\n`)
     for (const agent of bundled) {
-      const name = cyan(agent.displayName)
-      const id = dim(` (${agent.id})`)
-      writeErr(`  ${name}${id}\n`)
+      writeErr(`  ${agent.displayName} (${agent.id})\n`)
     }
     writeErr('\n')
   }
 
   if (user.length > 0) {
-    writeErr(bold('User Agents') + dim(` (${user.length})`) + '\n')
+    writeErr(`User Agents (${user.length})\n`)
     for (const agent of user) {
-      const name = green(agent.displayName)
-      const id = dim(` (${agent.id})`)
-      writeErr(`  ${name}${id}\n`)
+      writeErr(`  ${agent.displayName} (${agent.id})\n`)
     }
     writeErr('\n')
   }
@@ -716,38 +689,38 @@ function printAgents(): void {
 function printAgentDetail(id: string): void {
   const agent = getAgentById(id)
   if (!agent) {
-    writeErr(yellow(`Agent not found: ${id}`) + '\n')
-    writeErr(dim('Use /agents to see all available agents.') + '\n\n')
+    writeErr(`Agent not found: ${id}\n`)
+    writeErr('Use /agents to see all available agents.\n\n')
     return
   }
 
   const source = getAgentSource(id)
-  const sourceLabel = source === 'user' ? green('user') : cyan('bundled')
+  const sourceLabel = source === 'user' ? 'user' : 'bundled'
 
   writeErr('\n')
-  writeErr(bold(agent.displayName ?? id) + dim(` (${id})`) + '\n')
-  writeErr(dim('─'.repeat(40)) + '\n')
+  writeErr(`${agent.displayName ?? id} (${id})\n`)
+  writeErr(`${'-'.repeat(40)}\n`)
 
-  writeErr(`  ${dim('Source:')}        ${sourceLabel}\n`)
-  writeErr(`  ${dim('Model:')}         ${String(agent.model ?? 'default')}\n`)
-  writeErr(`  ${dim('Output mode:')}   ${agent.outputMode ?? 'last_message'}\n`)
+  writeErr(`  Source:        ${sourceLabel}\n`)
+  writeErr(`  Model:         ${String(agent.model ?? 'default')}\n`)
+  writeErr(`  Output mode:   ${agent.outputMode ?? 'last_message'}\n`)
 
   // Tools
   const tools = agent.toolNames ?? []
-  writeErr(`  ${dim('Tools:')}         ${tools.length > 0 ? tools.join(', ') : dim('none')}\n`)
+  writeErr(`  Tools:         ${tools.length > 0 ? tools.join(', ') : 'none'}\n`)
 
   // Spawnable agents
   const spawnable = agent.spawnableAgents ?? []
   if (spawnable.length > 0) {
-    writeErr(`  ${dim('Spawnable:')}     ${spawnable.join(', ')}\n`)
+    writeErr(`  Spawnable:     ${spawnable.join(', ')}\n`)
   } else {
-    writeErr(`  ${dim('Spawnable:')}     ${dim('none')}\n`)
+    writeErr(`  Spawnable:     none\n`)
   }
 
   // MCP servers
   const mcpKeys = Object.keys(agent.mcpServers ?? {})
   if (mcpKeys.length > 0) {
-    writeErr(`  ${dim('MCP servers:')}   ${mcpKeys.join(', ')}\n`)
+    writeErr(`  MCP servers:   ${mcpKeys.join(', ')}\n`)
   }
 
   // Flags
@@ -755,7 +728,7 @@ function printAgentDetail(id: string): void {
   if (agent.includeMessageHistory) flags.push('includeMessageHistory')
   if (agent.inheritParentSystemPrompt) flags.push('inheritParentSystemPrompt')
   if (flags.length > 0) {
-    writeErr(`  ${dim('Flags:')}         ${flags.join(', ')}\n`)
+    writeErr(`  Flags:         ${flags.join(', ')}\n`)
   }
 
   // Spawner prompt (description)
@@ -764,7 +737,7 @@ function printAgentDetail(id: string): void {
       ? agent.spawnerPrompt.slice(0, 200) + '...'
       : agent.spawnerPrompt
     writeErr('\n')
-    writeErr(`  ${dim('Description:')}\n`)
+    writeErr('  Description:\n')
     writeErr(`  ${desc}\n`)
   }
 
@@ -772,7 +745,7 @@ function printAgentDetail(id: string): void {
 }
 
 async function handleUsageCommand(apiKey: string): Promise<void> {
-  writeErr(dim('Fetching usage...') + '\n')
+  writeErr('Fetching usage...\n')
 
   try {
     const res = await fetch(`${WEBSITE_URL}/api/v1/usage`, {
@@ -786,7 +759,7 @@ async function handleUsageCommand(apiKey: string): Promise<void> {
     })
 
     if (!res.ok) {
-      writeErr(yellow(`Failed to fetch usage (HTTP ${res.status})`) + '\n\n')
+      writeErr(`Failed to fetch usage (HTTP ${res.status})\n\n`)
       return
     }
 
@@ -798,39 +771,39 @@ async function handleUsageCommand(apiKey: string): Promise<void> {
     }
 
     writeErr('\n')
-    writeErr(bold('Credit Usage') + '\n')
-    writeErr(dim('─'.repeat(40)) + '\n')
+    writeErr('Credit Usage\n')
+    writeErr(`${'-'.repeat(40)}\n`)
 
     if (typeof data.usage === 'number') {
-      writeErr(`  ${dim('Session credits used:')}  ${data.usage.toLocaleString()}\n`)
+      writeErr(`  Session credits used:  ${data.usage.toLocaleString()}\n`)
     }
 
     if (data.remainingBalance != null) {
-      writeErr(`  ${dim('Remaining balance:')}    ${data.remainingBalance.toLocaleString()}\n`)
+      writeErr(`  Remaining balance:    ${data.remainingBalance.toLocaleString()}\n`)
     }
 
     if (data.balanceBreakdown && Object.keys(data.balanceBreakdown).length > 0) {
-      writeErr('\n' + dim('  Balance breakdown:') + '\n')
+      writeErr('\n  Balance breakdown:\n')
       for (const [source, amount] of Object.entries(data.balanceBreakdown)) {
-        writeErr(`    ${dim(source + ':')}  ${amount.toLocaleString()}\n`)
+        writeErr(`    ${source}:  ${amount.toLocaleString()}\n`)
       }
     }
 
     if (data.next_quota_reset) {
       const resetDate = new Date(data.next_quota_reset)
-      writeErr(`\n  ${dim('Next reset:')}           ${resetDate.toLocaleDateString()}\n`)
+      writeErr(`\n  Next reset:           ${resetDate.toLocaleDateString()}\n`)
     }
 
     writeErr('\n')
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    writeErr(yellow(`Failed to fetch usage: ${message}`) + '\n\n')
+    writeErr(`Failed to fetch usage: ${message}\n\n`)
   }
 }
 
 function printHelp(): void {
   writeErr(`
-${bold('Commands')}
+Commands
   /new, /clear       Clear conversation and start fresh
   /mode              Show current agent mode
   /mode:default      Switch to DEFAULT mode
@@ -843,19 +816,19 @@ ${bold('Commands')}
   /help              Show this help message
   /exit, /quit       Exit the CLI
 
-${bold('Hippo Memory')}
+Hippo Memory
   /hippo:status      Show hippo memory status
   /hippo:on          Enable hippo memory
   /hippo:off         Disable hippo memory
   /hippo:retry       Test hippo connection
 
-${bold('Environment Variables')}
+Environment Variables
   CODEBUFF_DEFAULT_MODE Set default agent mode (default, max, plan). Default: max
   CODEBUFF_VERBOSE      Enable verbose output (equivalent to -v flag)
   CODEBUFF_PROMPT_LOG   Log prompts and responses to a file (rolling, 5MB limit)
                         Set to '1' for ./debug/prompt-log.txt, or a custom path
 
-${bold('Usage')}
+Usage
   Type your prompt and press Enter to send.
   The agent will stream its response to stdout.
   Tool calls and status are shown on stderr (use -v flag or CODEBUFF_VERBOSE env var).

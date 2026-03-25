@@ -1,57 +1,56 @@
 /**
  * Output formatting utilities for TUI-free CLI.
- * Handles ANSI colors, streaming text, tool call display, etc.
+ * Plain text only — no ANSI escape codes, suitable for piping.
  */
 
-import { RESET, BOLD, DIM, CYAN, GREEN, YELLOW, RED, MAGENTA, BLUE, GRAY } from './ansi'
 import { writeErr } from './tty'
 
 export function bold(text: string): string {
-  return `${BOLD}${text}${RESET}`
+  return text
 }
 
 export function dim(text: string): string {
-  return `${DIM}${text}${RESET}`
+  return text
 }
 
 export function cyan(text: string): string {
-  return `${CYAN}${text}${RESET}`
+  return text
 }
 
 export function green(text: string): string {
-  return `${GREEN}${text}${RESET}`
+  return text
 }
 
 export function yellow(text: string): string {
-  return `${YELLOW}${text}${RESET}`
+  return text
 }
 
 export function red(text: string): string {
-  return `${RED}${text}${RESET}`
+  return text
 }
 
 export function magenta(text: string): string {
-  return `${MAGENTA}${text}${RESET}`
+  return text
 }
 
 export function blue(text: string): string {
-  return `${BLUE}${text}${RESET}`
+  return text
 }
 
 export function gray(text: string): string {
-  return `${GRAY}${text}${RESET}`
+  return text
 }
 
 export function printToolCall(toolName: string, input?: unknown): void {
   const displayName = toolName.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
-  writeErr(`${DIM}${CYAN}⚡ ${displayName}${RESET}`)
+  let line = `> ${displayName}`
   if (input && typeof input === 'object') {
     const summary = getToolInputSummary(toolName, input as Record<string, unknown>)
     if (summary) {
-      writeErr(`${DIM} ${summary}${RESET}`)
+      line += ` ${summary}`
     }
   }
-  writeErr('\n')
+  writeErr(line + '\n')
 }
 
 function getToolInputSummary(toolName: string, input: Record<string, unknown>): string {
@@ -97,43 +96,43 @@ function getToolInputSummary(toolName: string, input: Record<string, unknown>): 
 }
 
 export function printToolResult(toolName: string, success: boolean): void {
-  const icon = success ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`
+  const icon = success ? '[ok]' : '[fail]'
   const displayName = toolName.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
-  writeErr(`${DIM}  ${icon} ${displayName} done${RESET}\n`)
+  writeErr(`  ${icon} ${displayName} done\n`)
 }
 
 export function printError(message: string): void {
-  writeErr(`${RED}${BOLD}Error:${RESET} ${RED}${message}${RESET}\n`)
+  writeErr(`Error: ${message}\n`)
 }
 
 export function printWarning(message: string): void {
-  writeErr(`${YELLOW}${BOLD}Warning:${RESET} ${YELLOW}${message}${RESET}\n`)
+  writeErr(`Warning: ${message}\n`)
 }
 
 export function printInfo(message: string): void {
-  writeErr(`${BLUE}${message}${RESET}\n`)
+  writeErr(`${message}\n`)
 }
 
 export function printSubagentStart(agentId: string, agentType: string): void {
-  writeErr(`${DIM}${MAGENTA}◆ Agent: ${agentType}${RESET}\n`)
+  writeErr(`* Agent: ${agentType}\n`)
 }
 
 export function printSubagentEnd(agentId: string): void {
-  writeErr(`${DIM}${MAGENTA}◆ Agent finished${RESET}\n`)
+  writeErr(`* Agent finished\n`)
 }
 
 export function printDivider(): void {
   const width = Math.min(process.stdout.columns || 80, 80)
-  writeErr(`${DIM}${'─'.repeat(width)}${RESET}\n`)
+  writeErr(`${'-'.repeat(width)}\n`)
 }
 
 export function printFinish(totalCost: number): void {
   const costStr = totalCost > 0 ? ` (cost: $${totalCost.toFixed(4)})` : ''
-  writeErr(`${DIM}${GREEN}✓ Done${costStr}${RESET}\n`)
+  writeErr(`Done${costStr}\n`)
 }
 
 export function printBanner(): void {
-  writeErr(`\n${BOLD}${CYAN}Codebuff Lite${RESET} ${DIM}(TUI-free mode)${RESET}\n`)
-  writeErr(`${DIM}Type your prompt, then press Enter. Use Ctrl+C to exit.${RESET}\n`)
-  writeErr(`${DIM}Use /help for commands.${RESET}\n\n`)
+  writeErr('\nCodebuff Lite (TUI-free mode)\n')
+  writeErr('Type your prompt, then press Enter. Use Ctrl+C to exit.\n')
+  writeErr('Use /help for commands.\n\n')
 }
