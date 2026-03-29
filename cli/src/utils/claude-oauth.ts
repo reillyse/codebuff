@@ -136,7 +136,7 @@ export async function exchangeCodeForTokens(
   }
 
   // Save credentials to file
-  saveClaudeOAuthCredentials(credentials)
+  await saveClaudeOAuthCredentials(credentials)
 
   // Reset any cached rate limit since user just reconnected
   resetClaudeOAuthRateLimit()
@@ -147,8 +147,8 @@ export async function exchangeCodeForTokens(
 /**
  * Disconnect from Claude OAuth (clear credentials).
  */
-export function disconnectClaudeOAuth(): void {
-  clearClaudeOAuthCredentials()
+export async function disconnectClaudeOAuth(): Promise<void> {
+  await clearClaudeOAuthCredentials()
 }
 
 /**

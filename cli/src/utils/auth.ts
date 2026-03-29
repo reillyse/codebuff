@@ -4,8 +4,8 @@ import path from 'path'
 
 import { env } from '@codebuff/common/env'
 import { getCiEnv } from '@codebuff/common/env-ci'
+import { atomicWriteFileSync, withCredentialFileLock } from '@codebuff/common/util/fs'
 import { z } from 'zod'
-
 
 import { getApiClient, setApiClientAuthToken } from './codebuff-api'
 import { logger } from './logger'
@@ -171,55 +171,61 @@ const readCredentialsFile = (): Record<string, unknown> => {
 
 /**
  * Save user credentials to file system.
+ * Uses a shared lock to prevent races with OAuth credential writes to the same file.
  */
-export const saveUserCredentials = (user: User): void => {
-  const configDir = getConfigDir()
-  const credentialsPath = getCredentialsPath()
+export const saveUserCredentials = (user: User): Promise<void> => {
+  return withCredentialFileLock(() => {
+    const configDir = getConfigDir()
+    const credentialsPath = getCredentialsPath()
 
-  try {
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true })
+    try {
+      if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir, { recursive: true })
+      }
+
+      const updatedData = { ...readCredentialsFile(), default: user }
+      atomicWriteFileSync(credentialsPath, JSON.stringify(updatedData, null, 2))
+    } catch (error) {
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Error saving credentials',
+      )
+      throw error
     }
-
-    const updatedData = { ...readCredentialsFile(), default: user }
-    fs.writeFileSync(credentialsPath, JSON.stringify(updatedData, null, 2))
-  } catch (error) {
-    logger.error(
-      {
-        error: error instanceof Error ? error.message : String(error),
-      },
-      'Error saving credentials',
-    )
-    throw error
-  }
+  })
 }
 
 /**
  * Clear user credentials from file system.
  * Only removes the 'default' field, preserving other credentials.
+ * Uses a shared lock to prevent races with OAuth credential writes to the same file.
  */
-export const clearUserCredentials = (): void => {
-  const credentialsPath = getCredentialsPath()
+export const clearUserCredentials = (): Promise<void> => {
+  return withCredentialFileLock(() => {
+    const credentialsPath = getCredentialsPath()
 
-  try {
-    if (!fs.existsSync(credentialsPath)) return
+    try {
+      if (!fs.existsSync(credentialsPath)) return
 
-    const { default: _, ...rest } = readCredentialsFile()
+      const { default: _, ...rest } = readCredentialsFile()
 
-    if (Object.keys(rest).length === 0) {
-      fs.unlinkSync(credentialsPath)
-    } else {
-      fs.writeFileSync(credentialsPath, JSON.stringify(rest, null, 2))
+      if (Object.keys(rest).length === 0) {
+        fs.unlinkSync(credentialsPath)
+      } else {
+        atomicWriteFileSync(credentialsPath, JSON.stringify(rest, null, 2))
+      }
+    } catch (error) {
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'Error clearing credentials',
+      )
+      throw error
     }
-  } catch (error) {
-    logger.error(
-      {
-        error: error instanceof Error ? error.message : String(error),
-      },
-      'Error clearing credentials',
-    )
-    throw error
-  }
+  })
 }
 
 export async function logoutUser(): Promise<boolean> {
@@ -249,7 +255,7 @@ export async function logoutUser(): Promise<boolean> {
   }
 
   try {
-    clearUserCredentials()
+    await clearUserCredentials()
   } catch (error) {
     logger.debug({ error }, 'Failed to clear credentials during logout')
   }

@@ -75,7 +75,7 @@ describe('Credentials Storage Integration', () => {
   })
 
   describe('P0: File System Operations', () => {
-    test('should create config directory if it does not exist', () => {
+    test('should create config directory if it does not exist', async () => {
       // Ensure directory doesn't exist initially
       if (fs.existsSync(tempConfigDir)) {
         fs.rmSync(tempConfigDir, { recursive: true })
@@ -83,7 +83,7 @@ describe('Credentials Storage Integration', () => {
       expect(fs.existsSync(tempConfigDir)).toBe(false)
 
       // Call saveUserCredentials - should create directory
-      saveUserCredentials(TEST_USER)
+      await saveUserCredentials(TEST_USER)
 
       // Verify directory was created
       expect(fs.existsSync(tempConfigDir)).toBe(true)
@@ -97,9 +97,9 @@ describe('Credentials Storage Integration', () => {
       expect(fs.existsSync(credentialsPath)).toBe(true)
     })
 
-    test('should write credentials.json with correct JSON format', () => {
+    test('should write credentials.json with correct JSON format', async () => {
       // Call saveUserCredentials
-      saveUserCredentials(TEST_USER)
+      await saveUserCredentials(TEST_USER)
 
       // Read the credentials file
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
@@ -121,9 +121,9 @@ describe('Credentials Storage Integration', () => {
       expect(parsed.default.fingerprintHash).toBe(TEST_USER.fingerprintHash)
     })
 
-    test('should overwrite existing credentials when saving new ones', () => {
+    test('should overwrite existing credentials when saving new ones', async () => {
       // Save initial credentials
-      saveUserCredentials(TEST_USER)
+      await saveUserCredentials(TEST_USER)
 
       // Read and verify first credentials
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
@@ -140,7 +140,7 @@ describe('Credentials Storage Integration', () => {
         fingerprintId: 'different-fingerprint',
         fingerprintHash: 'different-hash',
       }
-      saveUserCredentials(newUser)
+      await saveUserCredentials(newUser)
 
       // Read again
       fileContent = fs.readFileSync(credentialsPath, 'utf8')
@@ -202,9 +202,9 @@ describe('Credentials Storage Integration', () => {
       expect(configDir).toEqual(path.join(os.homedir(), '.config', 'manicode'))
     })
 
-    test('should allow credentials to persist across simulated CLI restarts', () => {
+    test('should allow credentials to persist across simulated CLI restarts', async () => {
       // Save credentials
-      saveUserCredentials(TEST_USER)
+      await saveUserCredentials(TEST_USER)
 
       // Simulate CLI restart by calling getUserCredentials
       // (simulates reading from disk on fresh startup)
@@ -225,8 +225,8 @@ describe('Credentials Storage Integration', () => {
   })
 
   describe('P0: Credential Format Validation', () => {
-    test('should save user ID in credentials', () => {
-      saveUserCredentials(TEST_USER)
+    test('should save user ID in credentials', async () => {
+      await saveUserCredentials(TEST_USER)
 
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
       const parsed = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
@@ -234,8 +234,8 @@ describe('Credentials Storage Integration', () => {
       expect(parsed.default.id).toBe(TEST_USER.id)
     })
 
-    test('should save user name in credentials', () => {
-      saveUserCredentials(TEST_USER)
+    test('should save user name in credentials', async () => {
+      await saveUserCredentials(TEST_USER)
 
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
       const parsed = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
@@ -243,8 +243,8 @@ describe('Credentials Storage Integration', () => {
       expect(parsed.default.name).toBe(TEST_USER.name)
     })
 
-    test('should save user email in credentials', () => {
-      saveUserCredentials(TEST_USER)
+    test('should save user email in credentials', async () => {
+      await saveUserCredentials(TEST_USER)
 
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
       const parsed = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
@@ -252,8 +252,8 @@ describe('Credentials Storage Integration', () => {
       expect(parsed.default.email).toBe(TEST_USER.email)
     })
 
-    test('should save authToken (session token) in credentials', () => {
-      saveUserCredentials(TEST_USER)
+    test('should save authToken (session token) in credentials', async () => {
+      await saveUserCredentials(TEST_USER)
 
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
       const parsed = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
@@ -263,8 +263,8 @@ describe('Credentials Storage Integration', () => {
       expect(parsed.default.authToken).toBeTruthy()
     })
 
-    test('should save fingerprintId in credentials', () => {
-      saveUserCredentials(TEST_USER)
+    test('should save fingerprintId in credentials', async () => {
+      await saveUserCredentials(TEST_USER)
 
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
       const parsed = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
@@ -272,8 +272,8 @@ describe('Credentials Storage Integration', () => {
       expect(parsed.default.fingerprintId).toBe(TEST_USER.fingerprintId)
     })
 
-    test('should save fingerprintHash in credentials', () => {
-      saveUserCredentials(TEST_USER)
+    test('should save fingerprintHash in credentials', async () => {
+      await saveUserCredentials(TEST_USER)
 
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
       const parsed = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
@@ -281,8 +281,8 @@ describe('Credentials Storage Integration', () => {
       expect(parsed.default.fingerprintHash).toBe(TEST_USER.fingerprintHash)
     })
 
-    test('should produce valid, parseable JSON', () => {
-      saveUserCredentials(TEST_USER)
+    test('should produce valid, parseable JSON', async () => {
+      await saveUserCredentials(TEST_USER)
 
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
       const fileContent = fs.readFileSync(credentialsPath, 'utf8')
@@ -302,9 +302,9 @@ describe('Credentials Storage Integration', () => {
   })
 
   describe('P2: File System Edge Cases', () => {
-    test('should preserve file permissions when writing credentials', () => {
+    test('should preserve file permissions when writing credentials', async () => {
       // Save credentials
-      saveUserCredentials(TEST_USER)
+      await saveUserCredentials(TEST_USER)
 
       // Check file permissions
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
@@ -324,7 +324,7 @@ describe('Credentials Storage Integration', () => {
       }
     })
 
-    test('should handle write permission errors gracefully', () => {
+    test('should handle write permission errors gracefully', async () => {
       // Mock fs.writeFileSync to throw EACCES error
       const writeError = new Error(
         'EACCES: permission denied',
@@ -337,16 +337,14 @@ describe('Credentials Storage Integration', () => {
         },
       )
 
-      // Attempt to save credentials - should throw since we're not catching in saveUserCredentials
-      expect(() => {
-        saveUserCredentials(TEST_USER)
-      }).toThrow('EACCES')
+      // Attempt to save credentials - should reject since we're not catching in saveUserCredentials
+      await expect(saveUserCredentials(TEST_USER)).rejects.toThrow('EACCES')
 
       // Verify writeFileSync was attempted
       expect(writeFileSyncSpy).toHaveBeenCalled()
     })
 
-    test('should show clear error message on permission denial', () => {
+    test('should show clear error message on permission denial', async () => {
       // This test verifies that when permission is denied, the error is logged
       const writeError = new Error(
         "EACCES: permission denied, open '/test/credentials.json'",
@@ -357,16 +355,14 @@ describe('Credentials Storage Integration', () => {
         throw writeError
       })
 
-      // Attempt to save credentials - will throw and get logged
-      expect(() => {
-        saveUserCredentials(TEST_USER)
-      }).toThrow()
+      // Attempt to save credentials - will reject and get logged
+      await expect(saveUserCredentials(TEST_USER)).rejects.toThrow()
 
       // The actual error logging happens in saveUserCredentials via logger.error
       // The error message includes the error details which would help users diagnose
     })
 
-    test('should gracefully degrade if credentials cannot be written', () => {
+    test('should gracefully degrade if credentials cannot be written', async () => {
       // This tests that the error is thrown (not silently swallowed)
       // The caller (login mutation) is responsible for handling the error gracefully
       const writeError = new Error(
@@ -378,10 +374,8 @@ describe('Credentials Storage Integration', () => {
         throw writeError
       })
 
-      // Attempt to save - should throw to caller who can handle it
-      expect(() => {
-        saveUserCredentials(TEST_USER)
-      }).toThrow('ENOSPC')
+      // Attempt to save - should reject to caller who can handle it
+      await expect(saveUserCredentials(TEST_USER)).rejects.toThrow('ENOSPC')
 
       // The login mutation's onError handler would catch this and allow
       // the user to continue with in-memory credentials
@@ -389,7 +383,7 @@ describe('Credentials Storage Integration', () => {
   })
 
   describe('P2: Concurrent Operations', () => {
-    test('should handle rapid saves without race conditions', () => {
+    test('should handle rapid saves without race conditions', async () => {
       // Create different user objects for rapid saves
       const users: User[] = []
       for (let i = 0; i < 5; i++) {
@@ -403,8 +397,8 @@ describe('Credentials Storage Integration', () => {
         })
       }
 
-      // Call saveUserCredentials 5 times rapidly
-      users.forEach((user) => saveUserCredentials(user))
+      // Call saveUserCredentials 5 times rapidly — the shared lock serializes them
+      await Promise.all(users.map((user) => saveUserCredentials(user)))
 
       // Read final credentials
       const credentialsPath = path.join(tempConfigDir, 'credentials.json')
@@ -420,12 +414,12 @@ describe('Credentials Storage Integration', () => {
       expect(typeof parsed.default.authToken).toBe('string')
     })
 
-    test('should handle read during write without corruption', () => {
+    test('should handle read during write without corruption', async () => {
       // Since fs.writeFileSync is synchronous, there's no actual concurrency
       // But we can verify that writes are atomic (no partial data)
 
       // Save initial credentials
-      saveUserCredentials(TEST_USER)
+      await saveUserCredentials(TEST_USER)
 
       // Read credentials
       const loadedBefore = getUserCredentials()
@@ -441,7 +435,7 @@ describe('Credentials Storage Integration', () => {
         fingerprintId: 'new-fingerprint',
         fingerprintHash: 'new-hash',
       }
-      saveUserCredentials(newUser)
+      await saveUserCredentials(newUser)
 
       // Read again - should get complete new data (not partial/mixed)
       const loadedAfter = getUserCredentials()

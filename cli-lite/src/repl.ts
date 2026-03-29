@@ -89,9 +89,8 @@ async function checkClaudeSubscription(): Promise<{ configured: boolean; valid: 
   if (valid) return { configured: true, valid: true }
 
   printError(
-    'Claude subscription credentials are expired and could not be refreshed.\n' +
-    'To fix this, reconnect your Claude account using /connect:claude in the main Codebuff CLI,\n' +
-    'or remove your Claude OAuth credentials to use Codebuff credits instead.',
+    'Claude subscription credentials expired.\n' +
+    'Reconnect your Claude account using /connect:claude in the main Codebuff CLI.',
   )
   return { configured: true, valid: false }
 }

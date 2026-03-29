@@ -275,7 +275,7 @@ export const useSendMessage = ({
           setMessages((prev) => [
             ...prev,
             createErrorChatMessage(
-              '⚠️ Claude OAuth credentials are expired and could not be refreshed. Reconnect via /connect:claude, or remove your credentials to use Codebuff credits.',
+              '⚠️ Claude subscription credentials expired and could not be refreshed. Reconnect via /connect:claude.',
             ),
           ])
           await yieldToEventLoop()

@@ -152,29 +152,33 @@ function sendAnalyticsAndLog(
 
   logAsErrorIfNeeded(toTrack)
 
-  if (!IS_DEV && includeData && typeof normalizedData === 'object') {
-    const analyticsPayloads = analyticsDispatcher.process({
-      data: normalizedData,
-      level,
-      msg: stringFormat(normalizedMsg ?? '', ...args),
-      fallbackUserId: loggerContext.userId,
-    })
+  try {
+    if (!IS_DEV && includeData && typeof normalizedData === 'object') {
+      const analyticsPayloads = analyticsDispatcher.process({
+        data: normalizedData,
+        level,
+        msg: stringFormat(normalizedMsg ?? '', ...args),
+        fallbackUserId: loggerContext.userId,
+      })
 
-    analyticsPayloads.forEach((payload) => {
-      trackEvent(payload.event, payload.properties)
-    })
-  }
+      analyticsPayloads.forEach((payload) => {
+        trackEvent(payload.event, payload.properties)
+      })
+    }
 
-  // Send all log events to PostHog in production for better observability
-  // Skip if the log already has an eventId (to avoid duplicate tracking)
-  const hasEventId = includeData && getAnalyticsEventId(normalizedData) !== null
-  if (!IS_DEV && !IS_TEST && !IS_CI && !hasEventId) {
-    trackEvent(AnalyticsEvent.CLI_LOG, {
-      level,
-      msg: stringFormat(normalizedMsg ?? '', ...args),
-      ...(includeData ? { data: normalizedData } : {}),
-      ...loggerContext,
-    })
+    // Send all log events to PostHog in production for better observability
+    // Skip if the log already has an eventId (to avoid duplicate tracking)
+    const hasEventId = includeData && getAnalyticsEventId(normalizedData) !== null
+    if (!IS_DEV && !IS_TEST && !IS_CI && !hasEventId) {
+      trackEvent(AnalyticsEvent.CLI_LOG, {
+        level,
+        msg: stringFormat(normalizedMsg ?? '', ...args),
+        ...(includeData ? { data: normalizedData } : {}),
+        ...loggerContext,
+      })
+    }
+  } catch {
+    // Silently swallow analytics errors — the logger must never throw
   }
 
   // In dev mode, use appendFileSync for real-time logging (Bun has issues with pino sync)

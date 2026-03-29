@@ -26,15 +26,14 @@ export async function initializeApp(params: { cwd?: string }): Promise<{ claudeO
   enableManualThemeRefresh()
   initTimestampFormatter()
 
+  // Never fall back to Codebuff backend credits for Claude models
+  setClaudeOAuthFallbackEnabled(false)
+
   // Validate Claude OAuth credentials on startup
   const claudeCredentials = getClaudeOAuthCredentials()
   if (!claudeCredentials) {
     return { claudeOAuthExpired: false }
   }
-
-  // Disable fallback to Codebuff backend when Claude OAuth fails,
-  // so we don't silently burn Codebuff credits
-  setClaudeOAuthFallbackEnabled(false)
   try {
     const validCredentials = await Promise.race([
       getValidClaudeOAuthCredentials(),

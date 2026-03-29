@@ -71,7 +71,7 @@ describe('Logout and Re-login helpers', () => {
   test('logoutUser removes credentials file and returns true', async () => {
     mockConfigPaths()
     mockLogoutApi()
-    saveUserCredentials(ORIGINAL_USER)
+    await saveUserCredentials(ORIGINAL_USER)
 
     const credentialsPath = path.join(tempConfigDir, 'credentials.json')
     expect(fs.existsSync(credentialsPath)).toBe(true)
@@ -85,14 +85,14 @@ describe('Logout and Re-login helpers', () => {
     mockConfigPaths()
     mockLogoutApi()
 
-    saveUserCredentials(ORIGINAL_USER)
+    await saveUserCredentials(ORIGINAL_USER)
     const firstLoaded = getUserCredentials()
     expect(firstLoaded?.authToken).toBe('token-original')
 
     await logoutUser()
     expect(getUserCredentials()).toBeNull()
 
-    saveUserCredentials(RELOGIN_USER)
+    await saveUserCredentials(RELOGIN_USER)
     const reloaded = getUserCredentials()
     expect(reloaded?.authToken).toBe('token-after-relogin')
     expect(reloaded?.fingerprintId).toBe('fingerprint-new')

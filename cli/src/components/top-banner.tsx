@@ -43,7 +43,7 @@ const TOP_BANNER_REGISTRY: Record<NonNullable<TopBannerType>, BannerConfig> = {
     borderColorKey: 'warning',
     textColorKey: 'foreground',
     content:
-      '⚠ Claude OAuth credentials are expired and could not be refreshed.\nClaude model requests will fail until you reconnect.\nReconnect via /connect:claude, or remove your credentials to use Codebuff credits.',
+      '⚠ Claude subscription credentials expired and could not be refreshed.\nClaude model requests will fail until you reconnect.\nReconnect via /connect:claude.',
   },
   homeDir: {
     borderColorKey: 'warning',

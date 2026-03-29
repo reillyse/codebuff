@@ -51,8 +51,12 @@ export const ClaudeConnectBanner = () => {
     }
   }
 
-  const handleDisconnect = () => {
-    disconnectClaudeOAuth()
+  const handleDisconnect = async () => {
+    try {
+      await disconnectClaudeOAuth()
+    } catch {
+      // best-effort disconnect
+    }
     setFlowState('not-connected')
   }
 

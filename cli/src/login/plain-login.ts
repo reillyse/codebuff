@@ -67,7 +67,7 @@ export async function runPlainLogin(): Promise<void> {
 
   if (result.status === 'success') {
     const user = result.user as User
-    saveUserCredentials(user)
+    await saveUserCredentials(user)
     console.log()
     console.log(green(`✓ Logged in as ${user.name} (${user.email})`))
     console.log()

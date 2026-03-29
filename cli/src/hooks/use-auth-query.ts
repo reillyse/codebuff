@@ -167,7 +167,7 @@ export function useAuthQuery(deps: UseAuthQueryDeps = {}) {
 }
 
 export interface UseLoginMutationDeps {
-  saveUserCredentials?: (user: User) => void
+  saveUserCredentials?: (user: User) => void | Promise<void>
   getUserInfoFromApiKey?: GetUserInfoFromApiKeyFn
   logger?: Logger
 }
@@ -188,7 +188,7 @@ export function useLoginMutation(deps: UseLoginMutationDeps = {}) {
   return useMutation({
     mutationFn: async (user: User) => {
       // Save credentials to file system
-      saveUserCredentials(user)
+      await saveUserCredentials(user)
 
       // Validate the new credentials
       const authResult = await validateApiKey({

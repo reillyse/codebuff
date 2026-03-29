@@ -862,6 +862,83 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(result.output.type).not.toBe('error')
     })
 
+    it('should retry runAgentStep on Anthropic 529 Overloaded errors', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        if (promptCallCount === 1) {
+          // First attempt: throw Anthropic 529 Overloaded error
+          throw new APICallError({
+            message: 'Overloaded. https://docs.claude.com/en/api/errors',
+            url: 'https://api.anthropic.com/v1/messages',
+            requestBodyValues: {},
+            statusCode: 529,
+            responseHeaders: undefined,
+            responseBody: undefined,
+            isRetryable: true,
+            data: undefined,
+          })
+        }
+        // Second attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // Should have called LLM twice (first attempt failed with 529, second succeeded)
+      expect(promptCallCount).toBe(2)
+      expect(result.output.type).not.toBe('error')
+    })
+
+    it('should retry via message fallback when error contains Overloaded but has no retryable status code', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        if (promptCallCount === 1) {
+          // First attempt: throw a plain Error (no status code) with 'Overloaded' in message
+          throw new Error('Overloaded. https://docs.claude.com/en/api/errors')
+        }
+        // Second attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // Should have retried via message-based fallback and succeeded on second attempt
+      expect(promptCallCount).toBe(2)
+      expect(result.output.type).not.toBe('error')
+    })
+
     it('should not retry non-retryable errors (e.g. 402 payment required)', async () => {
       const llmOnlyTemplate = {
         ...mockTemplate,

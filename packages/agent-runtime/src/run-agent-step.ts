@@ -58,8 +58,9 @@ import type {
   ProjectFileContext,
 } from '@codebuff/common/util/file'
 
-/** Status codes from upstream providers that are transient and safe to retry */
-const RETRYABLE_API_STATUS_CODES = new Set([500, 502, 503, 504])
+/** Status codes from upstream providers that are transient and safe to retry.
+ * Includes Anthropic's 529 (Overloaded) — see https://docs.anthropic.com/en/api/errors */
+const RETRYABLE_API_STATUS_CODES = new Set([500, 502, 503, 504, 529])
 
 /** Max additional retry attempts for a single agent step on transient API errors */
 const MAX_STEP_RETRIES = 2
@@ -88,7 +89,14 @@ function getApiErrorStatusCode(error: unknown): number | undefined {
  * Note: 429 is deliberately excluded — the AI SDK handles rate limits via its own maxRetries. */
 function isRetryableApiError(error: unknown): boolean {
   const statusCode = getApiErrorStatusCode(error)
-  return statusCode !== undefined && RETRYABLE_API_STATUS_CODES.has(statusCode)
+  if (statusCode !== undefined && RETRYABLE_API_STATUS_CODES.has(statusCode)) {
+    return true
+  }
+  // Fallback: check error message for 'overloaded' in case status code isn't extracted
+  if (error instanceof Error && error.message.toLowerCase().includes('overloaded')) {
+    return true
+  }
+  return false
 }
 
 async function additionalToolDefinitions(

@@ -22,7 +22,7 @@ import {
 } from '@codebuff/internal/openai-compatible/index'
 
 import { WEBSITE_URL } from '../constants'
-import { getValidClaudeOAuthCredentials } from '../credentials'
+import { getClaudeOAuthCredentials, getValidClaudeOAuthCredentials } from '../credentials'
 import { getByokOpenrouterApiKeyFromEnv } from '../env'
 
 import type { LanguageModel } from 'ai'
@@ -72,8 +72,11 @@ export function resetClaudeOAuthRateLimit(): void {
 // Claude OAuth Fallback Configuration
 // ============================================================================
 
-/** Whether to fall back to Codebuff backend when Claude OAuth fails (rate limit or auth error) */
-let claudeOAuthFallbackEnabled = false
+/** Whether to fall back to Codebuff backend when Claude OAuth fails (rate limit or auth error).
+ * Defaults to true so server-side scripts/admin routes that lack OAuth credentials
+ * can still reach the Codebuff backend. The CLI explicitly sets this to false on startup
+ * so Claude model requests never silently burn Codebuff credits. */
+let claudeOAuthFallbackEnabled = true
 
 /**
  * Enable or disable fallback to Codebuff backend when Claude OAuth fails.
@@ -198,7 +201,7 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
   if (!skipClaudeOAuth && isClaudeModel(model)) {
     if (isClaudeOAuthRateLimited()) {
       if (!claudeOAuthFallbackEnabled) {
-        throw new Error('Claude OAuth is rate-limited and fallback to Codebuff backend is disabled')
+        throw new Error('Claude subscription rate limited. Please wait and try again.')
       }
     } else {
       // Get valid credentials (will refresh if needed)
@@ -213,7 +216,12 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
         }
       }
       if (!claudeOAuthFallbackEnabled) {
-        throw new Error('Claude OAuth credentials expired and could not be refreshed')
+        const hasCredentials = getClaudeOAuthCredentials() !== null
+        throw new Error(
+          hasCredentials
+            ? 'Claude subscription credentials expired and could not be refreshed. Reconnect via /connect:claude.'
+            : 'Claude subscription not connected. Connect via /connect:claude.',
+        )
       }
     }
   }

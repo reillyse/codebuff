@@ -122,6 +122,10 @@ describe('credentials', () => {
       delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
       process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'env-refresh-token-123'
 
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'refresh-env-auto-'))
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
       try {
         const creds = getClaudeOAuthCredentials(testEnv as any)
         expect(creds).not.toBeNull()
@@ -129,6 +133,8 @@ describe('credentials', () => {
         expect(creds?.refreshToken).toBe('env-refresh-token-123')
         expect(creds?.expiresAt).toBe(0)
       } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
         if (originalToken) {
           process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
         } else {
@@ -142,7 +148,7 @@ describe('credentials', () => {
       }
     })
 
-    test('uses both access and refresh token env vars together', () => {
+    test('access token env var takes precedence over refresh token env var', () => {
       const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
       const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
       process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = 'env-access-123'
@@ -151,9 +157,10 @@ describe('credentials', () => {
       try {
         const creds = getClaudeOAuthCredentials(testEnv as any)
         expect(creds).not.toBeNull()
+        // Access token env var is checked first and returns immediately
         expect(creds?.accessToken).toBe('env-access-123')
-        expect(creds?.refreshToken).toBe('env-refresh-123')
-        expect(creds?.expiresAt).toBe(0)
+        expect(creds?.refreshToken).toBe('')
+        expect(creds?.expiresAt).toBeGreaterThan(Date.now())
       } finally {
         if (originalToken) {
           process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
@@ -168,7 +175,7 @@ describe('credentials', () => {
       }
     })
 
-    test('refresh token env var takes precedence over file', () => {
+    test('file credentials take precedence over refresh token env var', () => {
       const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
       const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
       delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
@@ -179,20 +186,63 @@ describe('credentials', () => {
       const originalHomedir = os.homedir
       ;(os as any).homedir = () => tmpDir
 
+      const fileExpiresAt = Date.now() + 3600000
       const configDir = getConfigDir(env)
       fs.mkdirSync(configDir, { recursive: true })
       fs.writeFileSync(path.join(configDir, 'credentials.json'), JSON.stringify({
         claudeOAuth: {
           accessToken: 'file-token',
           refreshToken: 'file-refresh',
-          expiresAt: Date.now() + 3600000,
+          expiresAt: fileExpiresAt,
           connectedAt: Date.now(),
         },
       }))
 
       try {
         const creds = getClaudeOAuthCredentials(env)
-        expect(creds?.refreshToken).toBe('env-refresh-override')
+        // File credentials take precedence over refresh token env var
+        expect(creds?.accessToken).toBe('file-token')
+        expect(creds?.refreshToken).toBe('file-refresh')
+        expect(creds?.expiresAt).toBe(fileExpiresAt)
+      } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
+        if (originalToken) {
+          process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+        }
+        if (originalRefreshToken) {
+          process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = originalRefreshToken
+        } else {
+          delete process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+        }
+      }
+    })
+
+    test('falls back to refresh token env var when no file credentials exist', () => {
+      const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
+      const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
+      process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'env-refresh-fallback'
+
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'refresh-fallback-test-'))
+      const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
+      // Create config dir with credentials file that has NO claudeOAuth section
+      const configDir = getConfigDir(env)
+      fs.mkdirSync(configDir, { recursive: true })
+      fs.writeFileSync(path.join(configDir, 'credentials.json'), JSON.stringify({
+        default: { userId: 'user-1', email: 'test@test.com', token: 'token' },
+      }))
+
+      try {
+        const creds = getClaudeOAuthCredentials(env)
+        // Falls back to refresh token env var
+        expect(creds?.accessToken).toBe('')
+        expect(creds?.refreshToken).toBe('env-refresh-fallback')
         expect(creds?.expiresAt).toBe(0)
       } finally {
         ;(os as any).homedir = originalHomedir
@@ -285,7 +335,7 @@ describe('credentials', () => {
   })
 
   describe('saveClaudeOAuthCredentials', () => {
-    test('saves credentials to file', () => {
+    test('saves credentials to file', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'save-test-'))
       const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
       const originalHomedir = os.homedir
@@ -299,7 +349,7 @@ describe('credentials', () => {
           connectedAt: Date.now(),
         }
 
-        saveClaudeOAuthCredentials(newCreds, env)
+        await saveClaudeOAuthCredentials(newCreds, env)
 
         const configDir = getConfigDir(env)
         const content = fs.readFileSync(path.join(configDir, 'credentials.json'), 'utf8')
@@ -313,7 +363,7 @@ describe('credentials', () => {
       }
     })
 
-    test('preserves existing user credentials when saving OAuth', () => {
+    test('preserves existing user credentials when saving OAuth', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'preserve-test-'))
       const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
       const originalHomedir = os.homedir
@@ -341,7 +391,7 @@ describe('credentials', () => {
           connectedAt: Date.now(),
         }
 
-        saveClaudeOAuthCredentials(newCreds, env)
+        await saveClaudeOAuthCredentials(newCreds, env)
 
         const content = fs.readFileSync(path.join(configDir, 'credentials.json'), 'utf8')
         const parsed = JSON.parse(content)
@@ -356,7 +406,7 @@ describe('credentials', () => {
   })
 
   describe('save/clear ChatGPT OAuth credentials', () => {
-    test('saves and clears ChatGPT OAuth credentials while preserving user credentials', () => {
+    test('saves and clears ChatGPT OAuth credentials while preserving user credentials', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chatgpt-save-clear-test-'))
       const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
       const originalHomedir = os.homedir
@@ -382,7 +432,7 @@ describe('credentials', () => {
           connectedAt: Date.now(),
         }
 
-        saveChatGptOAuthCredentials(newCreds, env)
+        await saveChatGptOAuthCredentials(newCreds, env)
 
         let parsed = JSON.parse(
           fs.readFileSync(path.join(configDir, 'credentials.json'), 'utf8'),
@@ -390,7 +440,7 @@ describe('credentials', () => {
         expect(parsed.default.userId).toBe('user-chatgpt')
         expect(parsed.chatgptOAuth.accessToken).toBe('chatgpt-access')
 
-        clearChatGptOAuthCredentials(env)
+        await clearChatGptOAuthCredentials(env)
 
         parsed = JSON.parse(
           fs.readFileSync(path.join(configDir, 'credentials.json'), 'utf8'),
@@ -405,7 +455,7 @@ describe('credentials', () => {
   })
 
   describe('clearClaudeOAuthCredentials', () => {
-    test('removes OAuth credentials from file', () => {
+    test('removes OAuth credentials from file', async () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clear-test-'))
       const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'test' } as any
       const originalHomedir = os.homedir
@@ -426,7 +476,7 @@ describe('credentials', () => {
         }
         fs.writeFileSync(path.join(configDir, 'credentials.json'), JSON.stringify(credentials))
 
-        clearClaudeOAuthCredentials(env)
+        await clearClaudeOAuthCredentials(env)
 
         const content = fs.readFileSync(path.join(configDir, 'credentials.json'), 'utf8')
         const parsed = JSON.parse(content)
@@ -439,10 +489,10 @@ describe('credentials', () => {
       }
     })
 
-    test('handles missing credentials file gracefully', () => {
+    test('handles missing credentials file gracefully', async () => {
       const env = { NEXT_PUBLIC_CB_ENVIRONMENT: 'nonexistent-clear' } as any
       // Should not throw
-      clearClaudeOAuthCredentials(env)
+      await clearClaudeOAuthCredentials(env)
     })
   })
 
@@ -948,6 +998,10 @@ describe('credentials', () => {
       delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
       process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'k8s-refresh-token'
 
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-refresh-env-'))
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
+
       try {
         const mockFetch = mock(() =>
           Promise.resolve({
@@ -968,6 +1022,8 @@ describe('credentials', () => {
         expect(result?.accessToken).toBe('fresh-k8s-token')
         expect(mockFetch).toHaveBeenCalledTimes(1)
       } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
         if (originalToken) {
           process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
         } else {
@@ -982,11 +1038,15 @@ describe('credentials', () => {
       }
     })
 
-    test('uses in-memory cache on subsequent calls after env var refresh', async () => {
+    test('returns valid credentials on subsequent calls after env var refresh', async () => {
       const originalToken = process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
       const originalRefreshToken = process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR]
       delete process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR]
       process.env[CLAUDE_OAUTH_REFRESH_TOKEN_ENV_VAR] = 'k8s-cache-refresh-token'
+
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'subsequent-calls-env-'))
+      const originalHomedir = os.homedir
+      ;(os as any).homedir = () => tmpDir
 
       try {
         const mockFetch = mock(() =>
@@ -1002,18 +1062,21 @@ describe('credentials', () => {
         )
         globalThis.fetch = mockFetch as unknown as typeof fetch
 
-        // First call triggers a refresh
+        // First call triggers a refresh (env var fallback → expiresAt=0 → refresh)
         const result = await getValidClaudeOAuthCredentials(testEnv as any)
         expect(result?.accessToken).toBe('cached-k8s-token')
         expect(mockFetch).toHaveBeenCalledTimes(1)
 
-        // Second call should use in-memory cache — no additional fetch
+        // Second call returns valid credentials without additional fetch
+        // (refresh saved to file, so file read returns the refreshed token)
         const cached = getClaudeOAuthCredentials(testEnv as any)
         expect(cached).not.toBeNull()
         expect(cached?.accessToken).toBe('cached-k8s-token')
         expect(cached?.expiresAt).toBeGreaterThan(Date.now())
         expect(mockFetch).toHaveBeenCalledTimes(1)
       } finally {
+        ;(os as any).homedir = originalHomedir
+        fs.rmSync(tmpDir, { recursive: true })
         if (originalToken) {
           process.env[CLAUDE_OAUTH_TOKEN_ENV_VAR] = originalToken
         } else {

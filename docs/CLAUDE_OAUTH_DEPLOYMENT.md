@@ -4,12 +4,59 @@ This guide explains how to deploy codebuff-lite containers that use your Claude 
 
 ## Overview
 
-Codebuff-lite can use your Claude subscription via OAuth, but Anthropic's OAuth implementation **rotates refresh tokens on every use**. This creates a problem for multi-container deployments:
+Codebuff-lite can use your Claude subscription via OAuth, but Anthropic's OAuth implementation **rotates refresh tokens on every use**. This creates a challenge for multi-container deployments:
 
 - Container A refreshes the token → gets a new refresh token
 - Container B tries to refresh with the old token → **fails**
 
-**Solution:** Use a centralized **Claude Token Service** that handles all token refreshes.
+There are two deployment strategies depending on how many replicas you need.
+
+---
+
+## Choosing a Deployment Strategy
+
+| | Shared Volume | Centralized Token Service |
+|---|---|---|
+| **Recommended for** | **1–3 replicas** ✅ | **4+ replicas** |
+| Architecture | All pods mount a shared PVC and read/write `credentials.json` directly | A single-replica service holds the refresh token; pods fetch access tokens via HTTP |
+| Extra infrastructure | ReadWriteMany PVC (NFS, EFS, CephFS) | Token service Deployment + PVC |
+| Token refresh | SDK auto-refreshes with atomic writes + file locking | Token service handles all refreshes centrally |
+| Race condition risk | Very low at 1–3 replicas (tokens last ~1 hour) | None — single process refreshes |
+| Complexity | **Simple** — no extra services | Moderate — additional service to deploy and monitor |
+
+### Option A: Shared Volume (Recommended for 1–3 Replicas)
+
+All pods mount a **ReadWriteMany PVC** at `~/.config/manicode/`. The SDK reads credentials from the file and writes refreshed tokens back automatically using `atomicWriteFileSync` and `withCredentialFileLock`.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Your Infrastructure                              │
+│                                                                          │
+│  ┌────────────────────────────────────────────────────────────────┐     │
+│  │  Shared PVC (ReadWriteMany)                                    │     │
+│  │  ~/.config/manicode/credentials.json                           │     │
+│  │  ← SDK reads & writes refreshed tokens here (atomic writes)   │     │
+│  └──────────┬────────────┬────────────┬──────────────────────────┘     │
+│             │            │            │                                  │
+│       ┌─────▼─────┐┌────▼──────┐┌────▼──────┐                         │
+│       │  Codebuff ││ Codebuff  ││ Codebuff  │                         │
+│       │  Pod #1   ││ Pod #2    ││ Pod #3    │                         │
+│       └───────────┘└───────────┘└───────────┘                         │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────┐
+                         │  Anthropic API   │
+                         │  (Claude Models) │
+                         └──────────────────┘
+```
+
+👉 **Full manifests and setup:** See [Kubernetes Deployment Guide](./k8s-deployment.md) — it uses this approach by default.
+
+### Option B: Centralized Token Service (Recommended for 4+ Replicas)
+
+A single-replica **Claude Token Service** holds the only refresh token and serves cached access tokens to all pods via HTTP. This eliminates refresh token rotation races entirely.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -71,11 +118,14 @@ openssl rand -hex 32
 
 Save this as your `AUTH_TOKEN`.
 
-### Step 3: Deploy the Token Service
+### Step 3: Deploy
 
-See deployment options below (Docker Compose, Kubernetes, etc.)
+- **1–3 replicas (shared volume):** Follow the [Kubernetes Deployment Guide](./k8s-deployment.md) — it uses the shared volume approach with full manifests, init containers, and troubleshooting.
+- **4+ replicas (token service):** See deployment options below (Docker Compose, Kubernetes, etc.)
 
-### Step 4: Configure Codebuff-Lite Containers
+> **If you chose the shared volume approach**, the [Kubernetes Deployment Guide](./k8s-deployment.md) has everything you need. The remainder of this document covers the **Token Service** approach.
+
+### Step 4: Configure Codebuff-Lite Containers (Token Service Only)
 
 Pass the access token to codebuff-lite via environment variable:
 
@@ -154,6 +204,8 @@ CODEBUFF_API_KEY=your-codebuff-api-key
 ```
 
 ### Kubernetes
+
+> **For 1–3 replicas**, use the **shared volume approach** from the [Kubernetes Deployment Guide](./k8s-deployment.md) instead — it's simpler and requires no extra services. The token service manifests below are for **4+ replicas** or strict reliability requirements where you need to eliminate refresh token rotation races entirely.
 
 ```yaml
 # 1. Secrets
@@ -570,7 +622,9 @@ A: Existing containers with cached tokens continue working until their tokens ex
 
 **Q: Can I use this without the token service?**
 
-A: Yes, for single-container deployments. Set `CODEBUFF_CLAUDE_OAUTH_TOKEN` directly, or mount a credentials file. But you'll hit refresh token rotation issues with multiple containers.
+A: Yes — and for **1–3 replicas it's the recommended approach**. Use a shared ReadWriteMany volume so the SDK reads and writes `credentials.json` directly. The SDK handles token refresh with atomic writes and file locking, which works reliably at low replica counts since access tokens last ~1 hour and simultaneous refresh races are rare. See the [Kubernetes Deployment Guide](./k8s-deployment.md) for full manifests and setup.
+
+For **4+ replicas** or strict reliability, use the token service to eliminate races entirely.
 
 **Q: How often does Anthropic rotate refresh tokens?**
 

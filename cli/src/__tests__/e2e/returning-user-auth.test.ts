@@ -57,13 +57,13 @@ describe('Returning User Authentication helpers', () => {
     mock.restore()
   })
 
-  test('should load auth token from credentials file for returning user', () => {
+  test('should load auth token from credentials file for returning user', async () => {
     spyOn(AuthModule, 'getConfigDir').mockReturnValue(tempConfigDir)
     spyOn(AuthModule, 'getCredentialsPath').mockReturnValue(
       path.join(tempConfigDir, 'credentials.json'),
     )
 
-    saveUserCredentials(RETURNING_USER)
+    await saveUserCredentials(RETURNING_USER)
 
     const details = getAuthTokenDetails()
     expect(details.source).toBe('credentials')
@@ -89,7 +89,7 @@ describe('Returning User Authentication helpers', () => {
       path.join(tempConfigDir, 'credentials.json'),
     )
 
-    saveUserCredentials(RETURNING_USER)
+    await saveUserCredentials(RETURNING_USER)
 
     const logger = createLogger()
     const mockGetUserInfoFromApiKey: GetUserInfoFromApiKeyFn = mock(

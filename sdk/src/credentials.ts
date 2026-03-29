@@ -9,6 +9,7 @@ import {
 import { CLAUDE_OAUTH_CLIENT_ID } from '@codebuff/common/constants/claude-oauth'
 import { env } from '@codebuff/common/env'
 import { userSchema } from '@codebuff/common/util/credentials'
+import { atomicWriteFileSync, withCredentialFileLock } from '@codebuff/common/util/fs'
 import { z } from 'zod/v4'
 
 import { getChatGptOAuthTokenFromEnv, getClaudeOAuthRefreshTokenFromEnv, getClaudeOAuthTokenFromEnv } from './env'
@@ -122,22 +123,57 @@ export const _resetEnvRefreshCacheForTesting = () => { envRefreshCredentialCache
 
 /**
  * Get Claude OAuth credentials from file or environment variable.
- * Environment variables take precedence over file-based credentials.
  *
- * Supports three env var modes:
- * - CODEBUFF_CLAUDE_OAUTH_REFRESH_TOKEN only: forces immediate token refresh
- * - Both CODEBUFF_CLAUDE_OAUTH_TOKEN + REFRESH_TOKEN: uses access token until expired, then refreshes
- * - CODEBUFF_CLAUDE_OAUTH_TOKEN only: legacy mode, assumes token is long-lived
+ * Precedence (highest to lowest):
+ * 1. CODEBUFF_CLAUDE_OAUTH_TOKEN env var — overrides everything (Token Service pattern)
+ * 2. Credentials file — if it has claudeOAuth with a refreshToken
+ * 3. CODEBUFF_CLAUDE_OAUTH_REFRESH_TOKEN env var — fallback for bootstrapping
+ *    (once the first refresh saves to the file, the file takes over)
  *
  * @returns OAuth credentials or null if not found
  */
 export const getClaudeOAuthCredentials = (
   clientEnv: ClientEnv = env,
 ): ClaudeOAuthCredentials | null => {
-  // Check environment variables first
+  // 1. Access token env var overrides everything (Token Service pattern)
   const envToken = getClaudeOAuthTokenFromEnv()
-  const envRefreshToken = getClaudeOAuthRefreshTokenFromEnv()
+  if (envToken) {
+    return {
+      accessToken: envToken,
+      refreshToken: '',
+      expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year from now
+      connectedAt: Date.now(),
+    }
+  }
 
+  // 2. Credentials file takes priority over refresh token env var
+  const credentialsPath = getCredentialsPath(clientEnv)
+  if (fs.existsSync(credentialsPath)) {
+    try {
+      const credentialsFile = fs.readFileSync(credentialsPath, 'utf8')
+      const parsed = credentialsFileSchema.safeParse(JSON.parse(credentialsFile))
+      if (parsed.success && parsed.data.claudeOAuth) {
+        // On read-only filesystems, the file can't be updated after a refresh,
+        // so the in-memory cache may have fresher credentials
+        const envRefreshToken = getClaudeOAuthRefreshTokenFromEnv()
+        if (envRefreshToken && envRefreshCredentialCache &&
+            envRefreshCredentialCache.expiresAt > parsed.data.claudeOAuth.expiresAt) {
+          return {
+            accessToken: envRefreshCredentialCache.accessToken,
+            refreshToken: envRefreshToken,
+            expiresAt: envRefreshCredentialCache.expiresAt,
+            connectedAt: envRefreshCredentialCache.connectedAt,
+          }
+        }
+        return parsed.data.claudeOAuth
+      }
+    } catch (error) {
+      console.error('Error reading Claude OAuth credentials', error)
+    }
+  }
+
+  // 3. Refresh token env var is a fallback (bootstrap/seed for first refresh)
+  const envRefreshToken = getClaudeOAuthRefreshTokenFromEnv()
   if (envRefreshToken) {
     const bufferMs = 5 * 60 * 1000
     // If we have a cached access token from a previous refresh that's still valid, use it
@@ -151,39 +187,14 @@ export const getClaudeOAuthCredentials = (
     }
     // No valid cache — return credentials that will trigger a refresh via getValidClaudeOAuthCredentials
     return {
-      accessToken: envToken ?? '',
+      accessToken: '',
       refreshToken: envRefreshToken,
       expiresAt: 0, // Forces immediate refresh
       connectedAt: Date.now(),
     }
   }
 
-  if (envToken) {
-    // Legacy: access token only, no refresh capability
-    return {
-      accessToken: envToken,
-      refreshToken: '',
-      expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year from now
-      connectedAt: Date.now(),
-    }
-  }
-
-  const credentialsPath = getCredentialsPath(clientEnv)
-  if (!fs.existsSync(credentialsPath)) {
-    return null
-  }
-
-  try {
-    const credentialsFile = fs.readFileSync(credentialsPath, 'utf8')
-    const parsed = credentialsFileSchema.safeParse(JSON.parse(credentialsFile))
-    if (!parsed.success || !parsed.data.claudeOAuth) {
-      return null
-    }
-    return parsed.data.claudeOAuth
-  } catch (error) {
-    console.error('Error reading Claude OAuth credentials', error)
-    return null
-  }
+  return null
 }
 
 /**
@@ -193,27 +204,29 @@ export const getClaudeOAuthCredentials = (
 export const saveClaudeOAuthCredentials = (
   credentials: ClaudeOAuthCredentials,
   clientEnv: ClientEnv = env,
-): void => {
-  const configDir = getConfigDir(clientEnv)
-  const credentialsPath = getCredentialsPath(clientEnv)
+): Promise<void> => {
+  return withCredentialFileLock(() => {
+    const configDir = getConfigDir(clientEnv)
+    const credentialsPath = getCredentialsPath(clientEnv)
 
-  ensureDirectoryExistsSync(configDir)
+    ensureDirectoryExistsSync(configDir)
 
-  let existingData: Record<string, unknown> = {}
-  if (fs.existsSync(credentialsPath)) {
-    try {
-      existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
-    } catch {
-      // Ignore parse errors, start fresh
+    let existingData: Record<string, unknown> = {}
+    if (fs.existsSync(credentialsPath)) {
+      try {
+        existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
+      } catch {
+        // Ignore parse errors, start fresh
+      }
     }
-  }
 
-  const updatedData = {
-    ...existingData,
-    claudeOAuth: credentials,
-  }
+    const updatedData = {
+      ...existingData,
+      claudeOAuth: credentials,
+    }
 
-  fs.writeFileSync(credentialsPath, JSON.stringify(updatedData, null, 2))
+    atomicWriteFileSync(credentialsPath, JSON.stringify(updatedData, null, 2))
+  })
 }
 
 /**
@@ -222,19 +235,21 @@ export const saveClaudeOAuthCredentials = (
  */
 export const clearClaudeOAuthCredentials = (
   clientEnv: ClientEnv = env,
-): void => {
-  const credentialsPath = getCredentialsPath(clientEnv)
-  if (!fs.existsSync(credentialsPath)) {
-    return
-  }
+): Promise<void> => {
+  return withCredentialFileLock(() => {
+    const credentialsPath = getCredentialsPath(clientEnv)
+    if (!fs.existsSync(credentialsPath)) {
+      return
+    }
 
-  try {
-    const existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
-    delete existingData.claudeOAuth
-    fs.writeFileSync(credentialsPath, JSON.stringify(existingData, null, 2))
-  } catch {
-    // Ignore errors
-  }
+    try {
+      const existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
+      delete existingData.claudeOAuth
+      atomicWriteFileSync(credentialsPath, JSON.stringify(existingData, null, 2))
+    } catch {
+      // Ignore errors
+    }
+  })
 }
 
 /**
@@ -315,7 +330,7 @@ export const refreshClaudeOAuthToken = async (
 
       // Persist refreshed credentials to file (best-effort for read-only environments like K8s)
       try {
-        saveClaudeOAuthCredentials(newCredentials, clientEnv)
+        await saveClaudeOAuthCredentials(newCredentials, clientEnv)
       } catch (saveError) {
         console.debug('Failed to save refreshed Claude OAuth credentials:', saveError instanceof Error ? saveError.message : String(saveError))
       }
@@ -403,44 +418,48 @@ export const getChatGptOAuthCredentials = (
 export const saveChatGptOAuthCredentials = (
   credentials: ChatGptOAuthCredentials,
   clientEnv: ClientEnv = env,
-): void => {
-  const configDir = getConfigDir(clientEnv)
-  const credentialsPath = getCredentialsPath(clientEnv)
+): Promise<void> => {
+  return withCredentialFileLock(() => {
+    const configDir = getConfigDir(clientEnv)
+    const credentialsPath = getCredentialsPath(clientEnv)
 
-  ensureDirectoryExistsSync(configDir)
+    ensureDirectoryExistsSync(configDir)
 
-  let existingData: Record<string, unknown> = {}
-  if (fs.existsSync(credentialsPath)) {
-    try {
-      existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
-    } catch {
-      // Ignore parse errors, start fresh
+    let existingData: Record<string, unknown> = {}
+    if (fs.existsSync(credentialsPath)) {
+      try {
+        existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
+      } catch {
+        // Ignore parse errors, start fresh
+      }
     }
-  }
 
-  const updatedData = {
-    ...existingData,
-    chatgptOAuth: credentials,
-  }
+    const updatedData = {
+      ...existingData,
+      chatgptOAuth: credentials,
+    }
 
-  fs.writeFileSync(credentialsPath, JSON.stringify(updatedData, null, 2))
+    atomicWriteFileSync(credentialsPath, JSON.stringify(updatedData, null, 2))
+  })
 }
 
 export const clearChatGptOAuthCredentials = (
   clientEnv: ClientEnv = env,
-): void => {
-  const credentialsPath = getCredentialsPath(clientEnv)
-  if (!fs.existsSync(credentialsPath)) {
-    return
-  }
+): Promise<void> => {
+  return withCredentialFileLock(() => {
+    const credentialsPath = getCredentialsPath(clientEnv)
+    if (!fs.existsSync(credentialsPath)) {
+      return
+    }
 
-  try {
-    const existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
-    delete existingData.chatgptOAuth
-    fs.writeFileSync(credentialsPath, JSON.stringify(existingData, null, 2))
-  } catch {
-    // Ignore errors
-  }
+    try {
+      const existingData = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'))
+      delete existingData.chatgptOAuth
+      atomicWriteFileSync(credentialsPath, JSON.stringify(existingData, null, 2))
+    } catch {
+      // Ignore errors
+    }
+  })
 }
 
 export const isChatGptOAuthValid = (clientEnv: ClientEnv = env): boolean => {
@@ -505,7 +524,7 @@ export const refreshChatGptOAuthToken = async (
         connectedAt: credentials.connectedAt,
       }
 
-      saveChatGptOAuthCredentials(newCredentials, clientEnv)
+      await saveChatGptOAuthCredentials(newCredentials, clientEnv)
 
       return newCredentials
     } catch (error) {
