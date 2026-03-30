@@ -176,11 +176,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const runPrompt = async (prompt: string): Promise<void> => {
     if (!prompt.trim()) return
 
+    running = true
+
     // Per-prompt credential check: validate Claude OAuth before each prompt
     const claudeCheck = await checkClaudeSubscription()
-    if (!claudeCheck.valid) return
-
-    running = true
+    if (!claudeCheck.valid) {
+      running = false
+      return
+    }
     abortController = new AbortController()
     printDivider()
     writeOut('\n')
@@ -317,11 +320,13 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     }
   }
 
-  rl.prompt()
+  // Debounce input lines so pasted multiline text is treated as a single prompt
+  // instead of firing separate agent invocations per line.
+  const PASTE_DEBOUNCE_MS = 200
+  let lineBuffer: string[] = []
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined
 
-  rl.on('line', async (line: string) => {
-    if (running) return
-
+  const handleSingleLine = async (line: string): Promise<void> => {
     const trimmed = line.trim()
 
     if (trimmed === '/exit' || trimmed === '/quit' || trimmed === '/q') {
@@ -437,6 +442,39 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
     await runPrompt(trimmed)
     rl.prompt()
+  }
+
+  rl.prompt()
+
+  rl.on('line', (line: string) => {
+    if (running) return
+
+    lineBuffer.push(line)
+
+    if (debounceTimer !== undefined) clearTimeout(debounceTimer)
+
+    debounceTimer = setTimeout(async () => {
+      debounceTimer = undefined
+      const lines = lineBuffer
+      lineBuffer = []
+
+      if (running) return
+
+      if (lines.length === 1) {
+        await handleSingleLine(lines[0])
+        return
+      }
+
+      // Multiline paste: combine all lines into a single prompt
+      const combined = lines.join('\n').trim()
+      if (!combined) {
+        rl.prompt()
+        return
+      }
+
+      await runPrompt(combined)
+      rl.prompt()
+    }, PASTE_DEBOUNCE_MS)
   })
 
   process.stdout.on('resize', () => {
@@ -447,11 +485,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   })
 
   rl.on('close', () => {
+    if (debounceTimer !== undefined) clearTimeout(debounceTimer)
     writeErr('\nGoodbye!\n')
     process.exit(0)
   })
 
   rl.on('SIGINT', () => {
+    if (debounceTimer !== undefined) clearTimeout(debounceTimer)
+    lineBuffer = []
     if (running && abortController) {
       abortController.abort()
       writeErr('\n(Cancelled)\n')
