@@ -223,9 +223,9 @@ export async function startRepl(options: ReplOptions): Promise<void> {
           spinner.stop()
           handleEvent(event, verbose)
           if (event.type === 'subagent_start') {
-            spinner.start('Agent thinking...')
+            spinner.start(`Agent: ${event.agentType}...`)
           } else if (event.type === 'tool_call') {
-            spinner.start('Running tool...')
+            spinner.start(`Tool: ${event.toolName}...`)
           }
         },
         handleStreamChunk: (chunk) => {
@@ -556,9 +556,9 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
         spinner.stop()
         handleEvent(event, verbose)
         if (event.type === 'subagent_start') {
-          spinner.start('Agent thinking...')
+          spinner.start(`Agent: ${event.agentType}...`)
         } else if (event.type === 'tool_call') {
-          spinner.start('Running tool...')
+          spinner.start(`Tool: ${event.toolName}...`)
         }
       },
       handleStreamChunk: (chunk) => {
@@ -864,7 +864,7 @@ Hippo Memory
 
 Environment Variables
   CODEBUFF_DEFAULT_MODE Set default agent mode (default, max, plan). Default: max
-  CODEBUFF_VERBOSE      Enable verbose output (equivalent to -v flag)
+  CODEBUFF_VERBOSE      Verbose output (default: enabled, set to '0' to disable)
   CODEBUFF_PROMPT_LOG   Log prompts and responses to a file (rolling, 5MB limit)
                         Set to '1' for ./debug/prompt-log.txt, or a custom path
 
