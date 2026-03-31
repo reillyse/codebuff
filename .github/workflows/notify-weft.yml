@@ -1,0 +1,23 @@
+# Notify Weft to rebuild the agent image with the latest codebuff code.
+# Triggers a repository_dispatch event on reillyse/weft which kicks off
+# an agent-only Docker image rebuild.
+
+name: Notify Weft
+
+on:
+  push:
+    branches: [reillyse/hippo-integration]
+
+jobs:
+  notify:
+    name: Trigger Weft Agent Rebuild
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch to Weft
+        run: |
+          curl -X POST \
+            -H 'Authorization: token ${{ secrets.WEFT_DISPATCH_TOKEN }}' \
+            -H 'Accept: application/vnd.github.v3+json' \
+            https://api.github.com/repos/reillyse/weft/dispatches \
+            -d '{"event_type": "codebuff-updated", "client_payload": {"sha": "${{ github.sha }}"}}' \
+            --fail-with-body || echo "::warning::Failed to notify Weft -- is WEFT_DISPATCH_TOKEN configured?"
