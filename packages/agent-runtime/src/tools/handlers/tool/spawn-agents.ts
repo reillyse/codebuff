@@ -10,6 +10,40 @@ import {
   extractSubagentContextParams,
 } from './spawn-agent-utils'
 
+/**
+ * Two-level retry architecture for transient API errors:
+ *
+ * 1. **Inner (step-level):** Each call to `runAgentStep` inside `loopAgentSteps`
+ *    retries up to MAX_STEP_RETRIES (2) times with exponential backoff (2s–30s)
+ *    via `isRetryableApiError`. This handles transient failures within a single
+ *    agent step without restarting the whole agent.
+ *
+ * 2. **Outer (subagent-level):** This handler retries the *entire* subagent
+ *    execution once with a 2s delay when `loopAgentSteps` ultimately fails or
+ *    returns a transient error. Fresh agent state is created for the retry so
+ *    there is no risk of reusing dirty state.
+ *
+ * Both levels use the same transient error detection: status codes in
+ * TRANSIENT_API_STATUS_CODES (500/502/503/504/529), with a message-based
+ * fallback for "overloaded" when no status code is available.
+ *
+ * Worst case: up to 3 inner attempts per step, then 1 outer retry with
+ * 3 more inner attempts, for ~6 total LLM call attempts per step.
+ */
+
+/** Check if an error is transient and safe to retry.
+ * When a status code is available, it is used as the authoritative signal.
+ * Falls back to checking the error message for 'overloaded' when no status code is present. */
+function isTransientError(statusCode: number | undefined, message: string | undefined): boolean {
+  if (statusCode !== undefined) {
+    return TRANSIENT_API_STATUS_CODES.has(statusCode)
+  }
+  if (message && message.toLowerCase().includes('overloaded')) {
+    return true
+  }
+  return false
+}
+
 import type { CodebuffToolHandlerFunction } from '../handler-function-type'
 import type {
   CodebuffToolCall,
@@ -188,29 +222,29 @@ export const handleSpawnAgents = (async (
           onResponseChunk: makeOnResponseChunk(agentState),
         })
 
-        // Retry once on transient API errors (500, 502, 503, 504, 529)
-        // loopAgentSteps may either throw or return an error output for transient failures,
-        // so we check both paths. The `retried` flag ensures at most one retry total.
+        // Outer retry: retry the entire subagent once on transient errors.
+        // See the two-level retry architecture doc comment at the top of this file.
         let result: Awaited<ReturnType<typeof executeSubagent>>
         let retried = false
         try {
           result = await executeSubagentWithState(subAgentState)
           // Also retry on transient errors returned (not thrown) by loopAgentSteps
           const returnedStatusCode = result.output.type === 'error' ? result.output.statusCode : undefined
+          const returnedMessage = result.output.type === 'error' ? result.output.message : undefined
           if (
-            typeof returnedStatusCode === 'number' &&
-            TRANSIENT_API_STATUS_CODES.has(returnedStatusCode) &&
+            isTransientError(returnedStatusCode, returnedMessage) &&
             !contextParams.signal.aborted
           ) {
             retried = true
             logger.warn(
               {
+                agentId: subAgentState.agentId,
                 agentType,
                 displayName: agentTemplate.displayName,
                 model: agentTemplate.model ? String(agentTemplate.model) : undefined,
                 statusCode: returnedStatusCode,
               },
-              `Retrying subagent '${agentTemplate.displayName}' after transient error result (${returnedStatusCode})`,
+              `Retrying subagent '${agentTemplate.displayName}' after transient error result (${returnedStatusCode ?? 'overloaded'})`,
             )
             await abortableSleep(2000, contextParams.signal)
             const retryAgentState = createAgentState(
@@ -223,17 +257,19 @@ export const handleSpawnAgents = (async (
           }
         } catch (firstError) {
           const statusCode = getErrorStatusCode(firstError)
-          if (statusCode !== undefined && TRANSIENT_API_STATUS_CODES.has(statusCode) && !retried && !contextParams.signal.aborted) {
+          const errorMessage = firstError instanceof Error ? firstError.message : undefined
+          if (isTransientError(statusCode, errorMessage) && !retried && !contextParams.signal.aborted) {
             retried = true
             logger.warn(
               {
+                agentId: subAgentState.agentId,
                 agentType,
                 displayName: agentTemplate.displayName,
                 model: agentTemplate.model ? String(agentTemplate.model) : undefined,
                 statusCode,
                 error: getErrorObject(firstError),
               },
-              `Retrying subagent '${agentTemplate.displayName}' after transient error (${statusCode})`,
+              `Retrying subagent '${agentTemplate.displayName}' after transient error (${statusCode ?? 'overloaded'})`,
             )
             await abortableSleep(2000, contextParams.signal)
             // Create fresh state for retry — the previous state may be dirty

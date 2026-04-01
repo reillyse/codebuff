@@ -68,13 +68,18 @@ const STEP_RETRY_BASE_DELAY_MS = 2000
 const STEP_RETRY_MAX_DELAY_MS = 30_000
 
 /** Check if an error is a transient API error that is safe to retry.
+ * When a status code is available, it is used as the authoritative signal — a
+ * non-transient code (e.g. 400) won't trigger a retry even if the message
+ * happens to contain "overloaded".
  * Note: 429 is deliberately excluded — the AI SDK handles rate limits via its own maxRetries. */
 function isRetryableApiError(error: unknown): boolean {
   const statusCode = getErrorStatusCode(error)
-  if (statusCode !== undefined && TRANSIENT_API_STATUS_CODES.has(statusCode)) {
-    return true
+  if (statusCode !== undefined) {
+    // Status code is the authoritative signal when present
+    return TRANSIENT_API_STATUS_CODES.has(statusCode)
   }
-  // Fallback: check error message for 'overloaded' in case status code isn't extracted
+  // No status code — fall back to message heuristic for providers that
+  // return 'overloaded' errors without a structured status code
   if (error instanceof Error && error.message.toLowerCase().includes('overloaded')) {
     return true
   }
