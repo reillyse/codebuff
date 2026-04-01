@@ -93,7 +93,3 @@ export const AGENT_NAME_TO_TYPES = Object.entries(AGENT_NAMES).reduce(
 )
 
 export const MAX_AGENT_STEPS_DEFAULT = 100
-
-/** HTTP status codes from upstream providers that are transient and safe to retry.
- * Includes Anthropic's 529 (Overloaded) — see https://docs.anthropic.com/en/api/errors */
-export const TRANSIENT_API_STATUS_CODES = new Set([500, 502, 503, 504, 529])

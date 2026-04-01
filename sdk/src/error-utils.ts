@@ -5,8 +5,8 @@
  * Uses the AI SDK's error types which include statusCode property.
  */
 
-import { TRANSIENT_API_STATUS_CODES } from '@codebuff/common/constants/agents'
-import { getErrorStatusCode as getErrorStatusCodeCommon } from '@codebuff/common/util/error'
+import { TRANSIENT_API_STATUS_CODES } from '@codebuff/common/util/error'
+export { getErrorStatusCode } from '@codebuff/common/util/error'
 
 /**
  * Error type with statusCode property
@@ -75,16 +75,6 @@ export function createNetworkError(message = 'Network error'): HttpError {
 export function isRetryableStatusCode(statusCode: number | undefined): boolean {
   if (statusCode === undefined) return false
   return RETRYABLE_STATUS_CODES.has(statusCode)
-}
-
-/**
- * Extracts the statusCode from an error if available.
- * Checks both 'statusCode' (our convention) and 'status' (AI SDK's APICallError convention).
- *
- * Delegates to the shared implementation in @codebuff/common/util/error.
- */
-export function getErrorStatusCode(error: unknown): number | undefined {
-  return getErrorStatusCodeCommon(error)
 }
 
 /**

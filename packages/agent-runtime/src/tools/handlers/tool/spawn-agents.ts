@@ -1,5 +1,4 @@
-import { TRANSIENT_API_STATUS_CODES } from '@codebuff/common/constants/agents'
-import { getErrorObject, getErrorStatusCode } from '@codebuff/common/util/error'
+import { TRANSIENT_API_STATUS_CODES, getErrorObject, getErrorStatusCode } from '@codebuff/common/util/error'
 import { jsonToolResult } from '@codebuff/common/util/messages'
 import { abortableSleep } from '@codebuff/common/util/promise'
 

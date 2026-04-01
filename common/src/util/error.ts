@@ -216,6 +216,10 @@ export function parseApiErrorResponseBody(responseBody: unknown): {
   }
 }
 
+/** HTTP status codes from upstream providers that are transient and safe to retry.
+ * Includes Anthropic's 529 (Overloaded) — see https://docs.anthropic.com/en/api/errors */
+export const TRANSIENT_API_STATUS_CODES = new Set([500, 502, 503, 504, 529])
+
 /**
  * Extracts the HTTP status code from an error object, if present.
  * Checks 'statusCode' first (our convention / AI SDK errors), then 'status' (APICallError).
