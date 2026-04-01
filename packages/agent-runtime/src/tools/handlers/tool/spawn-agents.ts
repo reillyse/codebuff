@@ -1,4 +1,5 @@
-import { getErrorObject } from '@codebuff/common/util/error'
+import { TRANSIENT_API_STATUS_CODES } from '@codebuff/common/constants/agents'
+import { getErrorObject, getErrorStatusCode } from '@codebuff/common/util/error'
 import { jsonToolResult } from '@codebuff/common/util/messages'
 import { abortableSleep } from '@codebuff/common/util/promise'
 
@@ -30,20 +31,6 @@ export type SendSubagentChunk = (data: {
   prompt?: string
   forwardToPrompt?: boolean
 }) => void
-
-const TRANSIENT_STATUS_CODES = new Set([500, 502, 503, 504, 529])
-
-/** Extract a transient HTTP status code from an error, if present */
-function getTransientStatusCode(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined
-  for (const key of ['status', 'statusCode'] as const) {
-    if (key in error) {
-      const val = (error as Record<string, unknown>)[key]
-      if (typeof val === 'number' && TRANSIENT_STATUS_CODES.has(val)) return val
-    }
-  }
-  return undefined
-}
 
 type ToolName = 'spawn_agents'
 export const handleSpawnAgents = (async (
@@ -203,17 +190,47 @@ export const handleSpawnAgents = (async (
         })
 
         // Retry once on transient API errors (500, 502, 503, 504, 529)
+        // loopAgentSteps may either throw or return an error output for transient failures,
+        // so we check both paths. The `retried` flag ensures at most one retry total.
         let result: Awaited<ReturnType<typeof executeSubagent>>
+        let retried = false
         try {
           result = await executeSubagentWithState(subAgentState)
-        } catch (firstError) {
-          const statusCode = getTransientStatusCode(firstError)
-          if (statusCode !== undefined && !contextParams.signal.aborted) {
+          // Also retry on transient errors returned (not thrown) by loopAgentSteps
+          const returnedStatusCode = result.output.type === 'error' ? result.output.statusCode : undefined
+          if (
+            typeof returnedStatusCode === 'number' &&
+            TRANSIENT_API_STATUS_CODES.has(returnedStatusCode) &&
+            !contextParams.signal.aborted
+          ) {
+            retried = true
             logger.warn(
               {
                 agentType,
                 displayName: agentTemplate.displayName,
-                model: String(agentTemplate.model),
+                model: agentTemplate.model ? String(agentTemplate.model) : undefined,
+                statusCode: returnedStatusCode,
+              },
+              `Retrying subagent '${agentTemplate.displayName}' after transient error result (${returnedStatusCode})`,
+            )
+            await abortableSleep(2000, contextParams.signal)
+            const retryAgentState = createAgentState(
+              agentType,
+              agentTemplate,
+              parentAgentState,
+              {},
+            )
+            result = await executeSubagentWithState(retryAgentState)
+          }
+        } catch (firstError) {
+          const statusCode = getErrorStatusCode(firstError)
+          if (statusCode !== undefined && TRANSIENT_API_STATUS_CODES.has(statusCode) && !retried && !contextParams.signal.aborted) {
+            retried = true
+            logger.warn(
+              {
+                agentType,
+                displayName: agentTemplate.displayName,
+                model: agentTemplate.model ? String(agentTemplate.model) : undefined,
                 statusCode,
                 error: getErrorObject(firstError),
               },

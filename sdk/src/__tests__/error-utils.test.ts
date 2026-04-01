@@ -128,6 +128,7 @@ describe('error-utils', () => {
       expect(RETRYABLE_STATUS_CODES.has(502)).toBe(true) // Bad Gateway
       expect(RETRYABLE_STATUS_CODES.has(503)).toBe(true) // Service Unavailable
       expect(RETRYABLE_STATUS_CODES.has(504)).toBe(true) // Gateway Timeout
+      expect(RETRYABLE_STATUS_CODES.has(529)).toBe(true) // Anthropic Overloaded
     })
 
     test('does not contain non-retryable status codes', () => {
@@ -146,6 +147,7 @@ describe('error-utils', () => {
       expect(isRetryableStatusCode(502)).toBe(true)
       expect(isRetryableStatusCode(503)).toBe(true)
       expect(isRetryableStatusCode(504)).toBe(true)
+      expect(isRetryableStatusCode(529)).toBe(true)
     })
 
     test('returns false for non-retryable status codes', () => {

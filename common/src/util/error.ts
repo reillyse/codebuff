@@ -216,6 +216,26 @@ export function parseApiErrorResponseBody(responseBody: unknown): {
   }
 }
 
+/**
+ * Extracts the HTTP status code from an error object, if present.
+ * Checks 'statusCode' first (our convention / AI SDK errors), then 'status' (APICallError).
+ *
+ * This is the single source-of-truth for status code extraction — use this
+ * instead of ad-hoc property checks scattered across the codebase.
+ */
+export function getErrorStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  if ('statusCode' in error) {
+    const statusCode = (error as { statusCode: unknown }).statusCode
+    if (typeof statusCode === 'number') return statusCode
+  }
+  if ('status' in error) {
+    const status = (error as { status: unknown }).status
+    if (typeof status === 'number') return status
+  }
+  return undefined
+}
+
 // Extended error properties that various libraries add to Error objects
 interface ExtendedErrorProperties {
   status?: number

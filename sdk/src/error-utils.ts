@@ -5,15 +5,20 @@
  * Uses the AI SDK's error types which include statusCode property.
  */
 
+import { TRANSIENT_API_STATUS_CODES } from '@codebuff/common/constants/agents'
+import { getErrorStatusCode as getErrorStatusCodeCommon } from '@codebuff/common/util/error'
+
 /**
  * Error type with statusCode property
  */
 export type HttpError = Error & { statusCode: number }
 
 /**
- * HTTP status codes that should trigger automatic retry
+ * HTTP status codes that should trigger automatic retry.
+ * Composed from TRANSIENT_API_STATUS_CODES (server-side transient errors like 500/502/503/504/529)
+ * plus client-level retryable codes (408 Request Timeout, 429 Too Many Requests).
  */
-export const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+export const RETRYABLE_STATUS_CODES = new Set([408, 429, ...TRANSIENT_API_STATUS_CODES])
 
 // ============================================================================
 // Error Factory Functions
@@ -75,25 +80,11 @@ export function isRetryableStatusCode(statusCode: number | undefined): boolean {
 /**
  * Extracts the statusCode from an error if available.
  * Checks both 'statusCode' (our convention) and 'status' (AI SDK's APICallError convention).
+ *
+ * Delegates to the shared implementation in @codebuff/common/util/error.
  */
 export function getErrorStatusCode(error: unknown): number | undefined {
-  if (error && typeof error === 'object') {
-    // Check 'statusCode' first (our convention)
-    if ('statusCode' in error) {
-      const statusCode = (error as { statusCode: unknown }).statusCode
-      if (typeof statusCode === 'number') {
-        return statusCode
-      }
-    }
-    // Check 'status' (AI SDK's APICallError uses this)
-    if ('status' in error) {
-      const status = (error as { status: unknown }).status
-      if (typeof status === 'number') {
-        return status
-      }
-    }
-  }
-  return undefined
+  return getErrorStatusCodeCommon(error)
 }
 
 /**

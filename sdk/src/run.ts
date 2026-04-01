@@ -546,7 +546,7 @@ async function runOnce({
       output: {
         type: 'error',
         message: errorMessage,
-        ...(statusCode !== undefined && { statusCode }),
+        statusCode,
       },
     })
   })
@@ -829,7 +829,7 @@ async function handlePromptResponse({
       output: {
         type: 'error',
         message: action.message,
-        ...(statusCode !== undefined && { statusCode }),
+        statusCode,
       },
     })
   } else if (action.type === 'prompt-response') {

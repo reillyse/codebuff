@@ -71,6 +71,8 @@ function loadPackageVersion(): string {
   return 'dev'
 }
 
+const CLI_VERSION = loadPackageVersion()
+
 // Configure TanStack Query's focusManager for terminal environments
 // This is required because there's no browser visibility API in terminal apps
 // Without this, refetchInterval won't work because TanStack Query thinks the app is "unfocused"
@@ -114,7 +116,7 @@ function parseArgs(): ParsedArgs {
   program
     .name('codebuff')
     .description('Codebuff CLI - AI-powered coding assistant')
-    .version(loadPackageVersion(), '-v, --version', 'Print the CLI version')
+    .version(CLI_VERSION, '-v, --version', 'Print the CLI version')
     .option(
       '--agent <agent-id>',
       'Run a specific agent id (skips loading local .agents overrides)',
@@ -215,7 +217,7 @@ async function main(): Promise<void> {
 
     // Track app launch event
     trackEvent(AnalyticsEvent.APP_LAUNCHED, {
-      version: loadPackageVersion(),
+      version: CLI_VERSION,
       platform: process.platform,
       arch: process.arch,
       hasInitialPrompt: Boolean(initialPrompt),

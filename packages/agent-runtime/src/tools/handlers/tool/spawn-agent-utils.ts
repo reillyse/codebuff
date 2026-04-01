@@ -1,7 +1,7 @@
 import { MAX_AGENT_STEPS_DEFAULT } from '@codebuff/common/constants/agents'
 import { toolNames } from '@codebuff/common/tools/constants'
 import { parseAgentId } from '@codebuff/common/util/agent-id-parsing'
-import { getErrorObject, isAbortError } from '@codebuff/common/util/error'
+import { getErrorObject, getErrorStatusCode, isAbortError } from '@codebuff/common/util/error'
 import { generateCompactId } from '@codebuff/common/util/string'
 
 import { loopAgentSteps } from '../../../run-agent-step'
@@ -426,7 +426,7 @@ export async function executeSubagent(
     agentId: withDefaults.agentState.agentId,
     agentType: agentTemplate.id,
     displayName: agentTemplate.displayName,
-    model: String(agentTemplate.model),
+    model: agentTemplate.model ? String(agentTemplate.model) : undefined,
     onlyChild: isOnlyChild,
     parentAgentId: parentAgentState.agentId,
     prompt,
@@ -452,7 +452,7 @@ export async function executeSubagent(
       agentId: withDefaults.agentState.agentId,
       agentType: agentTemplate.id,
       displayName: agentTemplate.displayName,
-      model: String(agentTemplate.model),
+      model: agentTemplate.model ? String(agentTemplate.model) : undefined,
       onlyChild: isOnlyChild,
       parentAgentId: parentAgentState.agentId,
       prompt,
@@ -468,17 +468,17 @@ export async function executeSubagent(
         error: errorInfo,
         agentType: agentTemplate.id,
         displayName: agentTemplate.displayName,
-        model: String(agentTemplate.model),
+        model: agentTemplate.model ? String(agentTemplate.model) : undefined,
         parentAgentId: parentAgentState.agentId,
       },
-      `Subagent '${agentTemplate.displayName}' (${agentTemplate.id}, model: ${agentTemplate.model}) failed`,
+      `Subagent '${agentTemplate.displayName}' (${agentTemplate.id}, model: ${agentTemplate.model ?? 'unknown'}) failed`,
     )
     const enriched = new Error(
-      `Agent '${agentTemplate.displayName}' (${agentTemplate.id}, model: ${agentTemplate.model}) failed: ${errorInfo.message}`,
+      `Agent '${agentTemplate.displayName}' (${agentTemplate.id}, model: ${agentTemplate.model ?? 'unknown'}) failed: ${errorInfo.message}`,
     )
     enriched.cause = error
     // Preserve status code for retry logic in callers
-    const statusCode = (error as { statusCode?: number }).statusCode ?? (error as { status?: number }).status
+    const statusCode = getErrorStatusCode(error)
     if (typeof statusCode === 'number') {
       ;(enriched as Error & { statusCode: number }).statusCode = statusCode
     }
@@ -490,7 +490,7 @@ export async function executeSubagent(
     agentId: result.agentState.agentId,
     agentType: agentTemplate.id,
     displayName: agentTemplate.displayName,
-    model: String(agentTemplate.model),
+    model: agentTemplate.model ? String(agentTemplate.model) : undefined,
     onlyChild: isOnlyChild,
     parentAgentId: parentAgentState.agentId,
     prompt,

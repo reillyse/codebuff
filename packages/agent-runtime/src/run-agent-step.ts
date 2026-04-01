@@ -1,8 +1,9 @@
+import { TRANSIENT_API_STATUS_CODES } from '@codebuff/common/constants/agents'
 import { AnalyticsEvent } from '@codebuff/common/constants/analytics-events'
 import { supportsCacheControl } from '@codebuff/common/old-constants'
 import { TOOLS_WHICH_WONT_FORCE_NEXT_STEP } from '@codebuff/common/tools/constants'
 import { buildArray } from '@codebuff/common/util/array'
-import { AbortError, getErrorObject, isAbortError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
+import { AbortError, getErrorObject, getErrorStatusCode, isAbortError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
 import { abortableSleep } from '@codebuff/common/util/promise'
 import { systemMessage, userMessage } from '@codebuff/common/util/messages'
 import { APICallError, type ToolSet } from 'ai'
@@ -58,10 +59,6 @@ import type {
   ProjectFileContext,
 } from '@codebuff/common/util/file'
 
-/** Status codes from upstream providers that are transient and safe to retry.
- * Includes Anthropic's 529 (Overloaded) — see https://docs.anthropic.com/en/api/errors */
-const RETRYABLE_API_STATUS_CODES = new Set([500, 502, 503, 504, 529])
-
 /** Max additional retry attempts for a single agent step on transient API errors */
 const MAX_STEP_RETRIES = 2
 
@@ -71,25 +68,11 @@ const STEP_RETRY_BASE_DELAY_MS = 2000
 /** Maximum delay in ms between retries (cap for exponential backoff) */
 const STEP_RETRY_MAX_DELAY_MS = 30_000
 
-/** Extract the HTTP status code from an API error, if present */
-function getApiErrorStatusCode(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined
-  if ('status' in error) {
-    const s = (error as { status: unknown }).status
-    if (typeof s === 'number') return s
-  }
-  if ('statusCode' in error) {
-    const s = (error as { statusCode: unknown }).statusCode
-    if (typeof s === 'number') return s
-  }
-  return undefined
-}
-
 /** Check if an error is a transient API error that is safe to retry.
  * Note: 429 is deliberately excluded — the AI SDK handles rate limits via its own maxRetries. */
 function isRetryableApiError(error: unknown): boolean {
-  const statusCode = getApiErrorStatusCode(error)
-  if (statusCode !== undefined && RETRYABLE_API_STATUS_CODES.has(statusCode)) {
+  const statusCode = getErrorStatusCode(error)
+  if (statusCode !== undefined && TRANSIENT_API_STATUS_CODES.has(statusCode)) {
     return true
   }
   // Fallback: check error message for 'overloaded' in case status code isn't extracted
@@ -916,7 +899,7 @@ export async function loopAgentSteps(
           const baseDelay = Math.min(STEP_RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1), STEP_RETRY_MAX_DELAY_MS)
           const jitter = 0.8 + Math.random() * 0.4
           const delay = Math.round(baseDelay * jitter)
-          const statusCode = getApiErrorStatusCode(stepError)
+          const statusCode = getErrorStatusCode(stepError)
           const delaySec = Math.round(delay / 1000)
           logger.warn(
             {
@@ -1065,7 +1048,7 @@ export async function loopAgentSteps(
         error: getErrorObject(error),
         agentType,
         displayName: agentTemplate.displayName,
-        model: String(agentTemplate.model),
+        model: agentTemplate.model ? String(agentTemplate.model) : undefined,
         agentId: currentAgentState.agentId,
         runId,
         totalSteps,
@@ -1096,7 +1079,7 @@ export async function loopAgentSteps(
           : getErrorObject(error).message
     }
 
-    const statusCode = (error as { statusCode?: number }).statusCode
+    const statusCode = getErrorStatusCode(error)
 
     const status = signal.aborted ? 'cancelled' : 'failed'
     await finishAgentRun({
@@ -1119,8 +1102,8 @@ export async function loopAgentSteps(
       output: {
         type: 'error',
         message: hasServerMessage ? errorMessage : `Agent '${agentTemplate.displayName}' (${agentType}) error: ${errorMessage}`,
-        ...(statusCode !== undefined && { statusCode }),
-        ...(errorCode !== undefined && { error: errorCode }),
+        statusCode,
+        error: errorCode,
       },
     }
   }

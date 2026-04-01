@@ -1,4 +1,5 @@
 import { env } from '@codebuff/common/env'
+import { getErrorStatusCode } from '@codebuff/common/util/error'
 
 import type { ChatMessage } from '../types/chat'
 
@@ -26,15 +27,7 @@ const extractErrorMessage = (error: unknown, fallback: string): string => {
  * Standardized on statusCode === 402 for payment required detection.
  */
 export const isOutOfCreditsError = (error: unknown): boolean => {
-  if (
-    error &&
-    typeof error === 'object' &&
-    'statusCode' in error &&
-    (error as { statusCode: unknown }).statusCode === 402
-  ) {
-    return true
-  }
-  return false
+  return getErrorStatusCode(error) === 402
 }
 
 export const OUT_OF_CREDITS_MESSAGE = `Out of credits. Please add credits at ${defaultAppUrl}/usage`
