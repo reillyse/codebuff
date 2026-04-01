@@ -41,7 +41,7 @@ const program = new Command()
   .version(getVersion())
   .option('-a, --agent <id>', 'Agent to use', DEFAULT_AGENT)
   .option('-c, --cwd <dir>', 'Working directory', process.cwd())
-  .option('-v, --verbose', 'Show tool calls and subagent activity', process.env.CODEBUFF_VERBOSE !== '0')
+  .option('-v, --verbose', 'Show tool calls and subagent activity', process.env.CODEBUFF_VERBOSE !== undefined ? process.env.CODEBUFF_VERBOSE !== '0' : (process.stdin.isTTY ?? false))
   .option('-k, --api-key <key>', 'Codebuff API key (or set CODEBUFF_API_KEY env var)')
   .argument('[prompt...]', 'Prompt to send (omit for interactive REPL mode)')
   .action(async (promptParts: string[], opts: {

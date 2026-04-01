@@ -222,11 +222,13 @@ export async function startRepl(options: ReplOptions): Promise<void> {
           }
           spinner.stop()
           handleEvent(event, verbose)
-          if (event.type === 'subagent_start') {
-            const modelSuffix = event.model ? ` (${event.model})` : ''
-            spinner.start(`Agent: ${event.displayName}${modelSuffix}...`)
-          } else if (event.type === 'tool_call') {
-            spinner.start(`Tool: ${event.toolName}...`)
+          if (!verbose) {
+            if (event.type === 'subagent_start') {
+              const modelSuffix = event.model ? ` (${event.model})` : ''
+              spinner.start(`Agent: ${event.displayName}${modelSuffix}...`)
+            } else if (event.type === 'tool_call') {
+              spinner.start(`Tool: ${event.toolName}...`)
+            }
           }
         },
         handleStreamChunk: (chunk) => {
@@ -556,11 +558,13 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
         }
         spinner.stop()
         handleEvent(event, verbose)
-        if (event.type === 'subagent_start') {
-          const modelSuffix = event.model ? ` (${event.model})` : ''
-          spinner.start(`Agent: ${event.displayName}${modelSuffix}...`)
-        } else if (event.type === 'tool_call') {
-          spinner.start(`Tool: ${event.toolName}...`)
+        if (!verbose) {
+          if (event.type === 'subagent_start') {
+            const modelSuffix = event.model ? ` (${event.model})` : ''
+            spinner.start(`Agent: ${event.displayName}${modelSuffix}...`)
+          } else if (event.type === 'tool_call') {
+            spinner.start(`Tool: ${event.toolName}...`)
+          }
         }
       },
       handleStreamChunk: (chunk) => {
@@ -569,6 +573,11 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
           streamedChunks.push(chunk)
           const formatted = md.write(chunk)
           if (formatted) writeOut(formatted)
+        } else if (chunk.type === 'subagent_chunk') {
+          if (verbose) {
+            spinner.stop()
+            writeErr(chunk.chunk)
+          }
         }
       },
     })
@@ -673,7 +682,7 @@ function handleEvent(event: PrintModeEvent, verbose: boolean): void {
       printSubagentStart(event.agentId, event.displayName, event.model)
       break
     case 'subagent_finish':
-      printSubagentEnd(event.agentId)
+      printSubagentEnd(event.agentId, event.displayName, event.model)
       break
     case 'finish':
       printFinish(event.totalCost)

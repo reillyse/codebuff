@@ -421,12 +421,14 @@ export async function executeSubagent(
     spawnParams,
   } = withDefaults
 
+  const modelStr = agentTemplate.model ? String(agentTemplate.model) : undefined
+
   const startEvent = {
     type: 'subagent_start' as const,
     agentId: withDefaults.agentState.agentId,
     agentType: agentTemplate.id,
     displayName: agentTemplate.displayName,
-    model: agentTemplate.model ? String(agentTemplate.model) : undefined,
+    model: modelStr,
     onlyChild: isOnlyChild,
     parentAgentId: parentAgentState.agentId,
     prompt,
@@ -452,7 +454,7 @@ export async function executeSubagent(
       agentId: withDefaults.agentState.agentId,
       agentType: agentTemplate.id,
       displayName: agentTemplate.displayName,
-      model: agentTemplate.model ? String(agentTemplate.model) : undefined,
+      model: modelStr,
       onlyChild: isOnlyChild,
       parentAgentId: parentAgentState.agentId,
       prompt,
@@ -466,9 +468,10 @@ export async function executeSubagent(
     withDefaults.logger.error(
       {
         error: errorInfo,
+        agentId: withDefaults.agentState.agentId,
         agentType: agentTemplate.id,
         displayName: agentTemplate.displayName,
-        model: agentTemplate.model ? String(agentTemplate.model) : undefined,
+        model: modelStr,
         parentAgentId: parentAgentState.agentId,
       },
       `Subagent '${agentTemplate.displayName}' (${agentTemplate.id}, model: ${agentTemplate.model ?? 'unknown'}) failed`,
@@ -482,6 +485,8 @@ export async function executeSubagent(
     if (typeof statusCode === 'number') {
       ;(enriched as Error & { statusCode: number }).statusCode = statusCode
     }
+    // Attach agent state so callers can recover partial costs from failed subagents
+    ;(enriched as Error & { agentState: AgentState }).agentState = withDefaults.agentState
     throw enriched
   }
 
@@ -490,7 +495,7 @@ export async function executeSubagent(
     agentId: result.agentState.agentId,
     agentType: agentTemplate.id,
     displayName: agentTemplate.displayName,
-    model: agentTemplate.model ? String(agentTemplate.model) : undefined,
+    model: modelStr,
     onlyChild: isOnlyChild,
     parentAgentId: parentAgentState.agentId,
     prompt,

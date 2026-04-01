@@ -118,8 +118,13 @@ export function printSubagentStart(agentId: string, displayName: string, model?:
   writeErr(`* Agent: ${displayName}${modelSuffix}\n`)
 }
 
-export function printSubagentEnd(agentId: string): void {
-  writeErr(`* Agent finished\n`)
+export function printSubagentEnd(agentId: string, displayName?: string, model?: string): void {
+  if (displayName) {
+    const modelSuffix = model ? ` (${model})` : ''
+    writeErr(`* Agent finished: ${displayName}${modelSuffix}\n`)
+  } else {
+    writeErr(`* Agent finished\n`)
+  }
 }
 
 export function printDivider(): void {

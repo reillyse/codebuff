@@ -280,7 +280,9 @@ describe('Subagent Transient Error Retry', () => {
       await handleSpawnAgents({ ...params })
 
       expect(sleepSpy).toHaveBeenCalledTimes(1)
-      expect(sleepSpy.mock.calls[0][0]).toBe(2000)
+      const delay = sleepSpy.mock.calls[0][0] as number
+      expect(delay).toBeGreaterThanOrEqual(2000)
+      expect(delay).toBeLessThan(3000)
     })
 
     it('should call abortableSleep before retrying (thrown error path)', async () => {
@@ -296,7 +298,9 @@ describe('Subagent Transient Error Retry', () => {
       await handleSpawnAgents({ ...params })
 
       expect(sleepSpy).toHaveBeenCalledTimes(1)
-      expect(sleepSpy.mock.calls[0][0]).toBe(2000)
+      const delay = sleepSpy.mock.calls[0][0] as number
+      expect(delay).toBeGreaterThanOrEqual(2000)
+      expect(delay).toBeLessThan(3000)
     })
 
     it('should log a warning before retrying (returned error path)', async () => {

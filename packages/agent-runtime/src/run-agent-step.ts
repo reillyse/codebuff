@@ -2,7 +2,7 @@ import { AnalyticsEvent } from '@codebuff/common/constants/analytics-events'
 import { supportsCacheControl } from '@codebuff/common/old-constants'
 import { TOOLS_WHICH_WONT_FORCE_NEXT_STEP } from '@codebuff/common/tools/constants'
 import { buildArray } from '@codebuff/common/util/array'
-import { AbortError, TRANSIENT_API_STATUS_CODES, getErrorObject, getErrorStatusCode, isAbortError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
+import { AbortError, getErrorObject, getErrorStatusCode, isAbortError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
 import { abortableSleep } from '@codebuff/common/util/promise'
 import { systemMessage, userMessage } from '@codebuff/common/util/messages'
 import { APICallError, type ToolSet } from 'ai'
@@ -66,25 +66,6 @@ const STEP_RETRY_BASE_DELAY_MS = 2000
 
 /** Maximum delay in ms between retries (cap for exponential backoff) */
 const STEP_RETRY_MAX_DELAY_MS = 30_000
-
-/** Check if an error is a transient API error that is safe to retry.
- * When a status code is available, it is used as the authoritative signal — a
- * non-transient code (e.g. 400) won't trigger a retry even if the message
- * happens to contain "overloaded".
- * Note: 429 is deliberately excluded — the AI SDK handles rate limits via its own maxRetries. */
-function isRetryableApiError(error: unknown): boolean {
-  const statusCode = getErrorStatusCode(error)
-  if (statusCode !== undefined) {
-    // Status code is the authoritative signal when present
-    return TRANSIENT_API_STATUS_CODES.has(statusCode)
-  }
-  // No status code — fall back to message heuristic for providers that
-  // return 'overloaded' errors without a structured status code
-  if (error instanceof Error && error.message.toLowerCase().includes('overloaded')) {
-    return true
-  }
-  return false
-}
 
 async function additionalToolDefinitions(
   params: {
@@ -940,7 +921,7 @@ export async function loopAgentSteps(
           if (
             !signal.aborted &&
             retryAttempt < MAX_STEP_RETRIES &&
-            isRetryableApiError(error)
+            isTransientApiError(error)
           ) {
             continue
           }

@@ -221,6 +221,25 @@ export function parseApiErrorResponseBody(responseBody: unknown): {
 export const TRANSIENT_API_STATUS_CODES = new Set([500, 502, 503, 504, 529])
 
 /**
+ * Check if an error is a transient API error that is safe to retry.
+ * When a status code is available, it is used as the authoritative signal — a
+ * non-transient code (e.g. 400) won't trigger a retry even if the message
+ * happens to contain "overloaded".
+ * Falls back to message heuristic for providers that return 'overloaded' errors
+ * without a structured status code.
+ */
+export function isTransientApiError(error: unknown): boolean {
+  const statusCode = getErrorStatusCode(error)
+  if (statusCode !== undefined) {
+    return TRANSIENT_API_STATUS_CODES.has(statusCode)
+  }
+  if (error instanceof Error && error.message.toLowerCase().includes('overloaded')) {
+    return true
+  }
+  return false
+}
+
+/**
  * Extracts the HTTP status code from an error object, if present.
  * Checks 'statusCode' first (our convention / AI SDK errors), then 'status' (APICallError).
  *
