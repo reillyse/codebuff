@@ -223,7 +223,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
           spinner.stop()
           handleEvent(event, verbose)
           if (event.type === 'subagent_start') {
-            spinner.start(`Agent: ${event.agentType}...`)
+            const modelSuffix = event.model ? ` (${event.model})` : ''
+            spinner.start(`Agent: ${event.displayName}${modelSuffix}...`)
           } else if (event.type === 'tool_call') {
             spinner.start(`Tool: ${event.toolName}...`)
           }
@@ -556,7 +557,8 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
         spinner.stop()
         handleEvent(event, verbose)
         if (event.type === 'subagent_start') {
-          spinner.start(`Agent: ${event.agentType}...`)
+          const modelSuffix = event.model ? ` (${event.model})` : ''
+          spinner.start(`Agent: ${event.displayName}${modelSuffix}...`)
         } else if (event.type === 'tool_call') {
           spinner.start(`Tool: ${event.toolName}...`)
         }
@@ -668,7 +670,7 @@ function handleEvent(event: PrintModeEvent, verbose: boolean): void {
       break
     }
     case 'subagent_start':
-      printSubagentStart(event.agentId, event.agentType)
+      printSubagentStart(event.agentId, event.displayName, event.model)
       break
     case 'subagent_finish':
       printSubagentEnd(event.agentId)

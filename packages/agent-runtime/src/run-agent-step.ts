@@ -1064,6 +1064,8 @@ export async function loopAgentSteps(
       {
         error: getErrorObject(error),
         agentType,
+        displayName: agentTemplate.displayName,
+        model: String(agentTemplate.model),
         agentId: currentAgentState.agentId,
         runId,
         totalSteps,
@@ -1072,7 +1074,7 @@ export async function loopAgentSteps(
         messageHistory: currentAgentState.messageHistory,
         systemPrompt: system,
       },
-      'Agent execution failed',
+      `Agent '${agentTemplate.displayName}' (${agentType}) execution failed`,
     )
 
     let errorMessage = ''
@@ -1091,7 +1093,7 @@ export async function loopAgentSteps(
       errorMessage =
         error instanceof Error
           ? error.message + (error.stack ? `\n\n${error.stack}` : '')
-          : String(error)
+          : getErrorObject(error).message
     }
 
     const statusCode = (error as { statusCode?: number }).statusCode
@@ -1116,7 +1118,7 @@ export async function loopAgentSteps(
       agentState: currentAgentState,
       output: {
         type: 'error',
-        message: hasServerMessage ? errorMessage : 'Agent run error: ' + errorMessage,
+        message: hasServerMessage ? errorMessage : `Agent '${agentTemplate.displayName}' (${agentType}) error: ${errorMessage}`,
         ...(statusCode !== undefined && { statusCode }),
         ...(errorCode !== undefined && { error: errorCode }),
       },

@@ -307,8 +307,23 @@ export function getErrorObject(
     }
   }
 
+  // Handle plain objects that would otherwise stringify to [object Object]
+  if (error && typeof error === 'object') {
+    if ('message' in error && typeof (error as { message: unknown }).message === 'string') {
+      return {
+        name: 'Error',
+        message: (error as { message: string }).message,
+      }
+    }
+    const stringified = safeStringify(error, 500)
+    return {
+      name: 'Error',
+      message: stringified ?? '[Unknown error]',
+    }
+  }
+
   return {
     name: 'Error',
-    message: `${error}`,
+    message: String(error),
   }
 }

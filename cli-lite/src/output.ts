@@ -113,8 +113,9 @@ export function printInfo(message: string): void {
   writeErr(`${message}\n`)
 }
 
-export function printSubagentStart(agentId: string, agentType: string): void {
-  writeErr(`* Agent: ${agentType}\n`)
+export function printSubagentStart(agentId: string, displayName: string, model?: string): void {
+  const modelSuffix = model ? ` (${model})` : ''
+  writeErr(`* Agent: ${displayName}${modelSuffix}\n`)
 }
 
 export function printSubagentEnd(agentId: string): void {

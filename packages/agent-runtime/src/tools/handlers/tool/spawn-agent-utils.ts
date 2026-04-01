@@ -1,6 +1,7 @@
 import { MAX_AGENT_STEPS_DEFAULT } from '@codebuff/common/constants/agents'
 import { toolNames } from '@codebuff/common/tools/constants'
 import { parseAgentId } from '@codebuff/common/util/agent-id-parsing'
+import { getErrorObject, isAbortError } from '@codebuff/common/util/error'
 import { generateCompactId } from '@codebuff/common/util/string'
 
 import { loopAgentSteps } from '../../../run-agent-step'
@@ -425,6 +426,7 @@ export async function executeSubagent(
     agentId: withDefaults.agentState.agentId,
     agentType: agentTemplate.id,
     displayName: agentTemplate.displayName,
+    model: String(agentTemplate.model),
     onlyChild: isOnlyChild,
     parentAgentId: parentAgentState.agentId,
     prompt,
@@ -432,21 +434,63 @@ export async function executeSubagent(
   }
   onResponseChunk(startEvent)
 
-  const result = await loopAgentSteps({
-    ...withDefaults,
-    // Don't propagate parent's image content to subagents.
-    // If subagents need to see images, they get them through includeMessageHistory,
-    // not by creating new image-containing messages for their prompts.
-    content: undefined,
-    ancestorRunIds: [...ancestorRunIds, parentAgentState.runId ?? ''],
-    agentType: agentTemplate.id,
-  })
+  let result: Awaited<ReturnType<typeof loopAgentSteps>>
+  try {
+    result = await loopAgentSteps({
+      ...withDefaults,
+      // Don't propagate parent's image content to subagents.
+      // If subagents need to see images, they get them through includeMessageHistory,
+      // not by creating new image-containing messages for their prompts.
+      content: undefined,
+      ancestorRunIds: [...ancestorRunIds, parentAgentState.runId ?? ''],
+      agentType: agentTemplate.id,
+    })
+  } catch (error) {
+    // Emit subagent_finish so the UI doesn't show a dangling started agent
+    onResponseChunk({
+      type: 'subagent_finish',
+      agentId: withDefaults.agentState.agentId,
+      agentType: agentTemplate.id,
+      displayName: agentTemplate.displayName,
+      model: String(agentTemplate.model),
+      onlyChild: isOnlyChild,
+      parentAgentId: parentAgentState.agentId,
+      prompt,
+      params: spawnParams,
+    })
+
+    // Don't wrap AbortErrors — they must propagate for abort detection
+    if (isAbortError(error)) throw error
+
+    const errorInfo = getErrorObject(error)
+    withDefaults.logger.error(
+      {
+        error: errorInfo,
+        agentType: agentTemplate.id,
+        displayName: agentTemplate.displayName,
+        model: String(agentTemplate.model),
+        parentAgentId: parentAgentState.agentId,
+      },
+      `Subagent '${agentTemplate.displayName}' (${agentTemplate.id}, model: ${agentTemplate.model}) failed`,
+    )
+    const enriched = new Error(
+      `Agent '${agentTemplate.displayName}' (${agentTemplate.id}, model: ${agentTemplate.model}) failed: ${errorInfo.message}`,
+    )
+    enriched.cause = error
+    // Preserve status code for retry logic in callers
+    const statusCode = (error as { statusCode?: number }).statusCode ?? (error as { status?: number }).status
+    if (typeof statusCode === 'number') {
+      ;(enriched as Error & { statusCode: number }).statusCode = statusCode
+    }
+    throw enriched
+  }
 
   onResponseChunk({
     type: 'subagent_finish',
     agentId: result.agentState.agentId,
     agentType: agentTemplate.id,
     displayName: agentTemplate.displayName,
+    model: String(agentTemplate.model),
     onlyChild: isOnlyChild,
     parentAgentId: parentAgentState.agentId,
     prompt,

@@ -1271,8 +1271,8 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       if (result.output.type === 'error') {
         // Should use the server's message, NOT the generic "Forbidden"
         expect(result.output.message).toBe('Free mode is not available in your country.')
-        // Should NOT have the 'Agent run error: ' prefix since message came from responseBody
-        expect(result.output.message).not.toContain('Agent run error:')
+        // Server message should be used directly without agent error prefix
+        expect(result.output.message).not.toMatch(/^Agent '/)
         // Should propagate the error code so the CLI can match on it
         expect(result.output.error).toBe('free_mode_unavailable')
         // Should propagate the status code
@@ -1280,7 +1280,7 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       }
     })
 
-    it('should prefix with "Agent run error:" when responseBody has no parseable message', async () => {
+    it('should include agent identity in error message when responseBody has no parseable message', async () => {
       const llmOnlyTemplate = {
         ...mockTemplate,
         handleSteps: undefined,
@@ -1310,8 +1310,9 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
 
       expect(result.output.type).toBe('error')
       if (result.output.type === 'error') {
-        // Should have the prefix since there's no server message
-        expect(result.output.message).toContain('Agent run error:')
+        // Should include agent identity and error message since there's no server message
+        expect(result.output.message).toContain('Test Agent')
+        expect(result.output.message).toContain('test-agent')
         expect(result.output.message).toContain('Internal Server Error')
         // No error code since responseBody wasn't parseable
         expect(result.output.error).toBeUndefined()

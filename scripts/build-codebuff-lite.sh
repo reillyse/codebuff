@@ -38,8 +38,9 @@ if [ ! -d "$GLOBAL_BIN" ]; then
 fi
 echo "Global bin directory: $GLOBAL_BIN"
 
-# Use a dev version number for local builds
-VERSION="0.0.0-local.$(date +%Y%m%d%H%M%S)"
+# Use a dev version number for local builds, including git SHA for traceability
+GIT_SHA=$(cd "$PROJECT_ROOT" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION="0.0.0-local.$(date +%Y%m%d%H%M%S)+${GIT_SHA}"
 echo "Building version: $VERSION"
 echo ""
 

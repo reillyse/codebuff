@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { spawnSync } from 'child_process'
 import fs from 'fs'
 import { createRequire } from 'module'
 import os from 'os'
@@ -51,6 +52,16 @@ function loadPackageVersion(): string {
   try {
     const pkg = require('../package.json') as { version?: string }
     if (pkg.version) {
+      try {
+        const pkgDir = path.dirname(require.resolve('../package.json'))
+        const result = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { stdio: 'pipe', cwd: pkgDir })
+        if (result.status === 0) {
+          const sha = result.stdout.toString().trim()
+          if (sha) return `${pkg.version}+${sha}`
+        }
+      } catch {
+        // git not available
+      }
       return pkg.version
     }
   } catch {

@@ -1,4 +1,6 @@
+import { getErrorObject } from '@codebuff/common/util/error'
 import { jsonToolResult } from '@codebuff/common/util/messages'
+import { abortableSleep } from '@codebuff/common/util/promise'
 
 import {
   validateAndGetAgentTemplate,
@@ -28,6 +30,20 @@ export type SendSubagentChunk = (data: {
   prompt?: string
   forwardToPrompt?: boolean
 }) => void
+
+const TRANSIENT_STATUS_CODES = new Set([500, 502, 503, 504, 529])
+
+/** Extract a transient HTTP status code from an error, if present */
+function getTransientStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  for (const key of ['status', 'statusCode'] as const) {
+    if (key in error) {
+      const val = (error as Record<string, unknown>)[key]
+      if (typeof val === 'number' && TRANSIENT_STATUS_CODES.has(val)) return val
+    }
+  }
+  return undefined
+}
 
 type ToolName = 'spawn_agents'
 export const handleSpawnAgents = (async (
@@ -104,30 +120,11 @@ export const handleSpawnAgents = (async (
         // Extract common context params to avoid bugs from spreading all params
         const contextParams = extractSubagentContextParams(params)
 
-        const result = await executeSubagent({
-          ...contextParams,
-
-          // Spawn-specific params
-          ancestorRunIds: parentAgentState.ancestorRunIds,
-          userInputId: `${userInputId}-${agentType}${subAgentState.agentId}`,
-          prompt: prompt || '',
-          spawnParams,
-          agentTemplate,
-          parentAgentState,
-          agentState: subAgentState,
-          fingerprintId,
-          isOnlyChild: agents.length === 1,
-          excludeToolFromMessageHistory: false,
-          fromHandleSteps: false,
-          parentSystemPrompt,
-          parentTools: agentTemplate.inheritParentSystemPrompt
-            ? parentTools
-            : undefined,
-          onResponseChunk: (chunk: string | PrintModeEvent) => {
+        const makeOnResponseChunk = (agentState: AgentState) => (chunk: string | PrintModeEvent) => {
             if (typeof chunk === 'string') {
               sendSubagentChunk({
                 userInputId,
-                agentId: subAgentState.agentId,
+                agentId: agentState.agentId,
                 agentType,
                 chunk,
                 prompt,
@@ -139,7 +136,7 @@ export const handleSpawnAgents = (async (
               if (chunk.text) {
                 writeToClient({
                   type: 'text' as const,
-                  agentId: subAgentState.agentId,
+                  agentId: agentState.agentId,
                   text: chunk.text,
                 })
               }
@@ -154,12 +151,12 @@ export const handleSpawnAgents = (async (
               ) {
                 return (
                   chunk.parentAgentId ??
-                  subAgentState.parentId ??
+                  agentState.parentId ??
                   parentAgentState?.agentId
                 )
               }
               if (chunk.type === 'tool_call' || chunk.type === 'tool_result') {
-                return (chunk as any).parentAgentId ?? subAgentState.agentId
+                return (chunk as any).parentAgentId ?? agentState.agentId
               }
               return undefined
             }
@@ -178,11 +175,63 @@ export const handleSpawnAgents = (async (
 
             const eventWithAgent = {
               ...chunk,
-              agentId: subAgentState.agentId,
+              agentId: agentState.agentId,
             }
             writeToClient(eventWithAgent)
-          },
+          }
+
+        const executeSubagentWithState = (agentState: AgentState) => executeSubagent({
+          ...contextParams,
+
+          // Spawn-specific params
+          ancestorRunIds: parentAgentState.ancestorRunIds,
+          userInputId: `${userInputId}-${agentType}${agentState.agentId}`,
+          prompt: prompt || '',
+          spawnParams,
+          agentTemplate,
+          parentAgentState,
+          agentState,
+          fingerprintId,
+          isOnlyChild: agents.length === 1,
+          excludeToolFromMessageHistory: false,
+          fromHandleSteps: false,
+          parentSystemPrompt,
+          parentTools: agentTemplate.inheritParentSystemPrompt
+            ? parentTools
+            : undefined,
+          onResponseChunk: makeOnResponseChunk(agentState),
         })
+
+        // Retry once on transient API errors (500, 502, 503, 504, 529)
+        let result: Awaited<ReturnType<typeof executeSubagent>>
+        try {
+          result = await executeSubagentWithState(subAgentState)
+        } catch (firstError) {
+          const statusCode = getTransientStatusCode(firstError)
+          if (statusCode !== undefined && !contextParams.signal.aborted) {
+            logger.warn(
+              {
+                agentType,
+                displayName: agentTemplate.displayName,
+                model: String(agentTemplate.model),
+                statusCode,
+                error: getErrorObject(firstError),
+              },
+              `Retrying subagent '${agentTemplate.displayName}' after transient error (${statusCode})`,
+            )
+            await abortableSleep(2000, contextParams.signal)
+            // Create fresh state for retry — the previous state may be dirty
+            const retryAgentState = createAgentState(
+              agentType,
+              agentTemplate,
+              parentAgentState,
+              {},
+            )
+            result = await executeSubagentWithState(retryAgentState)
+          } else {
+            throw firstError
+          }
+        }
         return { ...result, agentType, agentName: agentTemplate.displayName }
       },
     ),
@@ -199,10 +248,11 @@ export const handleSpawnAgents = (async (
         }
       } else {
         const agentTypeStr = agents[index].agent_type
+        const errorInfo = getErrorObject(result.reason)
         return {
           agentType: agentTypeStr,
           agentName: agentTypeStr,
-          value: { errorMessage: `Error spawning agent: ${result.reason}` },
+          value: { errorMessage: `Error spawning agent ${agentTypeStr}: ${errorInfo.message}` },
         }
       }
     }),

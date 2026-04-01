@@ -101,11 +101,28 @@ function getTargetInfo(): TargetInfo {
 }
 
 async function main() {
-  const [, , binaryNameArg, version] = process.argv
+  const [, , binaryNameArg, versionArg] = process.argv
   const binaryName = binaryNameArg ?? 'codebuff-lite'
 
-  if (!version) {
+  if (!versionArg) {
     throw new Error('Version argument is required when building a binary')
+  }
+
+  // Append git short SHA to version if not already present
+  let version = versionArg
+  if (!version.includes('+')) {
+    try {
+      const gitResult = spawnSync('git', ['rev-parse', '--short', 'HEAD'], {
+        cwd: repoRoot,
+        stdio: 'pipe',
+      })
+      if (gitResult.status === 0) {
+        const sha = gitResult.stdout.toString().trim()
+        if (sha) version = `${version}+${sha}`
+      }
+    } catch {
+      // git not available — skip SHA suffix
+    }
   }
 
   log(`Building ${binaryName} @ ${version}`)
