@@ -1,6 +1,8 @@
 import { modelMessageSchema } from 'ai'
 import { cloneDeep, has, isEqual } from 'lodash'
 
+import { generateCompactId } from './string'
+
 import type { Logger } from '../types/contracts/logger'
 import type { JSONValue } from '../types/json'
 import type {
@@ -126,32 +128,53 @@ function assistantToCodebuffMessage(
 function convertToolResultMessage(
   message: ToolMessage,
 ): ModelMessageWithAuxiliaryData[] {
-  if (message.content.length === 0) {
+  // Separate auxiliary data (tags, sentAt, providerOptions, etc.) from
+  // message-specific fields so we don't leak role/content/toolCallId/toolName
+  // into places they don't belong.
+  const {
+    role: _role,
+    content,
+    toolCallId: rawToolCallId,
+    toolName: rawToolName,
+    ...auxiliaryData
+  } = message
+
+  // Defensively coerce toolCallId/toolName to strings.
+  // Messages injected via set_messages may have null values.
+  const toolCallId = typeof rawToolCallId === 'string' && rawToolCallId
+    ? rawToolCallId
+    : generateCompactId()
+  const toolName = typeof rawToolName === 'string' && rawToolName
+    ? rawToolName
+    : 'unknown_tool'
+
+  if (content.length === 0) {
     return [
       cloneDeep<ToolModelMessage>({
-        ...message,
+        ...auxiliaryData,
         role: 'tool',
         content: [
           {
-            ...message,
-            output: { type: 'json', value: '' },
             type: 'tool-result',
+            toolCallId,
+            toolName,
+            output: { type: 'json', value: '' },
           },
         ],
       }),
     ]
   }
-  return message.content.map((c) => {
+  return content.map((c) => {
     if (c.type === 'json') {
       return cloneDeep<ToolModelMessage>({
-        ...message,
+        ...auxiliaryData,
         role: 'tool',
-        content: [{ ...message, output: c, type: 'tool-result' }],
+        content: [{ type: 'tool-result', toolCallId, toolName, output: c }],
       })
     }
     if (c.type === 'media') {
       return cloneDeep<UserMessage>({
-        ...message,
+        ...auxiliaryData,
         role: 'user',
         content: [{ type: 'file', data: c.data, mediaType: c.mediaType }],
       })
@@ -165,14 +188,15 @@ function convertToolResultMessage(
 
 function convertToolMessage(message: Message): ModelMessageWithAuxiliaryData[] {
   if (message.role === 'system') {
-    return [
-      {
-        ...message,
-        content: message.content.map(({ text }) => text).join('\n\n'),
-      },
-    ]
+    const content = typeof message.content === 'string'
+      ? message.content
+      : message.content.map(({ text }) => text).join('\n\n')
+    return [{ ...message, content }]
   }
   if (message.role === 'user') {
+    if (typeof message.content === 'string') {
+      return [cloneDeep({ ...message, content: [{ type: 'text' as const, text: message.content }] })]
+    }
     return [cloneDeep(message)]
   }
   if (message.role === 'assistant') {
@@ -333,6 +357,12 @@ export function convertCbToModelMessages({
     const message = aggregated[i]
     const result = modelMessageSchema.safeParse(message)
     if (!result.success) {
+      const messageDebug = message.role === 'tool'
+        ? (() => {
+            const part = (message.content as any[])?.[0]
+            return `toolCallId=${JSON.stringify(part?.toolCallId)}, toolName=${JSON.stringify(part?.toolName)}, content=${JSON.stringify(message.content).slice(0, 500)}`
+          })()
+        : `content=${JSON.stringify(message.content).slice(0, 500)}`
       if (logger) {
         logger.error(
           { message, aggregated, error: result.error },
@@ -342,6 +372,7 @@ export function convertCbToModelMessages({
       throw new Error(
         `convertCbToModelMessages: Message at index ${i} failed schema validation.\n` +
         `Role: ${message.role}\n` +
+        `Debug: ${messageDebug}\n` +
         `Message:\n${result.error.message}`,
       )
     }

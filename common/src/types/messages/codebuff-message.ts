@@ -1,3 +1,5 @@
+import z from 'zod/v4'
+
 import type {
   FilePart,
   ImagePart,
@@ -56,3 +58,36 @@ export type Message =
   | UserMessage
   | AssistantMessage
   | ToolMessage
+
+// Zod schema for validating Message objects at runtime.
+// Intentionally permissive on content (z.array(z.any())) but strict on
+// role-specific required fields — especially toolCallId/toolName on tool
+// messages, which caused schema validation errors when null.
+const systemMessageSchema = z.object({
+  role: z.literal('system'),
+  content: z.union([z.string(), z.array(z.any())]),
+}).passthrough()
+
+const userMessageSchema = z.object({
+  role: z.literal('user'),
+  content: z.union([z.string(), z.array(z.any())]),
+}).passthrough()
+
+const assistantMessageSchema = z.object({
+  role: z.literal('assistant'),
+  content: z.union([z.string(), z.array(z.any())]),
+}).passthrough()
+
+const toolMessageSchema = z.object({
+  role: z.literal('tool'),
+  toolCallId: z.string().nullable().optional(),
+  toolName: z.string().nullable().optional(),
+  content: z.array(z.any()),
+}).passthrough()
+
+export const messageSchema = z.discriminatedUnion('role', [
+  systemMessageSchema,
+  userMessageSchema,
+  assistantMessageSchema,
+  toolMessageSchema,
+])

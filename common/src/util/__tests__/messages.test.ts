@@ -157,6 +157,50 @@ describe('convertCbToModelMessages', () => {
       ])
     })
 
+    it('should convert system messages with string content', () => {
+      const messages: Message[] = [
+        {
+          role: 'system',
+          content: 'You are a helpful assistant' as any,
+        },
+      ]
+
+      const result = convertCbToModelMessages({
+        messages,
+        includeCacheControl: false,
+      })
+
+      expect(result).toEqual([
+        {
+          role: 'system',
+          content: 'You are a helpful assistant',
+        },
+      ])
+    })
+
+    it('should convert user messages with string content', () => {
+      const messages: Message[] = [
+        {
+          role: 'user',
+          content: 'Hello there' as any,
+        },
+      ]
+
+      const result = convertCbToModelMessages({
+        messages,
+        includeCacheControl: false,
+      })
+
+      expect(result).toEqual([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Hello there' },
+          ],
+        },
+      ])
+    })
+
     it('should convert user messages with array content', () => {
       const messages: Message[] = [
         {
@@ -220,6 +264,8 @@ describe('convertCbToModelMessages', () => {
           ],
         }),
       ])
+      expect(result[0]).not.toHaveProperty('toolCallId')
+      expect(result[0]).not.toHaveProperty('toolName')
     })
 
     it('should convert tool messages with media output', () => {
@@ -250,6 +296,8 @@ describe('convertCbToModelMessages', () => {
           ],
         }),
       ])
+      expect(result[0]).not.toHaveProperty('toolCallId')
+      expect(result[0]).not.toHaveProperty('toolName')
     })
 
     it('should convert tool messages with empty content', () => {
@@ -270,8 +318,6 @@ describe('convertCbToModelMessages', () => {
       expect(result).toEqual([
         expect.objectContaining({
           role: 'tool',
-          toolCallId: 'call_empty',
-          toolName: 'scraper_page_to_markdown',
           content: [
             expect.objectContaining({
               type: 'tool-result',
@@ -282,6 +328,62 @@ describe('convertCbToModelMessages', () => {
           ],
         }),
       ])
+      // toolCallId/toolName should only be in content parts, not at the message level
+      expect(result[0]).not.toHaveProperty('toolCallId')
+      expect(result[0]).not.toHaveProperty('toolName')
+    })
+
+    it('should handle tool messages with null toolCallId/toolName', () => {
+      const messages: Message[] = [
+        {
+          role: 'tool',
+          toolName: null as any,
+          toolCallId: null as any,
+          content: jsonToolResult({ result: 'success' }),
+        },
+      ]
+
+      const result = convertCbToModelMessages({
+        messages,
+        includeCacheControl: false,
+      })
+
+      expect(result).toHaveLength(1)
+      expect(result[0].role).toBe('tool')
+      const content = result[0].content as any[]
+      expect(content[0].type).toBe('tool-result')
+      expect(typeof content[0].toolCallId).toBe('string')
+      expect(content[0].toolCallId.length).toBeGreaterThan(0)
+      expect(typeof content[0].toolName).toBe('string')
+      expect(content[0].toolName).toBe('unknown_tool')
+      expect(result[0]).not.toHaveProperty('toolCallId')
+      expect(result[0]).not.toHaveProperty('toolName')
+    })
+
+    it('should handle tool messages with undefined toolCallId/toolName', () => {
+      const messages: Message[] = [
+        {
+          role: 'tool',
+          toolName: undefined as any,
+          toolCallId: undefined as any,
+          content: jsonToolResult({ result: 'success' }),
+        },
+      ]
+
+      const result = convertCbToModelMessages({
+        messages,
+        includeCacheControl: false,
+      })
+
+      expect(result).toHaveLength(1)
+      expect(result[0].role).toBe('tool')
+      const content = result[0].content as any[]
+      expect(content[0].type).toBe('tool-result')
+      expect(typeof content[0].toolCallId).toBe('string')
+      expect(content[0].toolCallId.length).toBeGreaterThan(0)
+      expect(content[0].toolName).toBe('unknown_tool')
+      expect(result[0]).not.toHaveProperty('toolCallId')
+      expect(result[0]).not.toHaveProperty('toolName')
     })
 
     it('should handle multiple tool outputs', () => {

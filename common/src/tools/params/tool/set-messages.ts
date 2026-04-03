@@ -1,5 +1,6 @@
 import z from 'zod/v4'
 
+import { messageSchema } from '../../../types/messages/codebuff-message'
 import {
   $getNativeToolCallExampleString,
   textToolResultSchema,
@@ -11,7 +12,7 @@ const toolName = 'set_messages'
 const endsAgentStep = true
 const inputSchema = z
   .object({
-    messages: z.any(),
+    messages: z.array(messageSchema),
   })
   .describe(`Set the conversation history to the provided messages.`)
 const description = `
