@@ -3,6 +3,7 @@ import type {
   CodebuffToolCall,
   CodebuffToolOutput,
 } from '@codebuff/common/tools/list'
+import type { Message } from '@codebuff/common/types/messages/codebuff-message'
 import type { AgentState } from '@codebuff/common/types/session-state'
 
 export const handleSetMessages = (async (params: {
@@ -14,6 +15,6 @@ export const handleSetMessages = (async (params: {
   const { previousToolCallFinished, toolCall, agentState } = params
 
   await previousToolCallFinished
-  agentState.messageHistory = toolCall.input.messages
+  agentState.messageHistory = toolCall.input.messages as Message[]
   return { output: [{ type: 'json', value: { message: 'Messages set.' } }] }
 }) satisfies CodebuffToolHandlerFunction<'set_messages'>
