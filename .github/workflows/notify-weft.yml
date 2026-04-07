@@ -3,9 +3,8 @@
 # the docker-publish workflow to rebuild the agent image with the
 # latest codebuff-lite binary.
 #
-# Uses the GITHUB_TOKEN secret (a PAT with repo scope on reillyse/weft).
-# Note: The automatic GITHUB_TOKEN won't work for cross-repo dispatch;
-# this must be a manually-configured PAT.
+# Uses CODEBUFF_GITHUB_TOKEN (a PAT with repo scope that covers
+# both reillyse/codebuff and reillyse/weft).
 
 name: Notify Weft
 
@@ -22,7 +21,7 @@ jobs:
       - name: Dispatch codebuff-updated event to weft
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.CODEBUFF_GITHUB_TOKEN }}
           repository: reillyse/weft
           event-type: codebuff-updated
           client-payload: '{"sha": "${{ github.sha }}", "ref": "${{ github.ref }}", "message": "${{ github.event.head_commit.message }}"}'
