@@ -1087,8 +1087,8 @@ export async function loopAgentSteps(
       output: {
         type: 'error',
         message: hasServerMessage ? errorMessage : `Agent '${agentTemplate.displayName}' (${agentType}) error: ${errorMessage}`,
-        statusCode,
-        error: errorCode,
+        ...(statusCode !== undefined && { statusCode }),
+        ...(errorCode !== undefined && { error: errorCode }),
       },
     }
   }
