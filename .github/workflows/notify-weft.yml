@@ -1,0 +1,28 @@
+# Notify Weft to rebuild agent images when codebuff is updated.
+# Sends a repository_dispatch event to reillyse/weft which triggers
+# the docker-publish workflow to rebuild the agent image with the
+# latest codebuff-lite binary.
+#
+# Required secret: WEFT_DISPATCH_TOKEN
+#   A GitHub PAT (classic) with `repo` scope on reillyse/weft.
+#   Add it in the codebuff repo: Settings → Secrets → Actions.
+
+name: Notify Weft
+
+on:
+  push:
+    branches:
+      - reillyse/hippo-integration
+
+jobs:
+  notify:
+    name: Trigger Weft Agent Rebuild
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch codebuff-updated event to weft
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.WEFT_DISPATCH_TOKEN }}
+          repository: reillyse/weft
+          event-type: codebuff-updated
+          client-payload: '{"sha": "${{ github.sha }}", "ref": "${{ github.ref }}", "message": "${{ github.event.head_commit.message }}"}'
