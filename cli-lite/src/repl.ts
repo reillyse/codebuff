@@ -222,14 +222,6 @@ export async function startRepl(options: ReplOptions): Promise<void> {
           }
           spinner.stop()
           handleEvent(event, verbose)
-          if (!verbose) {
-            if (event.type === 'subagent_start') {
-              const modelSuffix = event.model ? ` (${event.model})` : ''
-              spinner.start(`Agent: ${event.displayName}${modelSuffix}...`)
-            } else if (event.type === 'tool_call') {
-              spinner.start(`Tool: ${event.toolName}...`)
-            }
-          }
         },
         handleStreamChunk: (chunk) => {
           if (typeof chunk === 'string') {
@@ -558,14 +550,6 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
         }
         spinner.stop()
         handleEvent(event, verbose)
-        if (!verbose) {
-          if (event.type === 'subagent_start') {
-            const modelSuffix = event.model ? ` (${event.model})` : ''
-            spinner.start(`Agent: ${event.displayName}${modelSuffix}...`)
-          } else if (event.type === 'tool_call') {
-            spinner.start(`Tool: ${event.toolName}...`)
-          }
-        }
       },
       handleStreamChunk: (chunk) => {
         if (typeof chunk === 'string') {
