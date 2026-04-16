@@ -84,6 +84,7 @@ const appendToLog = (entry: string): void => {
     mkdirSync(dir, { recursive: true })
     truncateIfNeeded(filePath)
     appendFileSync(filePath, entry)
+    truncateIfNeeded(filePath)
   } catch {
     // Best-effort logging — never crash on log failures
   }
