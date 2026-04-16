@@ -455,6 +455,7 @@ chmod +x entrypoint.sh
 | `CODEBUFF_CLAUDE_OAUTH_TOKEN` | No | - | Claude access token (from token service) |
 | `CODEBUFF_DEFAULT_MODE` | No | `MAX` | Agent mode: `DEFAULT`, `MAX`, or `PLAN` |
 | `CODEBUFF_VERBOSE` | No | `0` | Verbose output (disabled by default, set to `1` to enable) |
+| `CODEBUFF_PROMPT_LOG` | No | `0` | Prompt logging (disabled by default, set to `1` for `./debug/prompt-log.txt` or a custom path) |
 
 ---
 
