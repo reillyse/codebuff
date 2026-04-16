@@ -454,7 +454,7 @@ chmod +x entrypoint.sh
 | `CODEBUFF_API_KEY` | Yes | - | Your Codebuff API key |
 | `CODEBUFF_CLAUDE_OAUTH_TOKEN` | No | - | Claude access token (from token service) |
 | `CODEBUFF_DEFAULT_MODE` | No | `MAX` | Agent mode: `DEFAULT`, `MAX`, or `PLAN` |
-| `CODEBUFF_VERBOSE` | No | - | Enable verbose output |
+| `CODEBUFF_VERBOSE` | No | `0` | Verbose output (disabled by default, set to `1` to enable) |
 
 ---
 

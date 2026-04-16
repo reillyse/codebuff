@@ -875,8 +875,8 @@ Hippo Memory
 
 Environment Variables
   CODEBUFF_DEFAULT_MODE Set default agent mode (default, max, plan). Default: max
-  CODEBUFF_VERBOSE      Verbose output (default: enabled, set to '0' to disable)
-  CODEBUFF_PROMPT_LOG   Log prompts and responses to a file (rolling, 5MB limit)
+  CODEBUFF_VERBOSE      Verbose output (default: disabled, set to '1' to enable)
+  CODEBUFF_PROMPT_LOG   Log prompts and responses to a file (default: disabled, rolling, 5MB limit)
                         Set to '1' for ./debug/prompt-log.txt, or a custom path
 
 Usage

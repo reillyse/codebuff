@@ -46,10 +46,9 @@ describe('getPromptLogPath', () => {
     }
   })
 
-  test('returns default path when env is unset', () => {
+  test('returns null when env is unset', () => {
     delete process.env.CODEBUFF_PROMPT_LOG
-    const result = getPromptLogPath()
-    expect(result).toBe(path.resolve(process.cwd(), 'debug', 'prompt-log.txt'))
+    expect(getPromptLogPath()).toBeNull()
   })
 
   test('returns null when env is "0"', () => {
@@ -93,9 +92,9 @@ describe('isPromptLoggingEnabled', () => {
     }
   })
 
-  test('returns true by default', () => {
+  test('returns false by default', () => {
     delete process.env.CODEBUFF_PROMPT_LOG
-    expect(isPromptLoggingEnabled()).toBe(true)
+    expect(isPromptLoggingEnabled()).toBe(false)
   })
 
   test('returns false when disabled', () => {

@@ -28,16 +28,16 @@ export interface LogResponseParams {
 
 /**
  * Resolve the log file path from the CODEBUFF_PROMPT_LOG env var.
- * Logging is ON by default (writes to <projectRoot>/debug/prompt-log.txt).
+ * Logging is OFF by default.
  *
- *  - unset / '1' / 'true' → <projectRoot>/debug/prompt-log.txt
- *  - '0' / 'false'         → null (disabled)
+ *  - unset / '0' / 'false' → null (disabled)
+ *  - '1' / 'true'          → <projectRoot>/debug/prompt-log.txt
  *  - any other value        → treated as a custom file path
  */
 export const getPromptLogPath = (): string | null => {
   const val = process.env.CODEBUFF_PROMPT_LOG
-  if (val === '0' || val === 'false') return null
-  if (!val || val === '1' || val === 'true') {
+  if (!val || val === '0' || val === 'false') return null
+  if (val === '1' || val === 'true') {
     try {
       return path.join(getProjectRoot(), 'debug', 'prompt-log.txt')
     } catch {
