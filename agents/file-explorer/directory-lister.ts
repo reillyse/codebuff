@@ -1,3 +1,5 @@
+import { CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../constants'
 
 import type { SecretAgentDefinition } from '../types/secret-agent-definition'
@@ -30,7 +32,7 @@ const directoryLister: SecretAgentDefinition = {
   displayName: 'Directory Lister',
   spawnerPrompt:
     'Mechanically lists multiple directories and returns their contents',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: CURRENT_SONNET_MODEL,
   publisher,
   includeMessageHistory: false,
   outputMode: 'structured_output',

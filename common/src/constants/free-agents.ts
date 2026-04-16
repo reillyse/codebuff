@@ -1,6 +1,6 @@
 import { parseAgentId } from '../util/agent-id-parsing'
 
-import type { CostMode } from './model-config'
+import { CURRENT_GROK_MODEL, type CostMode } from './model-config'
 
 /**
  * The cost mode that indicates FREE mode.
@@ -22,15 +22,15 @@ export const FREE_MODE_AGENT_MODELS: Record<string, Set<string>> = {
 
   // File exploration agents
   'file-picker': new Set(['google/gemini-2.5-flash-lite']),
-  'file-picker-max': new Set(['x-ai/grok-4.1-fast']),
-  'file-lister': new Set(['x-ai/grok-4.1-fast']),
+  'file-picker-max': new Set([CURRENT_GROK_MODEL]),
+  'file-lister': new Set([CURRENT_GROK_MODEL]),
 
   // Research agents
-  'researcher-web': new Set(['x-ai/grok-4.1-fast']),
-  'researcher-docs': new Set(['x-ai/grok-4.1-fast']),
+  'researcher-web': new Set([CURRENT_GROK_MODEL]),
+  'researcher-docs': new Set([CURRENT_GROK_MODEL]),
 
   // Command execution
-  'commander-lite': new Set(['x-ai/grok-4.1-fast']),
+  'commander-lite': new Set([CURRENT_GROK_MODEL]),
 
   // Editor for free mode
   'editor-lite': new Set(['minimax/minimax-m2.5']),

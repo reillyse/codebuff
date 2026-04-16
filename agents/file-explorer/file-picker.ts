@@ -1,3 +1,4 @@
+import { CURRENT_GROK_MODEL } from '@codebuff/common/constants/model-config'
 
 import { publisher } from '../constants'
 import {
@@ -13,7 +14,7 @@ export const createFilePicker = (
   mode: FilePickerMode,
 ): Omit<SecretAgentDefinition, 'id'> => {
   const isMax = mode === 'max'
-  const model = isMax ? 'x-ai/grok-4.1-fast' : 'google/gemini-2.5-flash-lite'
+  const model = isMax ? CURRENT_GROK_MODEL : 'google/gemini-2.5-flash-lite'
 
   return {
     displayName: 'Fletcher the File Fetcher',

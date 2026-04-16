@@ -91,6 +91,18 @@ export const models = {
   ...finetunedVertexModels,
 } as const
 
+/** The current Opus model version used by agents. Update this single constant when upgrading. */
+export const CURRENT_OPUS_MODEL = 'anthropic/claude-opus-4.7' as const
+
+/** The current Sonnet model version used by agents. Update this single constant when upgrading. */
+export const CURRENT_SONNET_MODEL = 'anthropic/claude-sonnet-4.6' as const
+
+/** The current GPT-5 model version used by agents. Update this single constant when upgrading. */
+export const CURRENT_GPT5_MODEL = 'openai/gpt-5.1' as const
+
+/** The current Grok model version used by agents. Update this single constant when upgrading. */
+export const CURRENT_GROK_MODEL = 'x-ai/grok-4.1-fast' as const
+
 export const shortModelNames = {
   'gemini-2.5-pro': models.openrouter_gemini2_5_pro_preview,
   'flash-2.5': models.openrouter_gemini2_5_flash,

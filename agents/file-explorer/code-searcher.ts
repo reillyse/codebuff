@@ -1,3 +1,5 @@
+import { CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../constants'
 
 import type { SecretAgentDefinition } from '../types/secret-agent-definition'
@@ -50,7 +52,7 @@ const codeSearcher: SecretAgentDefinition = {
   displayName: 'Code Searcher',
   spawnerPrompt:
     'Mechanically runs multiple code search queries (using ripgrep line-oriented search) and returns up to 250 results across all source files, showing each line that matches the search pattern. Excludes git-ignored files.',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: CURRENT_SONNET_MODEL,
   publisher,
   includeMessageHistory: false,
   toolNames: ['code_search', 'set_output'],

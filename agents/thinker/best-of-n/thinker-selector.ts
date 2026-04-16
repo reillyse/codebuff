@@ -1,3 +1,5 @@
+import { CURRENT_OPUS_MODEL, CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../../constants'
 import { type SecretAgentDefinition } from '../../types/secret-agent-definition'
 
@@ -9,8 +11,8 @@ export function createThinkerSelector(
   return {
     publisher,
     model: isOpus
-      ? 'anthropic/claude-opus-4.6'
-      : 'anthropic/claude-sonnet-4.5',
+      ? CURRENT_OPUS_MODEL
+      : CURRENT_SONNET_MODEL,
     ...(isOpus && {
       providerOptions: {
         only: ['amazon-bedrock'],

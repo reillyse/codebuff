@@ -1,3 +1,5 @@
+import { CURRENT_OPUS_MODEL, CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../../constants'
 import {
   PLACEHOLDER,
@@ -14,9 +16,9 @@ export const createBestOfNSelector2 = (options: {
   return {
     publisher,
     model: isSonnet
-      ? 'anthropic/claude-sonnet-4.5'
+      ? CURRENT_SONNET_MODEL
       : isOpus
-        ? 'anthropic/claude-opus-4.6'
+        ? CURRENT_OPUS_MODEL
         : 'openai/gpt-5.2',
     ...(isGpt5 && {
       reasoningOptions: {

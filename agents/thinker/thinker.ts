@@ -1,3 +1,5 @@
+import { CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../constants'
 
 import type { SecretAgentDefinition } from '../types/secret-agent-definition'
@@ -5,7 +7,7 @@ import type { SecretAgentDefinition } from '../types/secret-agent-definition'
 const definition: SecretAgentDefinition = {
   id: 'thinker',
   publisher,
-  model: 'anthropic/claude-opus-4.6',
+  model: CURRENT_OPUS_MODEL,
   providerOptions: {
     only: ['amazon-bedrock'],
   },

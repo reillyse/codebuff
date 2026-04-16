@@ -1,10 +1,11 @@
+import { CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+import type { Model } from '@codebuff/common/old-constants'
+
 import { publisher } from '../constants'
 import {
   PLACEHOLDER,
   type SecretAgentDefinition,
 } from '../types/secret-agent-definition'
-
-import type { Model } from '@codebuff/common/old-constants'
 
 export const createReviewer = (
   model: Model,
@@ -64,7 +65,7 @@ Be extremely concise.`,
 const definition: SecretAgentDefinition = {
   id: 'code-reviewer',
   publisher,
-  ...createReviewer('anthropic/claude-opus-4.6'),
+  ...createReviewer(CURRENT_OPUS_MODEL),
   providerOptions: {
     only: ['amazon-bedrock'],
   },

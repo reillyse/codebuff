@@ -1,3 +1,4 @@
+import { CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
 
 import { publisher } from '../constants'
 
@@ -33,7 +34,7 @@ const globMatcher: SecretAgentDefinition = {
   displayName: 'Glob Matcher',
   spawnerPrompt:
     'Mechanically runs multiple glob pattern matches and returns all matching files',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: CURRENT_SONNET_MODEL,
   publisher,
   outputMode: 'structured_output',
   includeMessageHistory: false,

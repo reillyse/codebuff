@@ -1,3 +1,5 @@
+import { CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../../constants'
 
 import type { AgentStepContext, ToolCall } from '../../types/agent-definition'
@@ -11,7 +13,7 @@ import type { SecretAgentDefinition } from '../../types/secret-agent-definition'
 export function createMultiPromptEditor(): Omit<SecretAgentDefinition, 'id'> {
   return {
     publisher,
-    model: 'anthropic/claude-opus-4.6',
+    model: CURRENT_OPUS_MODEL,
     providerOptions: {
       only: ['amazon-bedrock'],
     },

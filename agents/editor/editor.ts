@@ -1,3 +1,4 @@
+import { CURRENT_GPT5_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
 
 import { publisher } from '../constants'
 
@@ -11,10 +12,10 @@ export const createCodeEditor = (options: {
     publisher,
     model:
       options.model === 'gpt-5'
-        ? 'openai/gpt-5.1'
+        ? CURRENT_GPT5_MODEL
         : options.model === 'minimax'
           ? 'minimax/minimax-m2.5'
-          : 'anthropic/claude-opus-4.6',
+          : CURRENT_OPUS_MODEL,
     ...(options.model === 'opus' && {
       providerOptions: {
         only: ['amazon-bedrock'],

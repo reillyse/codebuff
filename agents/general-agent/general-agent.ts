@@ -1,3 +1,4 @@
+import { CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
 import { buildArray } from '@codebuff/common/util/array'
 
 import { publisher } from '../constants'
@@ -12,7 +13,7 @@ export const createGeneralAgent = (options: {
 
   return {
     publisher,
-    model: isGpt5 ? 'openai/gpt-5.2' : 'anthropic/claude-opus-4.6',
+    model: isGpt5 ? 'openai/gpt-5.2' : CURRENT_OPUS_MODEL,
     ...(!isGpt5 && {
       providerOptions: {
         only: ['amazon-bedrock'],

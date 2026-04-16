@@ -1,3 +1,4 @@
+import { CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
 import { buildArray } from '@codebuff/common/util/array'
 
 import { publisher } from '../constants'
@@ -28,7 +29,7 @@ export function createBase2(
 
   return {
     publisher,
-    model: isFree ? 'minimax/minimax-m2.5' : 'anthropic/claude-opus-4.6',
+    model: isFree ? 'minimax/minimax-m2.5' : CURRENT_OPUS_MODEL,
     providerOptions: isFree ? {
       only: ['inceptron/fp8'],
       order: ['inceptron/fp8'],

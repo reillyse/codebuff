@@ -1,3 +1,5 @@
+import { CURRENT_GPT5_MODEL, CURRENT_OPUS_MODEL, CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../../constants'
 
 import type { SecretAgentDefinition } from '../../types/secret-agent-definition'
@@ -14,12 +16,12 @@ export const createBestOfNImplementor = (options: {
   return {
     publisher,
     model: isSonnet
-      ? 'anthropic/claude-sonnet-4.5'
+      ? CURRENT_SONNET_MODEL
       : isOpus
-        ? 'anthropic/claude-opus-4.6'
+        ? CURRENT_OPUS_MODEL
         : isGemini
-          ? 'google/gemini-3-pro-preview'
-          : 'openai/gpt-5.1',
+          ? 'google/gemini-3.1-pro-preview'
+          : CURRENT_GPT5_MODEL,
     ...(isOpus && {
       providerOptions: {
         only: ['amazon-bedrock'],

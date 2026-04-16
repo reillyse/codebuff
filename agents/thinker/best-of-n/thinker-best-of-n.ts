@@ -1,3 +1,5 @@
+import { CURRENT_GPT5_MODEL, CURRENT_OPUS_MODEL, CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../../constants'
 
 import type {
@@ -16,10 +18,10 @@ export function createThinkerBestOfN(
   return {
     publisher,
     model: isGpt5
-      ? 'openai/gpt-5.1'
+      ? CURRENT_GPT5_MODEL
       : isOpus
-        ? 'anthropic/claude-opus-4.6'
-        : 'anthropic/claude-sonnet-4.5',
+        ? CURRENT_OPUS_MODEL
+        : CURRENT_SONNET_MODEL,
     ...(isOpus && {
       providerOptions: {
         only: ['amazon-bedrock'],

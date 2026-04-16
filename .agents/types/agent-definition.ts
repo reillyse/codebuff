@@ -377,13 +377,16 @@ export type ModelName =
 
   // Anthropic
   | 'anthropic/claude-sonnet-4.5'
+  | 'anthropic/claude-sonnet-4.6'
   | 'anthropic/claude-opus-4.1'
   | 'anthropic/claude-opus-4.6'
+  | 'anthropic/claude-opus-4.7'
 
   // Gemini
   | 'google/gemini-2.5-pro'
   | 'google/gemini-2.5-flash'
   | 'google/gemini-2.5-flash-lite'
+  | 'google/gemini-3.1-pro-preview'
   | 'google/gemini-2.5-flash-preview-09-2025'
   | 'google/gemini-2.5-flash-lite-preview-09-2025'
 

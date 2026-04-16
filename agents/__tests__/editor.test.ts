@@ -1,5 +1,7 @@
 import { describe, test, expect } from 'bun:test'
 
+import { CURRENT_GPT5_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+
 import editor, { createCodeEditor } from '../editor/editor'
 
 import type { AgentState, ToolCall } from '../types/agent-definition'
@@ -28,7 +30,7 @@ describe('editor agent', () => {
     })
 
     test('uses opus model by default', () => {
-      expect(editor.model).toBe('anthropic/claude-opus-4.6')
+      expect(editor.model).toBe(CURRENT_OPUS_MODEL)
     })
 
     test('has output mode set to structured_output', () => {
@@ -54,12 +56,12 @@ describe('editor agent', () => {
   describe('createCodeEditor', () => {
     test('creates opus editor by default', () => {
       const opusEditor = createCodeEditor({ model: 'opus' })
-      expect(opusEditor.model).toBe('anthropic/claude-opus-4.6')
+      expect(opusEditor.model).toBe(CURRENT_OPUS_MODEL)
     })
 
     test('creates gpt-5 editor', () => {
       const gpt5Editor = createCodeEditor({ model: 'gpt-5' })
-      expect(gpt5Editor.model).toBe('openai/gpt-5.1')
+      expect(gpt5Editor.model).toBe(CURRENT_GPT5_MODEL)
     })
 
     test('creates minimax editor', () => {

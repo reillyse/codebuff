@@ -1,5 +1,6 @@
-
 import { describe, test, expect } from 'bun:test'
+
+import { CURRENT_GROK_MODEL } from '@codebuff/common/constants/model-config'
 
 import filePicker, { createFilePicker } from '../file-explorer/file-picker'
 
@@ -82,7 +83,7 @@ describe('file-picker agent', () => {
   describe('createFilePicker - max mode', () => {
     test('uses grok model', () => {
       const maxPicker = createFilePicker('max')
-      expect(maxPicker.model).toBe('x-ai/grok-4.1-fast')
+      expect(maxPicker.model).toBe(CURRENT_GROK_MODEL)
     })
 
     test('spawns two file-listers in parallel', () => {

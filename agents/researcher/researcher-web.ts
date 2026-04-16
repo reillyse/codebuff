@@ -1,3 +1,5 @@
+import { CURRENT_GROK_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../constants'
 
 import type { ToolCall } from '../types/agent-definition'
@@ -6,7 +8,7 @@ import type { SecretAgentDefinition } from '../types/secret-agent-definition'
 const definition: SecretAgentDefinition = {
   id: 'researcher-web',
   publisher,
-  model: 'x-ai/grok-4.1-fast',
+  model: CURRENT_GROK_MODEL,
   displayName: 'Weeb',
   spawnerPrompt: `Browses the web to find relevant information.`,
   inputSchema: {
