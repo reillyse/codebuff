@@ -387,11 +387,12 @@ export type ModelName =
   | 'google/gemini-2.5-flash'
   | 'google/gemini-2.5-flash-lite'
   | 'google/gemini-3.1-pro-preview'
+  | 'google/gemini-3.1-flash-lite-preview'
   | 'google/gemini-2.5-flash-preview-09-2025'
   | 'google/gemini-2.5-flash-lite-preview-09-2025'
 
   // X-AI
-  | 'x-ai/grok-4-07-09'
+  | 'x-ai/grok-4'
   | 'x-ai/grok-4-fast'
   | 'x-ai/grok-code-fast-1'
 

@@ -33,7 +33,7 @@ export type OpenAIModel = (typeof openaiModels)[keyof typeof openaiModels]
 export const openrouterModels = {
   openrouter_claude_sonnet_4_5: 'anthropic/claude-sonnet-4.5',
   openrouter_claude_sonnet_4: 'anthropic/claude-4-sonnet-20250522',
-  openrouter_claude_opus_4: 'anthropic/claude-opus-4.1',
+  openrouter_claude_opus_4: 'anthropic/claude-opus-4.7',
   openrouter_claude_3_5_haiku: 'anthropic/claude-3.5-haiku-20241022',
   openrouter_claude_3_5_sonnet: 'anthropic/claude-3.5-sonnet-20240620',
   openrouter_gpt4o: 'openai/gpt-4o-2024-11-20',
@@ -43,10 +43,11 @@ export const openrouterModels = {
   openrouter_gpt4_1_nano: 'openai/gpt-4.1-nano',
   openrouter_o3_mini: 'openai/o3-mini-2025-01-31',
   openrouter_gemini2_5_pro_preview: 'google/gemini-2.5-pro',
-  openrouter_gemini2_5_flash: 'google/gemini-2.5-flash',
+  // Migrated from gemini-2.5-flash (deprecated June 1, 2026)
+  openrouter_gemini2_5_flash: 'google/gemini-3.1-flash-lite-preview',
   openrouter_gemini2_5_flash_thinking:
     'google/gemini-2.5-flash-preview:thinking',
-  openrouter_grok_4: 'x-ai/grok-4-07-09',
+  openrouter_grok_4: 'x-ai/grok-4',
 } as const
 export type openrouterModel =
   (typeof openrouterModels)[keyof typeof openrouterModels]
@@ -105,7 +106,8 @@ export const CURRENT_GROK_MODEL = 'x-ai/grok-4.1-fast' as const
 
 export const shortModelNames = {
   'gemini-2.5-pro': models.openrouter_gemini2_5_pro_preview,
-  'flash-2.5': models.openrouter_gemini2_5_flash,
+  'flash-3.1': models.openrouter_gemini2_5_flash,
+  'flash-2.5': models.openrouter_gemini2_5_flash, // deprecated alias
   'opus-4': models.openrouter_claude_opus_4,
   'sonnet-4.5': models.openrouter_claude_sonnet_4_5,
   'sonnet-4': models.openrouter_claude_sonnet_4,
@@ -137,7 +139,7 @@ export const providerModelNames = {
 export type Model = (typeof models)[keyof typeof models] | (string & {})
 
 export const shouldCacheModels = [
-  'anthropic/claude-opus-4.1',
+  'anthropic/claude-opus-4.7',
   'anthropic/claude-sonnet-4',
   'anthropic/claude-opus-4',
   'anthropic/claude-3.7-sonnet',
