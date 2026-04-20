@@ -24,4 +24,4 @@ jobs:
           token: ${{ secrets.CODEBUFF_GITHUB_TOKEN }}
           repository: reillyse/weft
           event-type: codebuff-updated
-          client-payload: '{"sha": "${{ github.sha }}", "ref": "${{ github.ref }}", "message": "${{ github.event.head_commit.message }}"}'
+          client-payload: '{"sha": "${{ github.sha }}", "ref": "${{ github.ref }}", "message": ${{ toJSON(github.event.head_commit.message) }}}'
