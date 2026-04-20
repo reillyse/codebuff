@@ -211,6 +211,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   let running = false
   let abortController: AbortController | undefined
   let sessionId = generateHippoSessionId(currentMode)
+  let queuedMessage: string | undefined
 
   const runPrompt = async (prompt: string): Promise<void> => {
     if (!prompt.trim()) return
@@ -359,6 +360,27 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       progress.stop()
       running = false
       abortController = undefined
+
+    }
+
+    // Drain queued message (loop avoids recursive stack growth)
+    while (queuedMessage !== undefined) {
+      const queued = queuedMessage
+      queuedMessage = undefined
+      try {
+        const lines = queued.split('\n')
+        if (lines.length === 1) {
+          await handleSingleLine(lines[0])
+        } else {
+          const combined = queued.trim()
+          if (combined) {
+            await runPrompt(combined)
+          }
+          rl.prompt()
+        }
+      } catch {
+        rl.prompt()
+      }
     }
   }
 
@@ -380,6 +402,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       previousRun = undefined
       currentMode = DEFAULT_AGENT_MODE
       sessionId = generateHippoSessionId(currentMode)
+      queuedMessage = undefined
       rl.setPrompt(getModePrompt(currentMode))
       writeErr('Conversation cleared.\n\n')
       rl.prompt()
@@ -497,7 +520,16 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       return
     }
 
-    if (running) return
+    if (running) {
+      if (!line.trim() && queuedMessage === undefined) return
+      if (queuedMessage !== undefined) {
+        queuedMessage += '\n' + line
+      } else {
+        queuedMessage = line
+        writeErr('(queued)\n')
+      }
+      return
+    }
 
     lineBuffer.push(line)
 
@@ -536,6 +568,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
   rl.on('close', () => {
     if (debounceTimer !== undefined) clearTimeout(debounceTimer)
+    queuedMessage = undefined
     writeErr('\nGoodbye!\n')
     process.exit(0)
   })
@@ -552,6 +585,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     }
     if (running && abortController) {
       abortController.abort()
+      queuedMessage = undefined
       writeErr('\n(Cancelled)\n')
     } else {
       rl.close()

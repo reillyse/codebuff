@@ -172,7 +172,7 @@ describe('createAskUserHandler', () => {
     const handler = makeHandler(['1'])
     await handler(singleSelectInput)
 
-    const output = stderrSpy.mock.calls.map((c) => String(c[0])).join('')
+    const output = stderrSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')
     expect(output).toContain('? Which database?')
     expect(output).toContain('1) PostgreSQL - Relational DB')
     expect(output).toContain('2) MongoDB - Document DB')
