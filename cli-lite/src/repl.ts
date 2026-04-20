@@ -24,6 +24,7 @@ import {
 } from './output'
 import { logPrompt, logResponse, isPromptLoggingEnabled, getPromptLogPath } from './prompt-logger'
 import { initializeAgentRegistry, getAgentDefinitions, getAgentSummary, getAgentList, getAgentById, getAgentSource } from './agent-registry'
+import { createAskUserHandler } from './ask-user'
 import { createMarkdownStream } from './markdown'
 import { writeOut, writeErr } from './tty'
 
@@ -81,6 +82,27 @@ function createSpinner() {
   }
 }
 
+function createProgressTimer(intervalMs = 20_000) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let dotsPrinted = false
+  function schedule() {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      writeErr('.')
+      dotsPrinted = true
+      schedule()
+    }, intervalMs)
+  }
+  return {
+    start() { if (!timer) schedule() },
+    reset() { if (timer) schedule() },
+    stop() {
+      if (timer) { clearTimeout(timer); timer = undefined }
+      if (dotsPrinted) { writeErr('\n'); dotsPrinted = false }
+    },
+  }
+}
+
 async function checkClaudeSubscription(): Promise<{ configured: boolean; valid: boolean }> {
   const credentials = getClaudeOAuthCredentials()
   if (!credentials) return { configured: false, valid: true }
@@ -130,7 +152,6 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const agentDefinitions = getAgentDefinitions()
 
   const termSize = getTerminalSize()
-  const client = new CodebuffClient({ apiKey, cwd, agentDefinitions, terminalColumns: termSize.columns, terminalRows: termSize.rows })
 
   let currentMode: AgentMode = DEFAULT_AGENT_MODE
 
@@ -168,6 +189,24 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     terminal: process.stdin.isTTY ?? false,
   })
 
+  let askUserLineResolver: ((line: string) => void) | undefined
+
+  const askUserReadLine = (prompt: string): Promise<string> => {
+    return new Promise((resolve) => {
+      askUserLineResolver = resolve
+      rl.setPrompt(prompt)
+      rl.prompt()
+    })
+  }
+
+  const client = new CodebuffClient({
+    apiKey, cwd, agentDefinitions,
+    terminalColumns: termSize.columns, terminalRows: termSize.rows,
+    overrideTools: {
+      ask_user: createAskUserHandler(askUserReadLine),
+    },
+  })
+
   let previousRun: RunState | undefined
   let running = false
   let abortController: AbortController | undefined
@@ -194,6 +233,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
     const spinner = createSpinner()
     spinner.start()
+    const progress = createProgressTimer()
+    progress.start()
     const md = createMarkdownStream()
 
     try {
@@ -221,15 +262,18 @@ export async function startRepl(options: ReplOptions): Promise<void> {
             lastTotalCost = event.totalCost
           }
           spinner.stop()
+          progress.reset()
           handleEvent(event, verbose)
         },
         handleStreamChunk: (chunk) => {
           if (typeof chunk === 'string') {
             spinner.stop()
+            progress.reset()
             streamedChunks.push(chunk)
             const formatted = md.write(chunk)
             if (formatted) writeOut(formatted)
           } else if (chunk.type === 'subagent_chunk') {
+            progress.reset()
             if (verbose) {
               spinner.stop()
               writeErr(chunk.chunk)
@@ -239,6 +283,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       })
 
       spinner.stop()
+      progress.stop()
       const remaining = md.flush()
       if (remaining) writeOut(remaining)
       previousRun = result
@@ -273,6 +318,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       })
     } catch (error) {
       spinner.stop()
+      progress.stop()
       const elapsedMs = Date.now() - startTime
 
       if (error instanceof Error && error.name === 'AbortError') {
@@ -310,6 +356,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       }
     } finally {
       spinner.stop()
+      progress.stop()
       running = false
       abortController = undefined
     }
@@ -442,6 +489,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   rl.prompt()
 
   rl.on('line', (line: string) => {
+    if (askUserLineResolver) {
+      const resolver = askUserLineResolver
+      askUserLineResolver = undefined
+      rl.setPrompt(getModePrompt(currentMode))
+      resolver(line)
+      return
+    }
+
     if (running) return
 
     lineBuffer.push(line)
@@ -488,6 +543,13 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   rl.on('SIGINT', () => {
     if (debounceTimer !== undefined) clearTimeout(debounceTimer)
     lineBuffer = []
+    if (askUserLineResolver) {
+      const resolver = askUserLineResolver
+      askUserLineResolver = undefined
+      rl.setPrompt(getModePrompt(currentMode))
+      resolver('')
+      return
+    }
     if (running && abortController) {
       abortController.abort()
       writeErr('\n(Cancelled)\n')
@@ -510,7 +572,34 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
   }
 
   const { columns, rows } = getTerminalSize()
-  const client = new CodebuffClient({ apiKey, cwd, agentDefinitions, terminalColumns: columns, terminalRows: rows })
+
+  const runOnceReadLine = (prompt: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const tempRl = createInterface({
+        input: process.stdin,
+        output: process.stderr,
+        terminal: process.stdin.isTTY ?? false,
+      })
+      const onSigint = () => {
+        tempRl.close()
+        resolve('')
+      }
+      process.once('SIGINT', onSigint)
+      tempRl.question(prompt, (answer) => {
+        process.off('SIGINT', onSigint)
+        tempRl.close()
+        resolve(answer)
+      })
+    })
+  }
+
+  const client = new CodebuffClient({
+    apiKey, cwd, agentDefinitions,
+    terminalColumns: columns, terminalRows: rows,
+    overrideTools: {
+      ask_user: createAskUserHandler(runOnceReadLine),
+    },
+  })
   const abortController = new AbortController()
   const sessionId = generateHippoSessionId(DEFAULT_AGENT_MODE)
   const startTime = Date.now()
@@ -519,6 +608,8 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
 
   const spinner = createSpinner()
   spinner.start()
+  const progress = createProgressTimer()
+  progress.start()
   const md = createMarkdownStream()
 
   const onSigint = () => {
@@ -549,15 +640,18 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
           lastTotalCost = event.totalCost
         }
         spinner.stop()
+        progress.reset()
         handleEvent(event, verbose)
       },
       handleStreamChunk: (chunk) => {
         if (typeof chunk === 'string') {
           spinner.stop()
+          progress.reset()
           streamedChunks.push(chunk)
           const formatted = md.write(chunk)
           if (formatted) writeOut(formatted)
         } else if (chunk.type === 'subagent_chunk') {
+          progress.reset()
           if (verbose) {
             spinner.stop()
             writeErr(chunk.chunk)
@@ -567,6 +661,7 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
     })
 
     spinner.stop()
+    progress.stop()
     const remaining = md.flush()
     if (remaining) writeOut(remaining)
     writeOut('\n')
@@ -600,6 +695,7 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
     }
   } catch (error) {
     spinner.stop()
+    progress.stop()
     const elapsedMs = Date.now() - startTime
 
     if (error instanceof Error && error.name === 'AbortError') {
@@ -640,6 +736,7 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
     process.exit(1)
   } finally {
     spinner.stop()
+    progress.stop()
     process.off('SIGINT', onSigint)
   }
 }
