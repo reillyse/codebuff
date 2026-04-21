@@ -49,9 +49,9 @@ function getDefaultMode(): AgentMode {
   const envMode = process.env.CODEBUFF_DEFAULT_MODE?.toUpperCase()
   if (envMode === 'DEFAULT' || envMode === 'MAX' || envMode === 'PLAN') return envMode
   if (process.env.CODEBUFF_DEFAULT_MODE) {
-    writeErr(`Warning: Unknown CODEBUFF_DEFAULT_MODE '${process.env.CODEBUFF_DEFAULT_MODE}'. Using MAX. Valid: default, max, plan\n`)
+    writeErr(`Warning: Unknown CODEBUFF_DEFAULT_MODE '${process.env.CODEBUFF_DEFAULT_MODE}'. Using DEFAULT. Valid: default, max, plan\n`)
   }
-  return 'MAX'
+  return 'DEFAULT'
 }
 
 export const DEFAULT_AGENT_MODE: AgentMode = getDefaultMode()
@@ -989,7 +989,7 @@ Hippo Memory
   /hippo:retry       Test hippo connection
 
 Environment Variables
-  CODEBUFF_DEFAULT_MODE Set default agent mode (default, max, plan). Default: max
+  CODEBUFF_DEFAULT_MODE Set default agent mode (default, max, plan). Default: default
   CODEBUFF_VERBOSE      Verbose output (default: disabled, set to '1' to enable)
   CODEBUFF_PROMPT_LOG   Log prompts and responses to a file (default: disabled, rolling, 5MB limit)
                         Set to '1' for ./debug/prompt-log.txt, or a custom path

@@ -24,8 +24,8 @@ describe('repl', () => {
   })
 
   describe('DEFAULT_AGENT_MODE', () => {
-    test('defaults to MAX when env var is not set', () => {
-      expect(DEFAULT_AGENT_MODE).toBe('MAX')
+    test('defaults to DEFAULT when env var is not set', () => {
+      expect(DEFAULT_AGENT_MODE).toBe('DEFAULT')
     })
   })
 
@@ -51,9 +51,9 @@ describe('repl', () => {
       return { mode: stdout.trim(), stderr }
     }
 
-    test('no env var → MAX', async () => {
+    test('no env var → DEFAULT', async () => {
       const { mode } = await evalDefaultMode()
-      expect(mode).toBe('MAX')
+      expect(mode).toBe('DEFAULT')
     }, 15_000)
 
     test('default → DEFAULT', async () => {
@@ -81,9 +81,9 @@ describe('repl', () => {
       expect(mode).toBe('PLAN')
     }, 15_000)
 
-    test('invalid value → MAX with warning', async () => {
+    test('invalid value → DEFAULT with warning', async () => {
       const { mode, stderr } = await evalDefaultMode('invalid')
-      expect(mode).toBe('MAX')
+      expect(mode).toBe('DEFAULT')
       expect(stderr).toContain('Warning')
       expect(stderr).toContain('invalid')
     }, 15_000)
