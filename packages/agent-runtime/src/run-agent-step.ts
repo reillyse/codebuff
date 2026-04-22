@@ -22,6 +22,10 @@ import { getToolSet } from './tools/prompts'
 import { processStream } from './tools/stream-parser'
 import { getAgentOutput } from './util/agent-output'
 import {
+  getDefaultNormalizeMode,
+  normalizeConversation,
+} from './util/normalize-conversation'
+import {
   createCacheDebugSnapshot,
   enrichCacheDebugSnapshotWithProviderRequest,
   enrichCacheDebugSnapshotWithUsage,
@@ -347,6 +351,16 @@ export const runAgentStep = async (
     },
     `Start agent ${agentType} step ${iterationNum} (${userInputId}${prompt ? ` - Prompt: ${prompt.slice(0, 20)}` : ''})`,
   )
+
+  // Normalize conversation immediately before the model call. This is the
+  // model-call chokepoint: we guarantee the LLM receives a valid Anthropic-
+  // shape payload regardless of how messageHistory was assembled upstream.
+  agentState.messageHistory = normalizeConversation(agentState.messageHistory, {
+    mode: getDefaultNormalizeMode(),
+    agentId: agentTemplate.id,
+    stepIndex: iterationNum,
+    logger,
+  })
 
   // Handle n parameter for generating multiple responses
   if (params.n !== undefined) {
