@@ -5,6 +5,12 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./sparrow/telemetry": {
+      "bun": "./src/sparrow/telemetry/index.ts",
+      "import": "./src/sparrow/telemetry/index.ts",
+      "types": "./src/sparrow/telemetry/index.ts",
+      "default": "./src/sparrow/telemetry/index.ts"
+    },
     "./*": {
       "bun": "./src/*.ts",
       "import": "./src/*.ts",
@@ -23,6 +29,12 @@
   "dependencies": {
     "@auth/drizzle-adapter": "^1.8.0",
     "@modelcontextprotocol/sdk": "^1.18.2",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/context-async-hooks": "^2.7.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
+    "@opentelemetry/resources": "^2.7.0",
+    "@opentelemetry/sdk-trace-base": "^2.7.0",
+    "@opentelemetry/semantic-conventions": "^1.40.0",
     "@types/pg": "^8.11.10",
     "@types/readable-stream": "^4.0.18",
     "@types/seedrandom": "^3.0.8",
