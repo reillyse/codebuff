@@ -537,7 +537,8 @@ async function runOnce({
       error && typeof error === 'object' && 'responseBody' in error
         ? (error as { responseBody: unknown }).responseBody
         : undefined
-    const { errorCode, message: parsedMessage } = parseApiErrorResponseBody(responseBody)
+    const { errorCode, message: parsedMessage } =
+      parseApiErrorResponseBody(responseBody)
     if (parsedMessage) {
       errorMessage = parsedMessage
     }

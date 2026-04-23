@@ -1,3 +1,5 @@
+// SPARROW: telemetry — open tool.call spans around tool dispatch
+import { recordToolCall } from '@codebuff/common/sparrow/telemetry'
 import { endsAgentStepParam, toolNames } from '@codebuff/common/tools/constants'
 import { toolParams } from '@codebuff/common/tools/list'
 import { generateCompactId } from '@codebuff/common/util/string'
@@ -44,6 +46,23 @@ export type CustomToolCall = {
   toolName: string
   input: Record<string, unknown>
 } & Omit<ToolCallPart, 'type'>
+
+// SPARROW: Extract the agent_type(s) from a spawn_agents tool input so the
+// tool.call span can link the parent tool invocation to its child agent runs.
+// Returns a comma-separated list when multiple agents are spawned, or undefined
+// if the input doesn't look like a spawn_agents call.
+function sparrowChildAgentIdsFromSpawn(
+  toolName: string,
+  input: Record<string, unknown>,
+): string | undefined {
+  if (toolName !== 'spawn_agents') return undefined
+  const agents = (input as { agents?: Array<{ agent_type?: unknown }> }).agents
+  if (!Array.isArray(agents) || agents.length === 0) return undefined
+  const types = agents
+    .map((a) => a?.agent_type)
+    .filter((t): t is string => typeof t === 'string' && t.length > 0)
+  return types.length > 0 ? types.join(',') : undefined
+}
 
 export type ToolCallError = {
   toolName?: string
@@ -316,6 +335,16 @@ export async function executeToolCall<T extends ToolName>(
     toolCallsToAddToMessageHistory.push(finalToolCall)
   }
 
+  // SPARROW: open tool.call span around the handler invocation. For
+  // spawn_agents calls, record the list of agent_type values as child linkage
+  // so the span tree connects the parent tool call to the spawned agent.run
+  // spans. `recordToolCall.finish` is idempotent so success/failure paths
+  // can each call it without double-finishing.
+  const sparrowToolSpan = recordToolCall({
+    toolName,
+    input: effectiveInput,
+    childAgentId: sparrowChildAgentIdsFromSpawn(toolName, effectiveInput),
+  })
 
   const toolResultPromise = handler({
     ...params,
@@ -338,36 +367,47 @@ export async function executeToolCall<T extends ToolName>(
     }) as any,
   })
 
-  return toolResultPromise.then(async ({ output, creditsUsed }) => {
-    const toolResult: ToolMessage = {
-      role: 'tool',
-      toolName,
-      toolCallId: toolCall.toolCallId,
-      content: output,
-    }
+  return toolResultPromise.then(
+    async ({ output, creditsUsed }) => {
+      const toolResult: ToolMessage = {
+        role: 'tool',
+        toolName,
+        toolCallId: toolCall.toolCallId,
+        content: output,
+      }
 
-    onResponseChunk({
-      type: 'tool_result',
-      toolCallId: toolResult.toolCallId,
-      toolName: toolResult.toolName,
-      output: toolResult.content,
-    })
+      onResponseChunk({
+        type: 'tool_result',
+        toolCallId: toolResult.toolCallId,
+        toolName: toolResult.toolName,
+        output: toolResult.content,
+      })
 
-    toolResults.push(toolResult)
+      toolResults.push(toolResult)
 
-    if (!excludeToolFromMessageHistory) {
-      toolResultsToAddToMessageHistory.push(toolResult)
-    }
+      if (!excludeToolFromMessageHistory) {
+        toolResultsToAddToMessageHistory.push(toolResult)
+      }
 
-    // After tool completes, resolve any pending creditsUsed promise
-    if (creditsUsed) {
-      onCostCalculated(creditsUsed)
-      logger.debug(
-        { credits: creditsUsed, totalCredits: agentState.creditsUsed },
-        `Added ${creditsUsed} credits from ${toolName} to agent state`,
-      )
-    }
-  })
+      // After tool completes, resolve any pending creditsUsed promise
+      if (creditsUsed) {
+        onCostCalculated(creditsUsed)
+        logger.debug(
+          { credits: creditsUsed, totalCredits: agentState.creditsUsed },
+          `Added ${creditsUsed} credits from ${toolName} to agent state`,
+        )
+      }
+
+      // SPARROW: finish tool.call span on success with the tool's output.
+      sparrowToolSpan.finish({ success: true, output })
+    },
+    (error) => {
+      // SPARROW: finish tool.call span on failure. We re-throw to preserve
+      // existing error semantics for callers awaiting this promise.
+      sparrowToolSpan.finish({ success: false, error })
+      throw error
+    },
+  )
 }
 
 export function parseRawCustomToolCall(params: {
@@ -523,6 +563,14 @@ export async function executeCustomToolCall(
     toolCallsToAddToMessageHistory.push(toolCall)
   }
 
+  // SPARROW: open tool.call span around the custom tool dispatch. The span
+  // is opened here (after permission/validation checks) and finished in both
+  // the success path and any error rejection downstream.
+  const sparrowToolSpan = recordToolCall({
+    toolName,
+    input: toolCall.input,
+  })
+
   return previousToolCallFinished
     .then(async () => {
       if (params.signal.aborted) {
@@ -542,35 +590,49 @@ export async function executeCustomToolCall(
       })
       return clientToolResult.output satisfies ToolResultOutput[]
     })
-    .then((result) => {
-      if (!result) {
+    .then(
+      (result) => {
+        if (!result) {
+          // SPARROW: aborted/no-op path — finish span as a successful no-op so
+          // we don't leave it dangling.
+          sparrowToolSpan.finish({ success: true, output: undefined })
+          return
+        }
+        const toolResult = {
+          role: 'tool',
+          toolName,
+          toolCallId: toolCall.toolCallId,
+          content: result,
+        } satisfies ToolMessage
+        logger.debug(
+          { input, toolResult },
+          `${toolName} custom tool call & result (${toolResult.toolCallId})`,
+        )
+        onResponseChunk({
+          type: 'tool_result',
+          toolName: toolResult.toolName,
+          toolCallId: toolResult.toolCallId,
+          output: toolResult.content,
+        })
+
+        toolResults.push(toolResult)
+
+        if (!excludeToolFromMessageHistory) {
+          toolResultsToAddToMessageHistory.push(toolResult)
+        }
+
+        // SPARROW: finish tool.call span on success with the tool's result.
+        sparrowToolSpan.finish({ success: true, output: result })
+
         return
-      }
-      const toolResult = {
-        role: 'tool',
-        toolName,
-        toolCallId: toolCall.toolCallId,
-        content: result,
-      } satisfies ToolMessage
-      logger.debug(
-        { input, toolResult },
-        `${toolName} custom tool call & result (${toolResult.toolCallId})`,
-      )
-      onResponseChunk({
-        type: 'tool_result',
-        toolName: toolResult.toolName,
-        toolCallId: toolResult.toolCallId,
-        output: toolResult.content,
-      })
-
-      toolResults.push(toolResult)
-
-      if (!excludeToolFromMessageHistory) {
-        toolResultsToAddToMessageHistory.push(toolResult)
-      }
-
-      return
-    })
+      },
+      (error) => {
+        // SPARROW: finish tool.call span on failure, then re-throw to preserve
+        // existing error semantics for callers awaiting this promise.
+        sparrowToolSpan.finish({ success: false, error })
+        throw error
+      },
+    )
 }
 
 /**

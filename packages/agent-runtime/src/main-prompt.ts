@@ -1,5 +1,7 @@
 import { trackEvent } from '@codebuff/common/analytics'
 import { AnalyticsEvent } from '@codebuff/common/constants/analytics-events'
+// SPARROW: telemetry — wrap each user turn in a root `prompt` span
+import { withPromptSpan } from '@codebuff/common/sparrow/telemetry'
 import { AgentTemplateTypes } from '@codebuff/common/types/session-state'
 
 import { loopAgentSteps } from './run-agent-step'
@@ -103,15 +105,16 @@ export async function mainPrompt(
 
     agentType = agentId
   } else {
-    agentType = (
-      {
-        ask: AgentTemplateTypes.ask,
-        free: AgentTemplateTypes.base_free,
-        normal: AgentTemplateTypes.base,
-        max: AgentTemplateTypes.base_max,
-        experimental: 'base2',
-      } satisfies Record<CostMode, AgentTemplateType>
-    )[costMode ?? 'normal'] ?? 'base2'
+    agentType =
+      (
+        {
+          ask: AgentTemplateTypes.ask,
+          free: AgentTemplateTypes.base_free,
+          normal: AgentTemplateTypes.base,
+          max: AgentTemplateTypes.base_max,
+          experimental: 'base2',
+        } satisfies Record<CostMode, AgentTemplateType>
+      )[costMode ?? 'normal'] ?? 'base2'
   }
 
   mainAgentState.agentType = agentType
@@ -124,19 +127,26 @@ export async function mainPrompt(
     throw new Error(`Agent template not found for type: ${agentType}`)
   }
 
-  const { agentState, output } = await loopAgentSteps({
-    ...params,
-    userInputId: promptId,
-    spawnParams: promptParams,
-    agentState: mainAgentState,
-    ancestorRunIds: [],
-    prompt,
-    content,
-    agentType,
-    fingerprintId,
-    fileContext,
-    costMode,
-  })
+  // SPARROW: root prompt span — auto-harvests git/project/linear context
+  const { agentState, output } = await withPromptSpan(
+    {
+      sessionId: (params as { clientSessionId?: string }).clientSessionId,
+    },
+    () =>
+      loopAgentSteps({
+        ...params,
+        userInputId: promptId,
+        spawnParams: promptParams,
+        agentState: mainAgentState,
+        ancestorRunIds: [],
+        prompt,
+        content,
+        agentType,
+        fingerprintId,
+        fileContext,
+        costMode,
+      }),
+  )
 
   logger.debug({ output }, 'Main prompt finished')
 

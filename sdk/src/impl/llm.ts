@@ -1,6 +1,14 @@
 import { AnalyticsEvent } from '@codebuff/common/constants/analytics-events'
 import { isFreeMode } from '@codebuff/common/constants/free-agents'
 import { models, PROFIT_MARGIN } from '@codebuff/common/old-constants'
+// SPARROW: telemetry — open gen_ai.chat spans around LLM dispatch
+import {
+  classifyLlmRoute,
+  recordLlmCall,
+  shouldCapturePrompts,
+  type LlmCallSpanHandle,
+  type RouteValue,
+} from '@codebuff/common/sparrow/telemetry'
 import { buildArray } from '@codebuff/common/util/array'
 import { normalizeProviderRequestBodyForCacheDebug } from '@codebuff/common/util/cache-debug'
 import { getErrorObject, promptAborted, promptSuccess } from '@codebuff/common/util/error'
@@ -199,6 +207,36 @@ function getModelProvider(model: LanguageModel): string {
   return model.provider
 }
 
+// SPARROW: Extract OpenRouter-style upstream USD cost from providerMetadata.
+// Returns undefined if no cost info present (e.g. OAuth / Claude direct).
+function extractUpstreamCostUsd(
+  providerMetadata: Record<string, unknown> | undefined,
+): number | undefined {
+  const cbMeta = (providerMetadata?.codebuff ?? {}) as {
+    usage?: OpenRouterUsageAccounting
+  }
+  if (!cbMeta.usage) return undefined
+  return (
+    (cbMeta.usage.cost ?? 0) +
+    (cbMeta.usage.costDetails?.upstreamInferenceCost ?? 0)
+  )
+}
+
+// SPARROW: Serialize CbMessage history for opt-in gen_ai.chat span events.
+// Truncates the serialized payload at 64 KiB to keep span events bounded.
+function serializeMessagesForSpan(messages: unknown): string {
+  try {
+    const serialized = JSON.stringify(messages)
+    if (!serialized) return ''
+    const MAX = 64 * 1024
+    return serialized.length > MAX
+      ? serialized.slice(0, MAX) + '\u2026[truncated]'
+      : serialized
+  } catch {
+    return ''
+  }
+}
+
 function emitCacheDebugProviderRequest(params: {
   callback?: (params: {
     provider: string
@@ -282,10 +320,16 @@ export async function* promptAiSdkStream(
     claudeOAuthRetried?: boolean
     chatGptOAuthRetried?: boolean
     onClaudeOAuthStatusChange?: (isActive: boolean) => void
+    // SPARROW: internal — existing span handle threaded through recursive
+    // fallback calls so the whole logical LLM call stays one span.
+    sparrowLlmHandle?: LlmCallSpanHandle
+    sparrowRouteAttempt?: number
   },
 ): ReturnType<PromptAiSdkStreamFn> {
   const {
     providerOptions: originalProviderOptions,
+    sparrowLlmHandle: incomingHandle,
+    sparrowRouteAttempt: incomingAttempt,
     ...streamParams
   } = params
 
@@ -293,6 +337,31 @@ export async function* promptAiSdkStream(
   const agentChunkMetadata =
     params.agentId != null ? { agentId: params.agentId } : undefined
 
+  // SPARROW: open a gen_ai.chat span for the *top-level* call only; recursive
+  // fallback calls inherit the handle and add route_attempt events on it.
+  const sparrowIsTopLevel = incomingHandle === undefined
+  const sparrowHandle: LlmCallSpanHandle =
+    incomingHandle ??
+    recordLlmCall({
+      system: 'ai-sdk',
+      requestModel: requestedModel,
+      routeAttempt: 1,
+    })
+  const sparrowAttempt = incomingAttempt ?? 1
+  // Opt-in content capture on the top-level call only.
+  if (sparrowIsTopLevel && shouldCapturePrompts()) {
+    try {
+      sparrowHandle.recordMessages(serializeMessagesForSpan(params.messages))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // SPARROW: wrap the rest of the body in try/finally so the top-level span is
+  // always ended exactly once — on success, thrown exception, or generator
+  // abandonment (caller calling .return()). `sparrowHandle.end()` is
+  // idempotent, so inner paths that already called `end(err)` are harmless.
+  try {
   if (params.signal.aborted) {
     logger.info(
       {
@@ -313,6 +382,13 @@ export async function* promptAiSdkStream(
   }
   const { model: aiSDKModel, isClaudeOAuth, isChatGptOAuth } =
     await getModelForRequest(modelParams)
+
+  // SPARROW: classify route for this attempt (may change across fallbacks).
+  const sparrowRoute: RouteValue = classifyLlmRoute({
+    isClaudeOAuth,
+    isChatGptOAuth,
+    viaCodebuffBackend: !isClaudeOAuth && !isChatGptOAuth,
+  })
 
   // Track and notify about Claude OAuth usage
   if (isClaudeOAuth) {
@@ -557,6 +633,14 @@ export async function* promptAiSdkStream(
           },
           logger,
         })
+        // SPARROW: record the failed attempt on the shared span handle.
+        sparrowHandle.recordAttempt({
+          attempt: sparrowAttempt,
+          route: sparrowRoute,
+          model: requestedModel,
+          succeeded: false,
+          error: 'claude_oauth_rate_limited',
+        })
         if (!isClaudeOAuthFallbackEnabled()) {
           throw chunkValue.error
         }
@@ -574,6 +658,8 @@ export async function* promptAiSdkStream(
         const fallbackResult = yield* promptAiSdkStream({
           ...params,
           skipClaudeOAuth: true,
+          sparrowLlmHandle: sparrowHandle,
+          sparrowRouteAttempt: sparrowAttempt + 1,
         })
         return fallbackResult
       }
@@ -604,16 +690,29 @@ export async function* promptAiSdkStream(
 
         markChatGptOAuthRateLimited()
 
+        // SPARROW: record the failed attempt on the shared span handle.
+        sparrowHandle.recordAttempt({
+          attempt: sparrowAttempt,
+          route: sparrowRoute,
+          model: requestedModel,
+          succeeded: false,
+          error: 'chatgpt_oauth_rate_limited',
+        })
+
         // In free mode, don't fall back to Codebuff backend — fail instead
         if (isFreeMode(params.costMode)) {
-          throw new Error(
+          const freeModeErr = new Error(
             `ChatGPT rate limit reached. Please wait a few minutes and try again. (${rateLimitErrorDetails})`,
           )
+          if (sparrowIsTopLevel) sparrowHandle.end(freeModeErr)
+          throw freeModeErr
         }
 
         const fallbackResult = yield* promptAiSdkStream({
           ...params,
           skipChatGptOAuth: true,
+          sparrowLlmHandle: sparrowHandle,
+          sparrowRouteAttempt: sparrowAttempt + 1,
         })
         return fallbackResult
       }
@@ -639,6 +738,15 @@ export async function* promptAiSdkStream(
           logger,
         })
 
+        // SPARROW: record the failed attempt on the shared span handle.
+        sparrowHandle.recordAttempt({
+          attempt: sparrowAttempt,
+          route: sparrowRoute,
+          model: requestedModel,
+          succeeded: false,
+          error: 'claude_oauth_auth_error',
+        })
+
         // Try refreshing the token and retrying once before falling back
         if (!params.claudeOAuthRetried) {
           const refreshed = await refreshClaudeOAuthToken()
@@ -647,6 +755,8 @@ export async function* promptAiSdkStream(
             const retryResult = yield* promptAiSdkStream({
               ...params,
               claudeOAuthRetried: true,
+              sparrowLlmHandle: sparrowHandle,
+              sparrowRouteAttempt: sparrowAttempt + 1,
             })
             return retryResult
           }
@@ -663,6 +773,8 @@ export async function* promptAiSdkStream(
         const fallbackResult = yield* promptAiSdkStream({
           ...params,
           skipClaudeOAuth: true,
+          sparrowLlmHandle: sparrowHandle,
+          sparrowRouteAttempt: sparrowAttempt + 1,
         })
         return fallbackResult
       }
@@ -683,6 +795,15 @@ export async function* promptAiSdkStream(
           logger,
         })
 
+        // SPARROW: record the failed attempt on the shared span handle.
+        sparrowHandle.recordAttempt({
+          attempt: sparrowAttempt,
+          route: sparrowRoute,
+          model: requestedModel,
+          succeeded: false,
+          error: 'chatgpt_oauth_auth_error',
+        })
+
         // Try refreshing the token and retrying once before failing/falling back
         if (!params.chatGptOAuthRetried) {
           const refreshed = await refreshChatGptOAuthToken()
@@ -691,6 +812,8 @@ export async function* promptAiSdkStream(
             const retryResult = yield* promptAiSdkStream({
               ...params,
               chatGptOAuthRetried: true,
+              sparrowLlmHandle: sparrowHandle,
+              sparrowRouteAttempt: sparrowAttempt + 1,
             })
             return retryResult
           }
@@ -700,15 +823,19 @@ export async function* promptAiSdkStream(
         // Refresh failed or already retried
         // In free mode, don't fall back to Codebuff backend — fail instead
         if (isFreeMode(params.costMode)) {
-          throw new Error(
+          const freeModeErr = new Error(
             'ChatGPT OAuth authentication failed. Please reconnect with /connect:chatgpt and try again.',
           )
+          if (sparrowIsTopLevel) sparrowHandle.end(freeModeErr)
+          throw freeModeErr
         }
 
         // Fall back to Codebuff backend
         const fallbackResult = yield* promptAiSdkStream({
           ...params,
           skipChatGptOAuth: true,
+          sparrowLlmHandle: sparrowHandle,
+          sparrowRouteAttempt: sparrowAttempt + 1,
         })
         return fallbackResult
       }
@@ -722,6 +849,22 @@ export async function* promptAiSdkStream(
         'Error in AI SDK stream',
       )
 
+      // SPARROW: record the failed attempt + fatal error on the shared span
+      // before throwing. end() is idempotent so the finally safety-net is OK.
+      const fatalErrName =
+        chunkValue.error instanceof Error
+          ? chunkValue.error.name
+          : typeof chunkValue.error === 'string'
+            ? chunkValue.error.slice(0, 64)
+            : 'stream_error'
+      sparrowHandle.recordAttempt({
+        attempt: sparrowAttempt,
+        route: sparrowRoute,
+        model: requestedModel,
+        succeeded: false,
+        error: fatalErrName,
+      })
+      if (sparrowIsTopLevel) sparrowHandle.end(chunkValue.error)
       // For all other errors, throw them -- they are fatal.
       throw chunkValue.error
     }
@@ -788,32 +931,72 @@ export async function* promptAiSdkStream(
     usage: usageResult,
   })
 
+  // SPARROW: resolve finish reason + provider metadata for telemetry; these
+  // are already awaited internally so no extra cost here.
+  const sparrowFinishReason = await response.finishReason.catch(() => undefined)
+  const sparrowProviderMetadata = await response.providerMetadata.catch(
+    () => undefined,
+  )
+  const sparrowCostUsd = extractUpstreamCostUsd(
+    sparrowProviderMetadata as Record<string, unknown> | undefined,
+  )
+  const sparrowCostCredits =
+    sparrowCostUsd !== undefined
+      ? calculateUsedCredits({ costDollars: sparrowCostUsd })
+      : undefined
+
   // Skip cost tracking for Claude OAuth (user is on their own subscription)
   if (!isClaudeOAuth && !isChatGptOAuth) {
-    const providerMetadataResult = await response.providerMetadata
-    const providerMetadata = providerMetadataResult ?? {}
-
-    let costOverrideDollars: number | undefined
-    if (providerMetadata.codebuff) {
-      if (providerMetadata.codebuff.usage) {
-        const openrouterUsage = providerMetadata.codebuff
-          .usage as OpenRouterUsageAccounting
-
-        costOverrideDollars =
-          (openrouterUsage.cost ?? 0) +
-          (openrouterUsage.costDetails?.upstreamInferenceCost ?? 0)
-      }
-    }
-
     // Call the cost callback if provided
-    if (params.onCostCalculated && costOverrideDollars) {
+    if (params.onCostCalculated && sparrowCostUsd) {
       await params.onCostCalculated(
-        calculateUsedCredits({ costDollars: costOverrideDollars }),
+        calculateUsedCredits({ costDollars: sparrowCostUsd }),
       )
     }
   }
 
+  // SPARROW: finalize the gen_ai.chat span with usage/cost/finish reason.
+  // `finalize` only records terminal attributes on the shared handle; the span
+  // is ended only by the top-level caller.
+  sparrowHandle.recordAttempt({
+    attempt: sparrowAttempt,
+    route: sparrowRoute,
+    model: requestedModel,
+    succeeded: true,
+  })
+  sparrowHandle.finalize({
+    route: sparrowRoute,
+    attempt: sparrowAttempt,
+    system: 'ai-sdk',
+    requestModel: requestedModel,
+    responseModel: responseValue.modelId ?? undefined,
+    finishReason:
+      typeof sparrowFinishReason === 'string'
+        ? sparrowFinishReason
+        : undefined,
+    inputTokens: usageResult.inputTokens,
+    outputTokens: usageResult.outputTokens,
+    cacheReadTokens: usageResult.cachedInputTokens,
+    costUsd: isClaudeOAuth || isChatGptOAuth ? undefined : sparrowCostUsd,
+    costCredits:
+      isClaudeOAuth || isChatGptOAuth ? undefined : sparrowCostCredits,
+  })
+  if (sparrowIsTopLevel) sparrowHandle.end()
+
   return promptSuccess(messageId)
+  } finally {
+    // SPARROW: safety-net end — idempotent, so a no-op if the success or
+    // explicit error paths already called end(). Covers unexpected throws
+    // from response.fullStream iteration, post-loop awaits, or generator
+    // abandonment. Only the top-level call owns the span lifetime.
+    if (sparrowIsTopLevel) {
+      try {
+        sparrowHandle.end()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 export async function promptAiSdk(
@@ -840,17 +1023,42 @@ export async function promptAiSdk(
   }
   const { model: aiSDKModel } = await getModelForRequest(modelParams)
 
-  const response = await generateText({
-    ...params,
-    prompt: undefined,
-    model: aiSDKModel,
-    messages: convertCbToModelMessages(params),
-    providerOptions: getProviderOptions({
-      ...params,
-      agentProviderOptions: params.agentProviderOptions,
-      cacheDebugCorrelation: params.cacheDebugCorrelation,
-    }),
+  // SPARROW: open a gen_ai.chat span around the generateText call. Route is
+  // always codebuff_backend because skip*OAuth are forced true above.
+  const sparrowRoute: RouteValue = classifyLlmRoute({
+    viaCodebuffBackend: true,
   })
+  const sparrowHandle = recordLlmCall({
+    system: 'ai-sdk',
+    requestModel: params.model,
+    route: sparrowRoute,
+    routeAttempt: 1,
+  })
+  if (shouldCapturePrompts()) {
+    try {
+      sparrowHandle.recordMessages(serializeMessagesForSpan(params.messages))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let response: Awaited<ReturnType<typeof generateText>>
+  try {
+    response = await generateText({
+      ...params,
+      prompt: undefined,
+      model: aiSDKModel,
+      messages: convertCbToModelMessages(params),
+      providerOptions: getProviderOptions({
+        ...params,
+        agentProviderOptions: params.agentProviderOptions,
+        cacheDebugCorrelation: params.cacheDebugCorrelation,
+      }),
+    })
+  } catch (err) {
+    sparrowHandle.end(err)
+    throw err
+  }
   emitCacheDebugProviderRequest({
     callback: params.onCacheDebugProviderRequestBuilt,
     provider: getModelProvider(aiSDKModel),
@@ -863,17 +1071,9 @@ export async function promptAiSdk(
   const content = response.text
 
   const providerMetadata = response.providerMetadata ?? {}
-  let costOverrideDollars: number | undefined
-  if (providerMetadata.codebuff) {
-    if (providerMetadata.codebuff.usage) {
-      const openrouterUsage = providerMetadata.codebuff
-        .usage as OpenRouterUsageAccounting
-
-      costOverrideDollars =
-        (openrouterUsage.cost ?? 0) +
-        (openrouterUsage.costDetails?.upstreamInferenceCost ?? 0)
-    }
-  }
+  const costOverrideDollars = extractUpstreamCostUsd(
+    providerMetadata as Record<string, unknown>,
+  )
 
   // Call the cost callback if provided
   if (params.onCostCalculated && costOverrideDollars) {
@@ -881,6 +1081,34 @@ export async function promptAiSdk(
       calculateUsedCredits({ costDollars: costOverrideDollars }),
     )
   }
+
+  // SPARROW: record the successful attempt + finalize the gen_ai.chat span.
+  sparrowHandle.recordAttempt({
+    attempt: 1,
+    route: sparrowRoute,
+    model: params.model,
+    succeeded: true,
+  })
+  sparrowHandle.finalize({
+    route: sparrowRoute,
+    attempt: 1,
+    system: 'ai-sdk',
+    requestModel: params.model,
+    responseModel: response.response?.modelId ?? undefined,
+    finishReason:
+      typeof response.finishReason === 'string'
+        ? response.finishReason
+        : undefined,
+    inputTokens: response.usage?.inputTokens,
+    outputTokens: response.usage?.outputTokens,
+    cacheReadTokens: response.usage?.cachedInputTokens,
+    costUsd: costOverrideDollars,
+    costCredits:
+      costOverrideDollars !== undefined
+        ? calculateUsedCredits({ costDollars: costOverrideDollars })
+        : undefined,
+  })
+  sparrowHandle.end()
 
   return promptSuccess(content)
 }
@@ -908,18 +1136,45 @@ export async function promptAiSdkStructured<T>(
   }
   const { model: aiSDKModel } = await getModelForRequest(modelParams)
 
-  const response = await generateObject<z.ZodType<T>, 'object'>({
-    ...params,
-    prompt: undefined,
-    model: aiSDKModel,
-    output: 'object',
-    messages: convertCbToModelMessages(params),
-    providerOptions: getProviderOptions({
-      ...params,
-      agentProviderOptions: params.agentProviderOptions,
-      cacheDebugCorrelation: params.cacheDebugCorrelation,
-    }),
+  // SPARROW: open a gen_ai.chat span around generateObject. Route is always
+  // codebuff_backend because skip*OAuth are forced true above.
+  const sparrowRoute: RouteValue = classifyLlmRoute({
+    viaCodebuffBackend: true,
   })
+  const sparrowHandle = recordLlmCall({
+    system: 'ai-sdk',
+    requestModel: params.model,
+    route: sparrowRoute,
+    routeAttempt: 1,
+  })
+  if (shouldCapturePrompts()) {
+    try {
+      sparrowHandle.recordMessages(serializeMessagesForSpan(params.messages))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let response: Awaited<
+    ReturnType<typeof generateObject<z.ZodType<T>, 'object'>>
+  >
+  try {
+    response = await generateObject<z.ZodType<T>, 'object'>({
+      ...params,
+      prompt: undefined,
+      model: aiSDKModel,
+      output: 'object',
+      messages: convertCbToModelMessages(params),
+      providerOptions: getProviderOptions({
+        ...params,
+        agentProviderOptions: params.agentProviderOptions,
+        cacheDebugCorrelation: params.cacheDebugCorrelation,
+      }),
+    })
+  } catch (err) {
+    sparrowHandle.end(err)
+    throw err
+  }
 
   emitCacheDebugProviderRequest({
     callback: params.onCacheDebugProviderRequestBuilt,
@@ -934,17 +1189,9 @@ export async function promptAiSdkStructured<T>(
   const content = response.object
 
   const providerMetadata = response.providerMetadata ?? {}
-  let costOverrideDollars: number | undefined
-  if (providerMetadata.codebuff) {
-    if (providerMetadata.codebuff.usage) {
-      const openrouterUsage = providerMetadata.codebuff
-        .usage as OpenRouterUsageAccounting
-
-      costOverrideDollars =
-        (openrouterUsage.cost ?? 0) +
-        (openrouterUsage.costDetails?.upstreamInferenceCost ?? 0)
-    }
-  }
+  const costOverrideDollars = extractUpstreamCostUsd(
+    providerMetadata as Record<string, unknown>,
+  )
 
   // Call the cost callback if provided
   if (params.onCostCalculated && costOverrideDollars) {
@@ -952,6 +1199,34 @@ export async function promptAiSdkStructured<T>(
       calculateUsedCredits({ costDollars: costOverrideDollars }),
     )
   }
+
+  // SPARROW: record the successful attempt + finalize the gen_ai.chat span.
+  sparrowHandle.recordAttempt({
+    attempt: 1,
+    route: sparrowRoute,
+    model: params.model,
+    succeeded: true,
+  })
+  sparrowHandle.finalize({
+    route: sparrowRoute,
+    attempt: 1,
+    system: 'ai-sdk',
+    requestModel: params.model,
+    responseModel: response.response?.modelId ?? undefined,
+    finishReason:
+      typeof response.finishReason === 'string'
+        ? response.finishReason
+        : undefined,
+    inputTokens: response.usage?.inputTokens,
+    outputTokens: response.usage?.outputTokens,
+    cacheReadTokens: response.usage?.cachedInputTokens,
+    costUsd: costOverrideDollars,
+    costCredits:
+      costOverrideDollars !== undefined
+        ? calculateUsedCredits({ costDollars: costOverrideDollars })
+        : undefined,
+  })
+  sparrowHandle.end()
 
   return promptSuccess(content)
 }

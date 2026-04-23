@@ -1,5 +1,10 @@
 import { AnalyticsEvent } from '@codebuff/common/constants/analytics-events'
 import { supportsCacheControl } from '@codebuff/common/old-constants'
+// SPARROW: telemetry — wrap agent runs and steps in dedicated spans
+import {
+  withAgentRunSpan,
+  withAgentStepSpan,
+} from '@codebuff/common/sparrow/telemetry'
 import { TOOLS_WHICH_WONT_FORCE_NEXT_STEP } from '@codebuff/common/tools/constants'
 import { buildArray } from '@codebuff/common/util/array'
 import { AbortError, getErrorObject, getErrorStatusCode, isAbortError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
@@ -127,6 +132,10 @@ export const runAgentStep = async (
 
     trackEvent: TrackEventFn
     promptAiSdk: PromptAiSdkFn
+
+    // SPARROW: telemetry — real step number plumbed from loopAgentSteps so the
+    // agent.step span carries the loop counter, not messageHistory.length.
+    sparrowStepNumber?: number
   } & ParamsExcluding<
     typeof processStream,
     | 'agentContext'
@@ -167,6 +176,18 @@ export const runAgentStep = async (
   messageId: string | null
   nResponses?: string[]
 }> => {
+  // SPARROW: telemetry — wrap step in agent.step span. stepNumber is taken
+  // from params.sparrowStepNumber if provided by the caller (loopAgentSteps),
+  // otherwise falls back to messageHistory.length as a best-effort proxy.
+  const sparrowStepNumber =
+    params.sparrowStepNumber ?? params.agentState.messageHistory.length
+  return withAgentStepSpan(
+    {
+      agentId: params.agentState.agentId,
+      agentDisplayId: params.agentTemplate.id,
+      stepNumber: sparrowStepNumber,
+    },
+    async () => {
   const {
     agentType,
     clientSessionId,
@@ -553,6 +574,8 @@ export const runAgentStep = async (
     messageId,
     nResponses: undefined,
   }
+    },
+  )
 }
 
 export async function loopAgentSteps(
@@ -616,6 +639,8 @@ export async function loopAgentSteps(
       | 'prompt'
       | 'runId'
       | 'spawnParams'
+      // SPARROW: internal telemetry plumbing, not a public knob on loopAgentSteps
+      | 'sparrowStepNumber'
       | 'system'
       | 'tools'
     > &
@@ -633,6 +658,14 @@ export async function loopAgentSteps(
   agentState: AgentState
   output: AgentOutput
 }> {
+  // SPARROW: telemetry — wrap entire agent run in `agent.run` span.
+  return withAgentRunSpan(
+    {
+      agentId: params.agentState.agentId,
+      agentDisplayId: params.agentTemplate?.id ?? params.agentType,
+      parentAgentId: params.agentState.parentId,
+    },
+    async () => {
   const {
     addAgentStep,
     agentState: initialAgentState,
@@ -999,6 +1032,9 @@ export async function loopAgentSteps(
             prompt: currentPrompt,
             runId,
             spawnParams: currentParams,
+            // SPARROW: telemetry — forward the loop step number so the
+            // agent.step span carries the actual loop counter.
+            sparrowStepNumber: totalSteps,
             system,
             tools,
             additionalToolDefinitions: additionalToolDefinitionsWithCache,
@@ -1180,6 +1216,8 @@ export async function loopAgentSteps(
       },
     }
   }
+    },
+  )
 }
 
 const STEP_WARNING_MESSAGE = [
