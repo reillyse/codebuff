@@ -4,6 +4,8 @@ import { BottomBanner } from './bottom-banner'
 import { useSubscriptionQuery } from '../hooks/use-subscription-query'
 import { useTheme } from '../hooks/use-theme'
 import { useChatStore } from '../state/chat-store'
+import { getChatGptOAuthStatus } from '../utils/chatgpt-oauth'
+import { IS_FREEBUFF } from '../utils/constants'
 
 const HELP_TIMEOUT = 60 * 1000 // 60 seconds
 
@@ -36,6 +38,7 @@ export const HelpBanner = () => {
   const theme = useTheme()
   const { data: subscriptionData } = useSubscriptionQuery()
   const hasSubscription = subscriptionData?.hasSubscription ?? false
+  const chatGptOAuth = getChatGptOAuthStatus()
 
   // Auto-hide after timeout
   React.useEffect(() => {
@@ -77,19 +80,31 @@ export const HelpBanner = () => {
         <box style={{ flexDirection: 'column', gap: 0 }}>
           <SectionHeader>Credits</SectionHeader>
           <box style={{ flexDirection: 'column', paddingLeft: 2 }}>
-            <box style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 1 }}>
-              <text style={{ fg: theme.foreground }}>1 credit = 1 cent</text>
-              <text style={{ fg: theme.muted }}>·</text>
-              <text style={{ fg: theme.foreground }}>/subscribe</text>
-              <text style={{ fg: theme.muted }}>·</text>
-              <text style={{ fg: theme.foreground }}>/usage</text>
-              {!hasSubscription && (
-                <>
-                  <text style={{ fg: theme.muted }}>·</text>
-                  <text style={{ fg: theme.foreground }}>/ads:enable</text>
-                </>
-              )}
-            </box>
+            {!IS_FREEBUFF && (
+              <box style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 1 }}>
+                <text style={{ fg: theme.foreground }}>1 credit = 1 cent</text>
+                <text style={{ fg: theme.muted }}>·</text>
+                <text style={{ fg: theme.foreground }}>/subscribe</text>
+                <text style={{ fg: theme.muted }}>·</text>
+                <text style={{ fg: theme.foreground }}>/usage</text>
+                {!hasSubscription && (
+                  <>
+                    <text style={{ fg: theme.muted }}>·</text>
+                    <text style={{ fg: theme.foreground }}>/ads:enable</text>
+                  </>
+                )}
+              </box>
+            )}
+            {IS_FREEBUFF && !chatGptOAuth.connected && (
+              <text style={{ fg: theme.muted }}>
+                Connect via /connect:chatgpt to unlock /plan & /review
+              </text>
+            )}
+            {IS_FREEBUFF && chatGptOAuth.connected && (
+              <text style={{ fg: theme.muted }}>
+                Try workflow: /interview → /plan → implement → /review
+              </text>
+            )}
             <text style={{ fg: theme.muted }}>
               Subscribe for the best credit rates — /subscribe
             </text>

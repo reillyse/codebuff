@@ -372,22 +372,44 @@ describe('command-registry', () => {
       }
     })
 
-    test('connect:chatgpt slash command presence matches feature flag', () => {
+    test('connect:chatgpt is the only registered ChatGPT OAuth command (when feature flag enabled)', () => {
       const { CHATGPT_OAUTH_ENABLED } = require('@codebuff/common/constants/chatgpt-oauth')
-      const hasChatGptSlashCommand = SLASH_COMMANDS.some(
+      const hasConnectChatgpt = SLASH_COMMANDS.some(
         (cmd) => cmd.id === 'connect:chatgpt',
       )
-      expect(hasChatGptSlashCommand).toBe(CHATGPT_OAUTH_ENABLED)
+      expect(hasConnectChatgpt).toBe(CHATGPT_OAUTH_ENABLED)
+
+      // Bare /connect and /chatgpt are no longer registered
+      const bareConnectSlash = SLASH_COMMANDS.some(
+        (cmd) => cmd.id === 'connect',
+      )
+      expect(bareConnectSlash).toBe(false)
+
+      const chatgptSlash = SLASH_COMMANDS.some(
+        (cmd) => cmd.id === 'chatgpt',
+      )
+      expect(chatgptSlash).toBe(false)
     })
 
-    test('connect:chatgpt command registry availability matches feature flag', () => {
+    test('findCommand resolves connect:chatgpt to the connect:chatgpt command (when enabled)', () => {
       const { CHATGPT_OAUTH_ENABLED } = require('@codebuff/common/constants/chatgpt-oauth')
       const command = findCommand('connect:chatgpt')
       if (CHATGPT_OAUTH_ENABLED) {
         expect(command).toBeDefined()
+        expect(command?.name).toBe('connect:chatgpt')
       } else {
         expect(command).toBeUndefined()
       }
+    })
+
+    test('findCommand does not resolve /connect to the chatgpt OAuth command', () => {
+      const command = findCommand('connect')
+      expect(command).toBeUndefined()
+    })
+
+    test('findCommand does not resolve /chatgpt to the chatgpt OAuth command', () => {
+      const command = findCommand('chatgpt')
+      expect(command).toBeUndefined()
     })
   })
 })

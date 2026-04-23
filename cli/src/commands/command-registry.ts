@@ -179,8 +179,9 @@ const FREEBUFF_REMOVED_COMMANDS = new Set([
   'connect:claude',
 ])
 
-// Commands that should ONLY be available in Freebuff mode (excluded from regular mode)
-const FREEBUFF_ONLY_COMMANDS = new Set<string>([])
+// Commands that should ONLY be available in Freebuff mode (excluded from regular mode).
+// `plan` is gated to Freebuff because it requires a connected ChatGPT subscription.
+const FREEBUFF_ONLY_COMMANDS = new Set<string>(['plan'])
 
 const ALL_COMMANDS: CommandDefinition[] = [
   defineCommand({
@@ -569,7 +570,6 @@ const ALL_COMMANDS: CommandDefinition[] = [
   }),
   defineCommand({
     name: 'connect:claude',
-    aliases: ['claude'],
     handler: (params) => {
       if (!CLAUDE_OAUTH_ENABLED) {
         params.setMessages((prev) => [
@@ -591,8 +591,7 @@ const ALL_COMMANDS: CommandDefinition[] = [
   ...(CHATGPT_OAUTH_ENABLED
     ? [
         defineCommand({
-          name: 'connect',
-          aliases: ['connect:chatgpt', 'chatgpt'],
+          name: 'connect:chatgpt',
           handler: (params) => {
             useChatStore.getState().setInputMode('connect:chatgpt')
             params.saveToHistory(params.inputValue.trim())
@@ -643,7 +642,7 @@ const ALL_COMMANDS: CommandDefinition[] = [
           ...prev,
           getUserMessage(params.inputValue.trim()),
           getSystemMessage(
-            'Connect your ChatGPT account to use /plan. Use /connect to get started.',
+            'Connect your ChatGPT account to use /plan. Use /connect:chatgpt to get started.',
           ),
         ])
         params.saveToHistory(params.inputValue.trim())
@@ -682,7 +681,7 @@ const ALL_COMMANDS: CommandDefinition[] = [
           ...prev,
           getUserMessage(params.inputValue.trim()),
           getSystemMessage(
-            'Connect your ChatGPT account to use /review. Use /connect to get started.',
+            'Connect your ChatGPT account to use /review. Use /connect:chatgpt to get started.',
           ),
         ])
         params.saveToHistory(params.inputValue.trim())
