@@ -121,6 +121,28 @@ To capture message content as span events (useful for local debugging,
 export SPARROW_TELEMETRY_CAPTURE_PROMPTS=full
 ```
 
+## When spans are flushed to Honeycomb
+
+The tracer uses OTel's `BatchSpanProcessor` — spans don't ship one-at-a-time
+they sit in an in-process queue and get shipped when **any** of these happen:
+
+1. **End of every top-level turn** — when the root `prompt` span closes,
+   `withPromptSpan` fires a non-blocking `forceFlush()`. This is the common
+   case: spans reach Honeycomb within ~1–2 seconds of the CLI finishing a
+   response. The flush is fire-and-forget so it adds zero latency to the
+   turn result, and errors are swallowed.
+2. **5-second batch timer** — safety net for anything that accumulates
+   outside a prompt span (e.g. long-running background operations).
+3. **Batch size reached** (512 spans) — for bursty workloads.
+4. **CLI exit** — the shutdown hook in `renderer-cleanup.ts` calls
+   `shutdownTelemetry()` which flushes then shuts down the provider.
+5. **Config changes** — `/telemetry enable|disable|dataset|capture-prompts`
+   all flush before reinit so config edits never lose spans.
+
+Manual `/telemetry flush` is rarely needed in normal use — the turn-end
+auto-flush covers it. It's still useful for impatient debugging or when
+you've just written something outside a prompt span.
+
 ## Failure modes
 
 - **Honeycomb endpoint down / network broken:** the batched exporter

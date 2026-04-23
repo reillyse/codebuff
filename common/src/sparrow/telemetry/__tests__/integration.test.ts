@@ -2,6 +2,7 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
   type ReadableSpan,
+  type SpanProcessor,
 } from '@opentelemetry/sdk-trace-base'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
@@ -289,6 +290,107 @@ describe('telemetry integration: full span hierarchy', () => {
     const tool = byName(exporter.getFinishedSpans(), SpanNames.TOOL_CALL)!
     expect(tool.attributes[Attr.TOOL_NAME]).toBe('spawn_agents')
     expect(tool.attributes[Attr.CHILD_AGENT_ID]).toBe('editor')
+  })
+
+  it('auto-flushes at the end of a top-level prompt span (turn-end flush)', async () => {
+    // Spy processor that records every forceFlush() call. The real
+    // BatchSpanProcessor is slow + async; this lets us assert the flush
+    // happens synchronously after the prompt span closes, even though the
+    // flush itself is fire-and-forget.
+    let forceFlushCount = 0
+    const spyProcessor: SpanProcessor = {
+      onStart: () => {},
+      onEnd: () => {},
+      forceFlush: () => {
+        forceFlushCount++
+        return Promise.resolve()
+      },
+      shutdown: () => Promise.resolve(),
+    }
+
+    // Swap in a fresh provider with the spy alongside the existing
+    // SimpleSpanProcessor/exporter (so span assertions still work).
+    __resetTelemetryForTests()
+    exporter = new InMemorySpanExporter()
+    __initTelemetryForTests({
+      processors: [new SimpleSpanProcessor(exporter), spyProcessor],
+      serviceVersion: 'integration-test',
+    })
+
+    expect(forceFlushCount).toBe(0)
+
+    await withPromptSpan({ sessionId: 'flush-test' }, async () => {
+      // No LLM/tool work needed — just close the prompt span.
+    })
+
+    // The flush is fire-and-forget (void-expressioned) but its scheduling
+    // is synchronous — the call into forceFlush() happens on the same tick
+    // as the prompt span's end(). A single microtask tick is enough.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(forceFlushCount).toBe(1)
+    // Prompt span still exported normally.
+    const prompt = byName(exporter.getFinishedSpans(), SpanNames.PROMPT)
+    expect(prompt).toBeDefined()
+  })
+
+  it('turn-end flush fires even when the prompt callback throws', async () => {
+    let forceFlushCount = 0
+    const spyProcessor: SpanProcessor = {
+      onStart: () => {},
+      onEnd: () => {},
+      forceFlush: () => {
+        forceFlushCount++
+        return Promise.resolve()
+      },
+      shutdown: () => Promise.resolve(),
+    }
+
+    __resetTelemetryForTests()
+    exporter = new InMemorySpanExporter()
+    __initTelemetryForTests({
+      processors: [new SimpleSpanProcessor(exporter), spyProcessor],
+      serviceVersion: 'integration-test',
+    })
+
+    await expect(
+      withPromptSpan({ sessionId: 'flush-throw' }, async () => {
+        throw new Error('boom')
+      }),
+    ).rejects.toThrow('boom')
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(forceFlushCount).toBe(1)
+  })
+
+  it('turn-end flush swallows flush errors (does not affect turn result)', async () => {
+    const erroringProcessor: SpanProcessor = {
+      onStart: () => {},
+      onEnd: () => {},
+      forceFlush: () => Promise.reject(new Error('flush-fail')),
+      shutdown: () => Promise.resolve(),
+    }
+
+    __resetTelemetryForTests()
+    exporter = new InMemorySpanExporter()
+    __initTelemetryForTests({
+      processors: [new SimpleSpanProcessor(exporter), erroringProcessor],
+      serviceVersion: 'integration-test',
+    })
+
+    // The prompt completes normally and returns its value; the flush
+    // rejection must be swallowed and must NOT surface as an unhandled
+    // rejection or propagate to the caller.
+    const result = await withPromptSpan(
+      { sessionId: 'flush-error' },
+      async () => 'ok' as const,
+    )
+    expect(result).toBe('ok')
+
+    // Give the rejected fire-and-forget promise a tick to settle.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // Prompt span still reached the exporter.
+    expect(byName(exporter.getFinishedSpans(), SpanNames.PROMPT)).toBeDefined()
   })
 
   it('supports multiple sequential steps under one agent.run', async () => {

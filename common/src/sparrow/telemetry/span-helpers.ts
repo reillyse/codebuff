@@ -18,7 +18,18 @@ import {
   rollupLlmCall,
 } from './cost-rollup'
 import { harvestContextAwait } from './context-harvester'
-import { getTracer, isTelemetryActive } from './tracer-provider'
+import {
+  flushTelemetry,
+  getTracer,
+  isTelemetryActive,
+} from './tracer-provider'
+
+// SPARROW: Timeout budget for the auto-flush kicked off at the end of every
+// top-level prompt span. Fire-and-forget — we never await this, so the budget
+// only caps how long the pending Promise lives before resolving to 'timeout'.
+// Kept short so the BatchSpanProcessor's background queue doesn't build up
+// long retry chains when Honeycomb is unreachable.
+const PROMPT_END_FLUSH_TIMEOUT_MS = 2_000
 
 type AttrValue = string | number | boolean | undefined | null
 
@@ -94,6 +105,14 @@ export type PromptSpanAttrs = {
  * Root prompt span. Auto-harvests git/project/user context onto this span.
  * Awaits the context fetch when the cache is cold so the first prompt of a
  * session includes full git/project attributes.
+ *
+ * SPARROW: fires a non-blocking `flushTelemetry()` in a `finally` after the
+ * prompt span has ended. The prompt span represents one complete user turn,
+ * and by the time it closes every descendant (agent.run/step, gen_ai.chat,
+ * tool.call) has already been `end()`ed and handed to the BatchSpanProcessor.
+ * Flushing here gets that turn to Honeycomb immediately rather than waiting
+ * for the next 5s batch timer. Fire-and-forget (never awaited), so it adds
+ * zero latency to the turn response; errors are swallowed.
  */
 export async function withPromptSpan<T>(
   attrs: PromptSpanAttrs,
@@ -109,7 +128,18 @@ export async function withPromptSpan<T>(
   }
   const spanAttrs: Record<string, AttrValue> = { ...harvested }
   if (attrs.serviceVersion) spanAttrs[Attr.SERVICE_VERSION] = attrs.serviceVersion
-  return withSpan(SpanNames.PROMPT, spanAttrs, fn)
+  try {
+    return await withSpan(SpanNames.PROMPT, spanAttrs, fn)
+  } finally {
+    // SPARROW: fire-and-forget turn-end flush. `withSpan`'s finally has
+    // already `end()`ed the prompt span before we reach this block, so the
+    // BatchSpanProcessor has the full trace queued and ready to export.
+    // `.catch` alone is sufficient: flushTelemetry is `async` and cannot
+    // throw synchronously; it can only return a rejected promise.
+    void flushTelemetry(PROMPT_END_FLUSH_TIMEOUT_MS).catch(() => {
+      /* swallow: telemetry must never break user workflows */
+    })
+  }
 }
 
 export type AgentRunSpanAttrs = {
