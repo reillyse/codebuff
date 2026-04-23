@@ -34,6 +34,13 @@ import { clearLogFile, logger } from './utils/logger'
 import { shouldShowProjectPicker } from './utils/project-picker'
 import { saveRecentProject } from './utils/recent-projects'
 import { installProcessCleanupHandlers } from './utils/renderer-cleanup'
+// SPARROW: OpenTelemetry telemetry (Honeycomb) — silent no-op when HONEYCOMB_API_KEY is unset
+import {
+  flushTelemetry as sparrowFlushTelemetry,
+  initTelemetry as sparrowInitTelemetry,
+  shutdownTelemetry as sparrowShutdownTelemetry,
+  primeHarvestCache as sparrowPrimeHarvestCache,
+} from '@codebuff/common/sparrow/telemetry'
 import { initializeSkillRegistry } from './utils/skill-registry'
 import { detectTerminalTheme } from './utils/terminal-color-detection'
 import { setOscDetectedTheme } from './utils/theme-system'
@@ -194,6 +201,33 @@ async function main(): Promise<void> {
   const hasAgentOverride = Boolean(agent?.trim())
 
   const { claudeOAuthExpired } = await initializeApp({ cwd })
+
+  // SPARROW: Initialize OpenTelemetry as early as possible (after env is loaded).
+  // Silent no-op if HONEYCOMB_API_KEY is not set.
+  try {
+    sparrowInitTelemetry({ serviceVersion: loadPackageVersion() })
+    // Prime git/project context cache in the background so the first prompt
+    // has the full context without blocking startup.
+    void sparrowPrimeHarvestCache()
+  } catch {
+    // Never let telemetry init crash the CLI.
+  }
+
+  // SPARROW: Pre-exit hook wired via `installProcessCleanupHandlers` below.
+  // Runs on SIGINT/SIGTERM/SIGHUP and `beforeExit` (natural exit), BEFORE
+  // `process.exit()` is called or the renderer is destroyed. Bounded by a
+  // 2.5s hard timeout inside the cleanup helper, so Ctrl+C stays snappy
+  // even if the network is dead. The hook itself applies a 1.5s budget to
+  // the explicit flush before provider teardown.
+  //
+  // No try/catch needed: `flushTelemetry()` never rejects (failures resolve
+  // to 'error'), `shutdownTelemetry()` swallows all internal errors, and
+  // `runBeforeExitHook` in renderer-cleanup catches any residual rejection
+  // as a final safety net.
+  const sparrowTelemetryBeforeExit = async (): Promise<void> => {
+    await sparrowFlushTelemetry(1_500)
+    await sparrowShutdownTelemetry()
+  }
 
   // Set the auth token for the API client
   setApiClientAuthToken(getAuthToken())
@@ -362,7 +396,9 @@ async function main(): Promise<void> {
     backgroundColor: 'transparent',
     exitOnCtrlC: false,
   })
-  installProcessCleanupHandlers(renderer)
+  installProcessCleanupHandlers(renderer, {
+    beforeExitHook: sparrowTelemetryBeforeExit,
+  })
   createRoot(renderer).render(
     <QueryClientProvider client={queryClient}>
       <AppWithAsyncAuth />

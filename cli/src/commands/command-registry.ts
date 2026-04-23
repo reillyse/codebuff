@@ -5,6 +5,8 @@ import open from 'open'
 import { handleAdsEnable, handleAdsDisable } from './ads'
 import { handleHippoEnable, handleHippoDisable, handleHippoStatus, handleHippoRetry, handleHippoLogEnable, handleHippoLogDisable, handleHippoLogToggle } from './hippo'
 import { buildInterviewPrompt, buildPlanPrompt, buildReviewPromptFromArgs } from './prompt-builders'
+// SPARROW: /telemetry command — inspect/mutate sparrow-config.json telemetry section
+import { handleTelemetry } from './telemetry'
 import { useThemeStore } from '../hooks/use-theme'
 import { handleHelpCommand } from './help'
 import { handleImageCommand } from './image'
@@ -711,6 +713,23 @@ const ALL_COMMANDS: CommandDefinition[] = [
       return { openReviewScreen: true }
     },
   }),
+  // SPARROW: /telemetry status|enable|disable|dataset|capture-prompts|debug|help
+  defineCommandWithArgs({
+    name: 'telemetry',
+    handler: async (params, args) => {
+      // Redact sensitive args + clear input synchronously so the user gets
+      // immediate feedback; the async config mutation + reinit resolves after.
+      const trimmed = params.inputValue.trim()
+      const shouldRedact = /^\/telemetry\s+(enable|on|dataset)\s+\S/i.test(
+        trimmed,
+      )
+      params.saveToHistory(shouldRedact ? '/telemetry status' : trimmed)
+      clearInput(params)
+
+      const { postUserMessage } = await handleTelemetry(args)
+      params.setMessages((prev) => postUserMessage(prev))
+    },
+  }),
   defineCommand({
     name: 'theme:toggle',
     handler: (params) => {
@@ -754,6 +773,7 @@ export function findCommand(cmd: string): CommandDefinition | undefined {
   return undefined
 }
 
+
 /**
  * Creates a dynamic command definition for a skill.
  * When invoked, the skill's content is sent to the agent.
@@ -770,23 +790,30 @@ function createSkillCommand(skillName: string): CommandDefinition {
           getSystemMessage(`Skill not found: ${skillName}`),
         ])
         params.saveToHistory(params.inputValue.trim())
-        params.setInputValue({ text: '', cursorPosition: 0, lastEditDueToNav: false })
+        params.setInputValue({
+          text: '',
+          cursorPosition: 0,
+          lastEditDueToNav: false,
+        })
         return
       }
 
       const trimmed = params.inputValue.trim()
       params.saveToHistory(trimmed)
-      params.setInputValue({ text: '', cursorPosition: 0, lastEditDueToNav: false })
+      params.setInputValue({
+        text: '',
+        cursorPosition: 0,
+        lastEditDueToNav: false,
+      })
 
       // Build the message content with skill context and optional user args
       const skillContext = `<skill name="${skill.name}">
 ${skill.content}
 </skill>`
 
-      const userPrompt = `I invoke the following skill:\n\n${skillContext}\n\n`
-        + (args.trim()
-          ? `User request: ${args.trim()}`
-          : '')
+      const userPrompt =
+        `I invoke the following skill:\n\n${skillContext}\n\n` +
+        (args.trim() ? `User request: ${args.trim()}` : '')
 
       // Check streaming/queue state
       if (
