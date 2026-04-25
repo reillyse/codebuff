@@ -10,6 +10,15 @@ import {
   type Span,
 } from '@opentelemetry/api'
 
+// SPARROW (telemetry): oauth-eligibility helpers used to compute the
+// `chatgpt_oauth_eligible` and `claude_oauth_eligible` attributes below.
+// Centralizing the classification in recordLlmCall (rather than at each LLM
+// call site) ensures all streaming paths emit the attributes consistently.
+import {
+  isChatGptOAuthModelAllowed,
+  isOpenAIProviderModel,
+} from '../../constants/chatgpt-oauth'
+import { isClaudeModel } from '../../constants/claude-oauth'
 import { Attr, Events, SpanNames, type RouteValue } from './attributes'
 import {
   flushRollupOnEnd,
@@ -258,6 +267,26 @@ export function recordLlmCall(initial: {
     // documented as never-throws — the outer try/catch on this whole block
     // is the safety net.
     const ctx = harvestContext({})
+    // SPARROW (telemetry): compute ChatGPT OAuth eligibility from the request
+    // model. We classify here (not at the LLM call site) so every gen_ai.chat
+    // span gets the attribute consistently regardless of which streaming path
+    // opened it. Tri-state semantics:
+    //   - openai/* and on allowlist => true
+    //   - openai/* and NOT on allowlist => false
+    //   - non-openai model OR missing model => undefined (not emitted)
+    const chatgptOauthEligible =
+      initial.requestModel && isOpenAIProviderModel(initial.requestModel)
+        ? isChatGptOAuthModelAllowed(initial.requestModel)
+        : undefined
+    // SPARROW (telemetry): Claude OAuth eligibility is binary — there is no
+    // narrower allowlist within the anthropic/* namespace, so we either
+    // mark the model as eligible (true) or omit the attribute entirely.
+    // See attributes.ts for the dashboard-query caveat about non-streaming
+    // call paths showing up as silent-fallback misses.
+    const claudeOauthEligible =
+      initial.requestModel && isClaudeModel(initial.requestModel)
+        ? true
+        : undefined
     setAttrs(span, {
       [Attr.USER_EMAIL]: ctx[Attr.USER_EMAIL],
       [Attr.USER_NAME]: ctx[Attr.USER_NAME],
@@ -267,6 +296,8 @@ export function recordLlmCall(initial: {
       [Attr.GEN_AI_REQUEST_MAX_TOKENS]: initial.maxTokens,
       [Attr.ROUTE]: initial.route,
       [Attr.ROUTE_ATTEMPT]: initial.routeAttempt ?? 1,
+      [Attr.CHATGPT_OAUTH_ELIGIBLE]: chatgptOauthEligible,
+      [Attr.CLAUDE_OAUTH_ELIGIBLE]: claudeOauthEligible,
     })
   } catch {
     return NOOP_LLM_HANDLE

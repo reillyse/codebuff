@@ -63,7 +63,7 @@ export const ChatGptConnectBanner = () => {
   }
 
   const handleDisconnect = () => {
-    disconnectChatGptOAuth()
+    void disconnectChatGptOAuth()
     setFlowState('not-connected')
   }
 

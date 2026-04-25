@@ -49,6 +49,40 @@ export const Attr = {
   // Codebuff-specific LLM
   ROUTE: 'codebuff.route',
   ROUTE_ATTEMPT: 'codebuff.route_attempt',
+  // SPARROW (telemetry): observability hook for the ChatGPT OAuth route.
+  // Set on every gen_ai.chat span whose `gen_ai.request.model` starts with
+  // `openai/`:
+  //   - true  => model IS in the allowlist (eligible for chatgpt_oauth route)
+  //   - false => OpenAI-prefixed model NOT in the allowlist (e.g. gpt-5-nano)
+  // Undefined for non-OpenAI models (Anthropic, Google, etc.).
+  // Lets dashboards count silent-fallback misses with a single filter:
+  //   `chatgpt_oauth_eligible = true AND codebuff.route = codebuff_backend`
+  // identifies calls that *could* have used the OAuth subscription but went
+  // to the paid backend. Decoupled from the route attribute so we can
+  // distinguish "no creds" from "model not eligible" without joining other
+  // tables. Same streaming-only caveat applies as for CLAUDE_OAUTH_ELIGIBLE
+  // below — only `promptAiSdkStream` consults the chatgpt_oauth route, so
+  // non-streaming calls (`promptAiSdk` / `promptAiSdkStructured`) will
+  // appear as silent-fallback misses even when creds are present.
+  CHATGPT_OAUTH_ELIGIBLE: 'codebuff.chatgpt_oauth_eligible',
+  // SPARROW (telemetry): observability hook for the Claude OAuth route.
+  // Set on every gen_ai.chat span whose `gen_ai.request.model` is an
+  // Anthropic model (`anthropic/*` or bare `claude-*`):
+  //   - true  => Claude model, eligible for claude_oauth route
+  // Undefined for non-Claude models (OpenAI, Google, etc.).
+  // Unlike the ChatGPT case there is no internal allowlist — every Claude
+  // model the SDK recognizes can take the OAuth path — so this attribute is
+  // binary (true | unset) rather than tri-state.
+  // Dashboard query for silent-fallback misses:
+  //   `claude_oauth_eligible = true AND codebuff.route = codebuff_backend`
+  // CAVEAT: this query mixes two miss classes that look identical at the
+  // span level: (a) user has no Claude OAuth credentials installed, and
+  // (b) the call went through `promptAiSdk` / `promptAiSdkStructured` paths
+  // which are backend-only by design (only `promptAiSdkStream` consults
+  // OAuth). To isolate (a), additionally filter to streaming spans (the
+  // `gen_ai.system` is uniformly `ai-sdk` today, so disambiguating these
+  // requires a future `codebuff.call_kind` attribute — not in this PR).
+  CLAUDE_OAUTH_ELIGIBLE: 'codebuff.claude_oauth_eligible',
   // SPARROW (telemetry): stable per-OAuth-account identifier (truncated
   // SHA-256 hash of the OAuth refresh token, or access token in env-var
   // setups; see deriveOAuthAccountId in sdk/src/impl/model-provider.ts).
