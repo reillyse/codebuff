@@ -17,7 +17,7 @@ import {
   registerSpanParent,
   rollupLlmCall,
 } from './cost-rollup'
-import { harvestContextAwait } from './context-harvester'
+import { harvestContext, harvestContextAwait } from './context-harvester'
 import {
   flushTelemetry,
   getTracer,
@@ -209,6 +209,9 @@ export type LlmCallSpanHandle = {
     costCredits?: number
     costUsd?: number
     toolCallsEmitted?: number
+    // SPARROW (telemetry): stable per-OAuth-account identifier; only set when
+    // the call resolved to claude_oauth or chatgpt_oauth route.
+    oauthAccountId?: string
   }): void
   /** Attach opt-in message history as a span event (only when caller decides). */
   recordMessages(serialized: string): void
@@ -224,8 +227,17 @@ export type LlmCallSpanHandle = {
 export function recordLlmCall(initial: {
   system?: string
   requestModel?: string
+  // SPARROW (telemetry): request-side max output tokens cap. Recorded at
+  // span creation so a `length`-truncated response on a failed/aborted call
+  // can still be diagnosed against its cap. Maps to OTel semconv
+  // `gen_ai.request.max_tokens`.
+  maxTokens?: number
   route?: RouteValue
   routeAttempt?: number
+  // NOTE: oauthAccountId is intentionally NOT in the initial config. The
+  // route (and therefore the account) is decided after credentials lookup,
+  // which happens after recordLlmCall is called from the streaming path.
+  // It's set via finalize() instead.
 }): LlmCallSpanHandle {
   if (!isTelemetryActive()) {
     return NOOP_LLM_HANDLE
@@ -236,9 +248,23 @@ export function recordLlmCall(initial: {
     const parent = getActiveSpan()
     span = tracer.startSpan(SpanNames.GEN_AI_CHAT)
     registerSpanParent(span, parent)
+    // SPARROW (telemetry): propagate identity attributes from the per-prompt
+    // harvest cache onto every gen_ai.chat span so token totals can be sliced
+    // by user/machine without joining through trace IDs. The harvest cache is
+    // already warm by this point because the root prompt span pre-populated
+    // it via `harvestContextAwait`. We use the sync API (cache-only) to avoid
+    // blocking LLM dispatch; if the cache somehow isn't warm the attrs are
+    // simply omitted (setAttrs filters undefined). harvestContext is
+    // documented as never-throws — the outer try/catch on this whole block
+    // is the safety net.
+    const ctx = harvestContext({})
     setAttrs(span, {
+      [Attr.USER_EMAIL]: ctx[Attr.USER_EMAIL],
+      [Attr.USER_NAME]: ctx[Attr.USER_NAME],
+      [Attr.HOST_NAME]: ctx[Attr.HOST_NAME],
       [Attr.GEN_AI_SYSTEM]: initial.system,
       [Attr.GEN_AI_REQUEST_MODEL]: initial.requestModel,
+      [Attr.GEN_AI_REQUEST_MAX_TOKENS]: initial.maxTokens,
       [Attr.ROUTE]: initial.route,
       [Attr.ROUTE_ATTEMPT]: initial.routeAttempt ?? 1,
     })
@@ -281,6 +307,7 @@ export function recordLlmCall(initial: {
         [Attr.GEN_AI_USAGE_CACHE_CREATION_TOKENS]: info.cacheCreationTokens,
         [Attr.ROUTE]: info.route,
         [Attr.ROUTE_ATTEMPT]: info.attempt,
+        [Attr.OAUTH_ACCOUNT_ID]: info.oauthAccountId,
         [Attr.COST_CREDITS]: info.costCredits,
         [Attr.COST_USD]:
           info.costUsd !== undefined

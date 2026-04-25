@@ -7,6 +7,7 @@
  * - Default: Requests through Codebuff backend (which routes to OpenRouter)
  */
 
+import { createHash } from 'crypto'
 import path from 'path'
 
 import { createAnthropic } from '@ai-sdk/anthropic'
@@ -238,6 +239,48 @@ export interface ModelResult {
   isClaudeOAuth: boolean
   /** Whether this model uses ChatGPT OAuth direct (affects cost tracking) */
   isChatGptOAuth: boolean
+  /**
+   * SPARROW (telemetry): Stable per-OAuth-account identifier when the call
+   * is routed via claude_oauth or chatgpt_oauth. Undefined for the Codebuff
+   * backend route. Used to distinguish two subscriptions on the same machine
+   * in Honeycomb. See `deriveOAuthAccountId`.
+   */
+  oauthAccountId?: string
+}
+
+/**
+ * SPARROW (telemetry): Derive a stable, privacy-preserving identifier for an
+ * OAuth account from its credentials. Returns the first 16 hex chars of a
+ * SHA-256 digest. The hash is one-way so no token material is recoverable
+ * from the logged ID.
+ *
+ * Input selection (in order of preference):
+ *   1. `refreshToken` if present and non-empty — the file-stored credential
+ *      case. Stable across token refreshes for typical providers (the
+ *      existing refresh code preserves the old refresh token when the
+ *      provider doesn't return a new one). Different accounts have
+ *      different refresh tokens. Caveat: if a provider rotates the refresh
+ *      token on a particular refresh, the hash will drift for the same
+ *      logical account — dashboards may occasionally see a "new" account ID
+ *      until the next prompt span re-runs through this code path.
+ *   2. `accessToken` — the env-var credential case (CI/automation
+ *      scenarios). Stable for the lifetime of the issued token; rotates
+ *      whenever the env var is rotated. The env-var path always synthesizes
+ *      `connectedAt: Date.now()` per call (see getClaudeOAuthCredentials),
+ *      so we cannot use that as a stable ID for env-var users.
+ *
+ * Returns undefined only when neither field has a usable value.
+ */
+export function deriveOAuthAccountId(creds: {
+  refreshToken?: string
+  accessToken?: string
+}): string | undefined {
+  const material =
+    creds.refreshToken && creds.refreshToken.length > 0
+      ? creds.refreshToken
+      : creds.accessToken
+  if (!material || material.length === 0) return undefined
+  return createHash('sha256').update(material).digest('hex').slice(0, 16)
 }
 
 // Usage accounting type for OpenRouter/Codebuff backend responses
@@ -277,6 +320,9 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
           ),
           isClaudeOAuth: true,
           isChatGptOAuth: false,
+          // SPARROW (telemetry): tag the LLM span with a stable account hash so
+          // multi-subscription users can be distinguished in Honeycomb.
+          oauthAccountId: deriveOAuthAccountId(claudeOAuthCredentials),
         }
       }
       if (!claudeOAuthFallbackEnabled) {
@@ -314,6 +360,8 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
           model: createOpenAIOAuthModel(model, chatGptOAuthCredentials.accessToken),
           isClaudeOAuth: false,
           isChatGptOAuth: true,
+          // SPARROW (telemetry): see Claude OAuth branch above.
+          oauthAccountId: deriveOAuthAccountId(chatGptOAuthCredentials),
         }
       }
 

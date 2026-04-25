@@ -38,6 +38,7 @@ export const Attr = {
   // LLM
   GEN_AI_SYSTEM: 'gen_ai.system',
   GEN_AI_REQUEST_MODEL: 'gen_ai.request.model',
+  GEN_AI_REQUEST_MAX_TOKENS: 'gen_ai.request.max_tokens',
   GEN_AI_RESPONSE_MODEL: 'gen_ai.response.model',
   GEN_AI_RESPONSE_FINISH_REASON: 'gen_ai.response.finish_reason',
   GEN_AI_USAGE_INPUT_TOKENS: 'gen_ai.usage.input_tokens',
@@ -48,6 +49,14 @@ export const Attr = {
   // Codebuff-specific LLM
   ROUTE: 'codebuff.route',
   ROUTE_ATTEMPT: 'codebuff.route_attempt',
+  // SPARROW (telemetry): stable per-OAuth-account identifier (truncated
+  // SHA-256 hash of the OAuth refresh token, or access token in env-var
+  // setups; see deriveOAuthAccountId in sdk/src/impl/model-provider.ts).
+  // Lets us distinguish two Claude or ChatGPT OAuth subscriptions on the
+  // same machine. Only set when the call uses claude_oauth or chatgpt_oauth
+  // route. The hash is one-way; no token material is recoverable from the
+  // logged value.
+  OAUTH_ACCOUNT_ID: 'codebuff.oauth_account_id',
   COST_CREDITS: 'codebuff.cost.credits',
   COST_USD: 'codebuff.cost.usd',
   TOOL_CALLS_EMITTED: 'codebuff.tool_calls_emitted',

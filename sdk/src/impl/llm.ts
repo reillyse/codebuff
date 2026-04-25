@@ -222,6 +222,42 @@ function extractUpstreamCostUsd(
   )
 }
 
+// SPARROW (telemetry): Extract the request-side max-output-tokens cap that
+// will be passed through to the AI SDK. AI SDK v5 uses `maxOutputTokens`;
+// older callers (e.g. PromptAiSdkStructuredInput) still pass `maxTokens`.
+// Returns undefined when neither is set (provider default applies).
+function extractRequestMaxTokens(
+  params: Record<string, unknown>,
+): number | undefined {
+  const a = params.maxOutputTokens
+  if (typeof a === 'number' && Number.isFinite(a)) return a
+  const b = (params as { maxTokens?: unknown }).maxTokens
+  if (typeof b === 'number' && Number.isFinite(b)) return b
+  return undefined
+}
+
+// SPARROW (telemetry): Extract Anthropic prompt-cache creation token count
+// from providerMetadata. The AI SDK's flat `usage.cachedInputTokens` only
+// surfaces `cache_read_input_tokens`; `cache_creation_input_tokens` lives on
+// `providerMetadata.anthropic.cacheCreationInputTokens`. Without this, the
+// `claude_oauth` route looks like input_tokens=6 because Anthropic reports
+// the bulk of input as cache reads/creations rather than "new" input tokens.
+//
+// Returns undefined when the provider didn't surface a cache_creation count
+// (most non-Anthropic providers, or Anthropic responses with no cached
+// content). Returns 0 explicitly only when the provider sent 0.
+function extractCacheCreationInputTokens(
+  providerMetadata: Record<string, unknown> | undefined,
+): number | undefined {
+  if (!providerMetadata) return undefined
+  const anthropicMeta = providerMetadata.anthropic as
+    | { cacheCreationInputTokens?: unknown }
+    | undefined
+  const v = anthropicMeta?.cacheCreationInputTokens
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  return undefined
+}
+
 // SPARROW: Serialize CbMessage history for opt-in gen_ai.chat span events.
 // Truncates the serialized payload at 64 KiB to keep span events bounded.
 function serializeMessagesForSpan(messages: unknown): string {
@@ -345,6 +381,11 @@ export async function* promptAiSdkStream(
     recordLlmCall({
       system: 'ai-sdk',
       requestModel: requestedModel,
+      // SPARROW (telemetry): record request-side max_tokens so length-
+      // truncated outputs can be distinguished from legitimately long ones.
+      maxTokens: extractRequestMaxTokens(
+        params as Record<string, unknown>,
+      ),
       routeAttempt: 1,
     })
   const sparrowAttempt = incomingAttempt ?? 1
@@ -380,8 +421,15 @@ export async function* promptAiSdkStream(
     skipChatGptOAuth: params.skipChatGptOAuth,
     costMode: params.costMode,
   }
-  const { model: aiSDKModel, isClaudeOAuth, isChatGptOAuth } =
-    await getModelForRequest(modelParams)
+  const {
+    model: aiSDKModel,
+    isClaudeOAuth,
+    isChatGptOAuth,
+    // SPARROW (telemetry): stable per-OAuth-account hash, only set on the
+    // OAuth routes. Forwarded into the gen_ai.chat span at finalize() so
+    // multi-subscription users can be distinguished in Honeycomb.
+    oauthAccountId: sparrowOAuthAccountId,
+  } = await getModelForRequest(modelParams)
 
   // SPARROW: classify route for this attempt (may change across fallbacks).
   const sparrowRoute: RouteValue = classifyLlmRoute({
@@ -977,9 +1025,17 @@ export async function* promptAiSdkStream(
     inputTokens: usageResult.inputTokens,
     outputTokens: usageResult.outputTokens,
     cacheReadTokens: usageResult.cachedInputTokens,
+    // SPARROW (telemetry): pull cache_creation_input_tokens from
+    // providerMetadata.anthropic — the AI SDK doesn't surface it on usage.
+    cacheCreationTokens: extractCacheCreationInputTokens(
+      sparrowProviderMetadata as Record<string, unknown> | undefined,
+    ),
     costUsd: isClaudeOAuth || isChatGptOAuth ? undefined : sparrowCostUsd,
     costCredits:
       isClaudeOAuth || isChatGptOAuth ? undefined : sparrowCostCredits,
+    // SPARROW (telemetry): only set on OAuth routes; undefined for
+    // codebuff_backend (deriveOAuthAccountId returned undefined).
+    oauthAccountId: sparrowOAuthAccountId,
   })
   if (sparrowIsTopLevel) sparrowHandle.end()
 
@@ -1031,6 +1087,8 @@ export async function promptAiSdk(
   const sparrowHandle = recordLlmCall({
     system: 'ai-sdk',
     requestModel: params.model,
+    // SPARROW (telemetry): record request-side max_tokens (see promptAiSdkStream).
+    maxTokens: extractRequestMaxTokens(params as Record<string, unknown>),
     route: sparrowRoute,
     routeAttempt: 1,
   })
@@ -1102,6 +1160,10 @@ export async function promptAiSdk(
     inputTokens: response.usage?.inputTokens,
     outputTokens: response.usage?.outputTokens,
     cacheReadTokens: response.usage?.cachedInputTokens,
+    // SPARROW (telemetry): see promptAiSdkStream for context.
+    cacheCreationTokens: extractCacheCreationInputTokens(
+      providerMetadata as Record<string, unknown>,
+    ),
     costUsd: costOverrideDollars,
     costCredits:
       costOverrideDollars !== undefined
@@ -1144,6 +1206,10 @@ export async function promptAiSdkStructured<T>(
   const sparrowHandle = recordLlmCall({
     system: 'ai-sdk',
     requestModel: params.model,
+    // SPARROW (telemetry): record request-side max_tokens (see promptAiSdkStream).
+    // For the structured path, callers pass `maxTokens` directly per
+    // PromptAiSdkStructuredInput; extractRequestMaxTokens checks both names.
+    maxTokens: extractRequestMaxTokens(params as Record<string, unknown>),
     route: sparrowRoute,
     routeAttempt: 1,
   })
@@ -1220,6 +1286,10 @@ export async function promptAiSdkStructured<T>(
     inputTokens: response.usage?.inputTokens,
     outputTokens: response.usage?.outputTokens,
     cacheReadTokens: response.usage?.cachedInputTokens,
+    // SPARROW (telemetry): see promptAiSdkStream for context.
+    cacheCreationTokens: extractCacheCreationInputTokens(
+      providerMetadata as Record<string, unknown>,
+    ),
     costUsd: costOverrideDollars,
     costCredits:
       costOverrideDollars !== undefined
