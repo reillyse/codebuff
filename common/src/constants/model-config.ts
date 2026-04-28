@@ -34,7 +34,7 @@ export const openrouterModels = {
   // Updated from claude-sonnet-4.5 to match CURRENT_SONNET_MODEL
   openrouter_claude_sonnet_4_5: 'anthropic/claude-sonnet-4.6',
   openrouter_claude_sonnet_4: 'anthropic/claude-4-sonnet-20250522',
-  openrouter_claude_opus_4: 'anthropic/claude-opus-4.7',
+  openrouter_claude_opus_4: 'anthropic/claude-opus-4.6',
   openrouter_claude_3_5_haiku: 'anthropic/claude-3.5-haiku-20241022',
   openrouter_claude_3_5_sonnet: 'anthropic/claude-3.5-sonnet-20240620',
   openrouter_gpt4o: 'openai/gpt-4o-2024-11-20',
@@ -94,7 +94,7 @@ export const models = {
 } as const
 
 /** The current Opus model version used by agents. Update this single constant when upgrading. */
-export const CURRENT_OPUS_MODEL = 'anthropic/claude-opus-4.7' as const
+export const CURRENT_OPUS_MODEL = (process.env.CODEBUFF_OPUS_MODEL ?? 'anthropic/claude-opus-4.6') as 'anthropic/claude-opus-4.6'
 
 /** The current Sonnet model version used by agents. Update this single constant when upgrading. */
 export const CURRENT_SONNET_MODEL = 'anthropic/claude-sonnet-4.6' as const
@@ -141,7 +141,7 @@ export const providerModelNames = {
 export type Model = (typeof models)[keyof typeof models] | (string & {})
 
 export const shouldCacheModels = [
-  'anthropic/claude-opus-4.7',
+  'anthropic/claude-opus-4.6',
   'anthropic/claude-sonnet-4',
   'anthropic/claude-opus-4',
   'anthropic/claude-3.7-sonnet',
