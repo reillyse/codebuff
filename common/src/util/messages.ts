@@ -520,3 +520,24 @@ export function mediaToolResult(params: {
     },
   ]
 }
+
+/**
+ * Build a synthesized error `ToolMessage`. Used by conversation-shape repair
+ * passes to fabricate missing `tool_result` entries when an upstream bug or
+ * crash leaves a tool_use unbalanced. The result carries a JSON body with an
+ * `errorMessage` so the model has a chance to reason about what failed rather
+ * than seeing an opaque empty string.
+ */
+export function errorToolResult(params: {
+  toolCallId: string
+  toolName: string
+  errorMessage: string
+}): ToolMessage {
+  const { toolCallId, toolName, errorMessage } = params
+  return {
+    role: 'tool',
+    toolCallId,
+    toolName,
+    content: jsonToolResult({ errorMessage }),
+  }
+}
