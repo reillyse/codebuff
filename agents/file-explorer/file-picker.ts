@@ -48,7 +48,7 @@ export const createFilePicker = (
     },
     outputMode: 'last_message',
     includeMessageHistory: false,
-    toolNames: ['spawn_agents'],
+    toolNames: ['spawn_agents', 'read_files'],
     spawnableAgents: ['file-lister'],
 
     systemPrompt: `You are an expert at finding relevant files in a codebase. ${PLACEHOLDER.FILE_TREE_PROMPT}`,
