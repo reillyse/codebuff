@@ -853,12 +853,13 @@ export async function loopAgentSteps(
     return cachedAdditionalToolDefinitions
   }
 
-  let currentAgentState: AgentState = {
-    ...initialAgentState,
-    messageHistory: initialMessages,
-    systemPrompt: system,
-    toolDefinitions,
-  }
+  // Mutate initialAgentState so that in-progress work propagates back to the
+  // caller's shared reference (e.g. SDK's sessionState.mainAgentState) even if
+  // an error is thrown before we return.
+  initialAgentState.messageHistory = initialMessages
+  initialAgentState.systemPrompt = system
+  initialAgentState.toolDefinitions = toolDefinitions
+  let currentAgentState: AgentState = initialAgentState
   let shouldEndTurn = false
   let hasRetriedOutputSchema = false
   let currentPrompt = prompt
@@ -1075,7 +1076,8 @@ export async function loopAgentSteps(
         logger.error('No runId found for agent state after finishing agent run')
       }
 
-      currentAgentState = newAgentState
+      Object.assign(initialAgentState, newAgentState)
+      currentAgentState = initialAgentState
       shouldEndTurn = llmShouldEndTurn
       nResponses = generatedResponses
 
@@ -1171,11 +1173,21 @@ export async function loopAgentSteps(
 
     let errorMessage = ''
     let errorCode: string | undefined
+    let countryCode: string | undefined
+    let countryBlockReason: string | undefined
+    let ipPrivacySignals: string[] | undefined
     let hasServerMessage = false
     if (error instanceof APICallError) {
       errorMessage = `${error.message}`
       const parsed = parseApiErrorResponseBody(error.responseBody)
       if (parsed.errorCode) errorCode = parsed.errorCode
+      if (parsed.countryCode) countryCode = parsed.countryCode
+      if (parsed.countryBlockReason) {
+        countryBlockReason = parsed.countryBlockReason
+      }
+      if (parsed.ipPrivacySignals) {
+        ipPrivacySignals = parsed.ipPrivacySignals
+      }
       if (parsed.message) {
         errorMessage = parsed.message
         hasServerMessage = true
@@ -1213,6 +1225,9 @@ export async function loopAgentSteps(
         message: hasServerMessage ? errorMessage : `Agent '${agentTemplate.displayName}' (${agentType}) error: ${errorMessage}`,
         ...(statusCode !== undefined && { statusCode }),
         ...(errorCode !== undefined && { error: errorCode }),
+        ...(countryCode !== undefined && { countryCode }),
+        ...(countryBlockReason !== undefined && { countryBlockReason }),
+        ...(ipPrivacySignals !== undefined && { ipPrivacySignals }),
       },
     }
   }

@@ -447,8 +447,8 @@ describe('codeSearch', () => {
       const result = await searchPromise
       const value = asCodeSearchResult(result[0])
 
-      // formatCodeSearchOutput returns 'No results' for empty input
-      expect(value.stdout).toBe('No results')
+      // formatCodeSearchOutput returns 'Found 0 matches' for empty input
+      expect(value.stdout).toBe('Found 0 matches')
     })
   })
 

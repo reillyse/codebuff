@@ -20,7 +20,7 @@ describe('processStrReplace', () => {
 
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: oldStr, new: newStr, allowMultiple: false }],
+      replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: false }],
       initialContentPromise: Promise.resolve(initialContent),
       logger,
     })
@@ -41,7 +41,7 @@ describe('processStrReplace', () => {
 
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: oldStr, new: newStr, allowMultiple: false }],
+      replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: false }],
       initialContentPromise: Promise.resolve(initialContent),
       logger,
     })
@@ -61,7 +61,7 @@ describe('processStrReplace', () => {
 
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: oldStr, new: newStr, allowMultiple: false }],
+      replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: false }],
       initialContentPromise: Promise.resolve(initialContent),
       logger,
     })
@@ -80,7 +80,7 @@ describe('processStrReplace', () => {
 
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: oldStr, new: newStr, allowMultiple: false }],
+      replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: false }],
       initialContentPromise: Promise.resolve(initialContent),
       logger,
     })
@@ -95,7 +95,7 @@ describe('processStrReplace', () => {
   it('should return error if file content is null and oldStr is not empty', async () => {
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: 'old', new: 'new', allowMultiple: false }],
+      replacements: [{ oldString: 'old', newString: 'new', allowMultiple: false }],
       initialContentPromise: Promise.resolve(null),
       logger,
     })
@@ -110,7 +110,7 @@ describe('processStrReplace', () => {
   it('should return error if oldStr is empty and file exists', async () => {
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: '', new: 'new', allowMultiple: false }],
+      replacements: [{ oldString: '', newString: 'new', allowMultiple: false }],
       initialContentPromise: Promise.resolve('content'),
       logger,
     })
@@ -129,7 +129,7 @@ describe('processStrReplace', () => {
 
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: oldStr, new: newStr, allowMultiple: false }],
+      replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: false }],
       initialContentPromise: Promise.resolve(initialContent),
       logger,
     })
@@ -150,7 +150,7 @@ describe('processStrReplace', () => {
 
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: oldStr, new: newStr, allowMultiple: true }],
+      replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: true }],
       initialContentPromise: Promise.resolve(initialContent),
       logger,
     })
@@ -169,7 +169,7 @@ describe('processStrReplace', () => {
 
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: oldStr, new: newStr, allowMultiple: false }],
+      replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: false }],
       initialContentPromise: Promise.resolve(initialContent),
       logger,
     })
@@ -191,7 +191,7 @@ describe('processStrReplace', () => {
 
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: oldStr, new: newStr, allowMultiple: false }],
+      replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: false }],
       initialContentPromise: Promise.resolve(initialContent),
       logger,
     })
@@ -208,9 +208,9 @@ describe('processStrReplace', () => {
   it('should continue processing other replacements even if one fails', async () => {
     const initialContent = 'const x = 1;\nconst y = 2;\nconst z = 3;\n'
     const replacements = [
-      { old: 'const x = 1;', new: 'const x = 10;', allowMultiple: false }, // This exists
-      { old: 'const w = 4;', new: 'const w = 40;', allowMultiple: false }, // This doesn't exist
-      { old: 'const z = 3;', new: 'const z = 30;', allowMultiple: false }, // This also exists
+      { oldString: 'const x = 1;', newString: 'const x = 10;', allowMultiple: false }, // This exists
+      { oldString: 'const w = 4;', newString: 'const w = 40;', allowMultiple: false }, // This doesn't exist
+      { oldString: 'const z = 3;', newString: 'const z = 30;', allowMultiple: false }, // This also exists
     ]
 
     const result = await processStrReplace({
@@ -242,7 +242,7 @@ describe('processStrReplace', () => {
 
       const result = await processStrReplace({
         path: 'test.ts',
-        replacements: [{ old: oldStr, new: newStr, allowMultiple: false }],
+        replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: false }],
         initialContentPromise: Promise.resolve(initialContent),
         logger,
       })
@@ -262,7 +262,7 @@ describe('processStrReplace', () => {
 
       const result = await processStrReplace({
         path: 'test.ts',
-        replacements: [{ old: oldStr, new: newStr, allowMultiple: true }],
+        replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: true }],
         initialContentPromise: Promise.resolve(initialContent),
         logger,
       })
@@ -281,7 +281,7 @@ describe('processStrReplace', () => {
 
       const result = await processStrReplace({
         path: 'test.ts',
-        replacements: [{ old: oldStr, new: newStr, allowMultiple: true }],
+        replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: true }],
         initialContentPromise: Promise.resolve(initialContent),
         logger,
       })
@@ -296,9 +296,9 @@ describe('processStrReplace', () => {
     it('should handle mixed allowMultiple settings in multiple replacements', async () => {
       const initialContent = 'foo bar foo\nbaz baz baz\nqux qux'
       const replacements = [
-        { old: 'foo', new: 'FOO', allowMultiple: true }, // Replace all 'foo'
-        { old: 'baz', new: 'BAZ', allowMultiple: false }, // Should error on multiple 'baz'
-        { old: 'qux qux', new: 'QUX', allowMultiple: false }, // Single occurrence, should work
+        { oldString: 'foo', newString: 'FOO', allowMultiple: true }, // Replace all 'foo'
+        { oldString: 'baz', newString: 'BAZ', allowMultiple: false }, // Should error on multiple 'baz'
+        { oldString: 'qux qux', newString: 'QUX', allowMultiple: false }, // Single occurrence, should work
       ]
 
       const result = await processStrReplace({
@@ -335,7 +335,7 @@ function test3() {
 
       const result = await processStrReplace({
         path: 'test.ts',
-        replacements: [{ old: oldStr, new: newStr, allowMultiple: true }],
+        replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: true }],
         initialContentPromise: Promise.resolve(initialContent),
         logger,
       })
@@ -359,7 +359,7 @@ function test3() {
 
       const result = await processStrReplace({
         path: 'test.ts',
-        replacements: [{ old: oldStr, new: newStr, allowMultiple: true }],
+        replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: true }],
         initialContentPromise: Promise.resolve(initialContent),
         logger,
       })
@@ -383,7 +383,7 @@ function test3() {
 
       const result = await processStrReplace({
         path: 'test.ts',
-        replacements: [{ old: oldStr, new: newStr, allowMultiple: true }],
+        replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: true }],
         initialContentPromise: Promise.resolve(initialContent),
         logger,
       })
@@ -403,7 +403,7 @@ function test3() {
 
       const result = await processStrReplace({
         path: 'test.ts',
-        replacements: [{ old: oldStr, new: newStr, allowMultiple: true }],
+        replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: true }],
         initialContentPromise: Promise.resolve(initialContent),
         logger,
       })
@@ -422,13 +422,13 @@ function test3() {
     const initialContent = 'line 1\nline 2\nline 3\n'
     const replacements = [
       {
-        old: 'line 2\n',
-        new: 'this is a new line\n',
+        oldString: 'line 2\n',
+        newString: 'this is a new line\n',
         allowMultiple: false,
       },
       {
-        old: 'line 3\n',
-        new: 'new line 3\n',
+        oldString: 'line 3\n',
+        newString: 'new line 3\n',
         allowMultiple: false,
       },
     ]
@@ -454,7 +454,7 @@ function test3() {
 
     const result = await processStrReplace({
       path: 'test.ts',
-      replacements: [{ old: oldStr, new: newStr, allowMultiple: false }],
+      replacements: [{ oldString: oldStr, newString: newStr, allowMultiple: false }],
       initialContentPromise: Promise.resolve(initialContent),
       logger,
     })

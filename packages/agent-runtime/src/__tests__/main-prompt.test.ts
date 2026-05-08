@@ -375,6 +375,7 @@ describe('mainPrompt', () => {
   it('should update consecutiveAssistantMessages when new prompt is received', async () => {
     const sessionState = getInitialSessionState(mockFileContext)
     sessionState.mainAgentState.stepsRemaining = 12
+    const initialStepsRemaining = sessionState.mainAgentState.stepsRemaining
 
     const action = {
       type: 'prompt' as const,
@@ -392,9 +393,9 @@ describe('mainPrompt', () => {
       localAgentTemplates: mockLocalAgentTemplates,
     })
 
-    // When there's a new prompt, consecutiveAssistantMessages should be set to 1
+    // When there's a new prompt, stepsRemaining should decrement by 1
     expect(newSessionState.mainAgentState.stepsRemaining).toBe(
-      sessionState.mainAgentState.stepsRemaining - 1,
+      initialStepsRemaining - 1,
     )
   })
 

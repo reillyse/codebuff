@@ -66,18 +66,18 @@ export function createBase2(
       !isFast && !noAskUser && 'suggest_followups',
       'str_replace',
       'write_file',
-      'propose_str_replace',
-      'propose_write_file',
+      !isFree && 'propose_str_replace',
+      !isFree && 'propose_write_file',
       !noAskUser && 'ask_user',
       'skill',
       'set_output',
+      'list_directory',
+      'glob',
     ),
     spawnableAgents: buildArray(
       !isMax && 'file-picker',
       isMax && 'file-picker-max',
       'code-searcher',
-      'directory-lister',
-      'glob-matcher',
       'researcher-web',
       'researcher-docs',
       isFree ? 'commander-lite' : 'commander',
@@ -86,9 +86,12 @@ export function createBase2(
       isMax && 'thinker-best-of-n-opus',
       isDefault && 'editor',
       isMax && 'editor-multi-prompt',
+      'tmux-cli',
+      'browser-use',
       isFree && 'code-reviewer-lite',
       isDefault && 'code-reviewer',
       isMax && 'code-reviewer-multi-prompt',
+      'thinker-gpt',
       'context-pruner',
     ),
 
@@ -109,6 +112,7 @@ export function createBase2(
       }
 - **Be careful about terminal commands:** Be careful about instructing subagents to run terminal commands that could be destructive or have effects that are hard to undo (e.g. git push, git commit, running any scripts -- especially ones that could alter production environments (!), installing packages globally, etc). Don't run any of these effectful commands unless the user explicitly asks you to.
 - **Do what the user asks:** If the user asks you to do something, even running a risky terminal command, do it.
+- **Don't use set_output:** The set_output tool is for spawned subagents to report results. Don't use it yourself.
 
 # Code Editing Mandates
 
@@ -131,7 +135,8 @@ export function createBase2(
     - Remove unused variables, functions, and files as a result of your changes.
     - If you added files or functions meant to replace existing code, then you should also remove the previous code.
 - **Minimal new code comments:** Do not add many new comments while writing code, unless they were preexisting comments (keep those!) or unless the user asks you to add comments!
-- **Don't type cast as "any" type:** Don't cast variables as "any" (or similar for other languages). This is a bad practice as it leads to bugs. The code is more robust when every expression is typed.
+- **Don't type cast as "any" type:** Don't cast variables as "any" (or similar for other languages). This is a bad practice as it leads to bugs. Exception: when the value can truly be any type.
+- **Prefer str_replace to write_file:** str_replace is more efficient for targeted changes and gives more feedback. Only use write_file for new files or when necessary to rewrite the entire file.
 
 # Spawning agents guidelines
 
@@ -140,7 +145,7 @@ Use the spawn_agents tool to spawn specialized agents to help you complete the u
 - **Spawn multiple agents in parallel:** This increases the speed of your response **and** allows you to be more comprehensive by spawning more total agents to synthesize the best response.
 - **Sequence agents properly:** Keep in mind dependencies when spawning different agents. Don't spawn agents in parallel that depend on each other.
   ${buildArray(
-        '- Spawn context-gathering agents (file pickers, code-searcher, directory-lister, glob-matcher, and web/docs researchers) before making edits.',
+        '- Spawn context-gathering agents (file pickers, code searchers, and web/docs researchers) before making edits. Use the list_directory and glob tools directly for searching and exploring the codebase.',
         isFree &&
         '- Spawn the editor-lite agent to implement the changes after you have gathered all the context you need.',
         isDefault &&
@@ -299,7 +304,7 @@ ${PLACEHOLDER.GIT_CHANGES_PROMPT}
   }
 }
 
-const EXPLORE_PROMPT = `- Iteratively spawn file pickers, code-searchers, directory-listers, glob-matchers, commanders, and web/docs researchers to gather context as needed. The file-picker agent in particular is very useful to find relevant files -- try spawning multiple in parallel (say, 2-5) to explore different parts of the codebase. Use read_subtree if you need to grok a particular part of the codebase. Read all the relevant files using the read_files tool.`
+const EXPLORE_PROMPT = `- Iteratively spawn file pickers, code searchers, commanders, and web/docs researchers to gather context as needed. Use the list_directory and glob tools directly for searching and exploring the codebase. The file-picker and code-searcher agents are very useful to find relevant files -- try spawning multiple in parallel (say, 2-5 file-pickers and 1-3 code-searchers) to explore different parts of the codebase. Use read_subtree if you need to grok a particular part of the codebase. Read all the relevant files using the read_files tool.`
 
 function buildImplementationInstructionsPrompt({
   isSonnet,

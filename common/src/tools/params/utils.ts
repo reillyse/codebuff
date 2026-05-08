@@ -10,6 +10,55 @@ import {
 import type { JSONValue } from '../../types/json'
 import type { ToolResultOutput } from '../../types/messages/content-part'
 
+/**
+ * Coerces a value into an array if it isn't one already.
+ * Handles common LLM mistakes:
+ * - Single object/string passed instead of an array → wraps in array
+ * - Stringified JSON array passed as a string → parses it
+ * - Already an array → passes through
+ * - null/undefined → passes through (let Zod handle it)
+ */
+export function coerceToArray(val: unknown): unknown {
+  if (Array.isArray(val)) return val
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val)
+      if (Array.isArray(parsed)) return parsed
+      if (parsed != null) return [parsed]
+    } catch {
+      // Not valid JSON — fall through to wrap
+    }
+  }
+  if (val != null) return [val]
+  return val
+}
+
+/**
+ * Handles common replacement-key aliases emitted by some models while keeping
+ * the documented schema stable.
+ */
+export function normalizeReplacementAliases(val: unknown): unknown {
+  if (val === null || typeof val !== 'object' || Array.isArray(val)) {
+    return val
+  }
+
+  const replacement = { ...(val as Record<string, unknown>) }
+  for (const [target, aliases] of [
+    ['oldString', ['old', 'old_str', 'old_string']],
+    ['newString', ['new', 'new_str', 'new_string']],
+  ] as const) {
+    if (replacement[target] !== undefined) {
+      continue
+    }
+    const alias = aliases.find((key) => typeof replacement[key] === 'string')
+    if (alias) {
+      replacement[target] = replacement[alias]
+      delete replacement[alias]
+    }
+  }
+  return replacement
+}
+
 /** Only used for generating tool call strings before all tools are defined.
  *
  * @param toolName - The name of the tool to call

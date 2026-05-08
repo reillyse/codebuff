@@ -292,9 +292,9 @@ describe('context-pruner handleSteps', () => {
     expect(content).toContain('<conversation_summary>')
     expect(content).toContain('</conversation_summary>')
 
-    // Should contain the user and assistant markers
+    // Should contain user markers and assistant text
     expect(content).toContain('[USER]')
-    expect(content).toContain('[ASSISTANT]')
+    expect(content).toContain('Sure, I can help you with that')
   })
 
   test('includes tool call summaries in the output', () => {
@@ -316,8 +316,8 @@ describe('context-pruner handleSteps', () => {
     const content = results[0].input.messages[0].content[0].text
 
     // Should contain tool summaries
-    expect(content).toContain('Read files: file1.ts, file2.ts')
-    expect(content).toContain('Edited file: file1.ts')
+    expect(content).toContain('inspected files: file1.ts, file2.ts')
+    expect(content).toContain('edited file: file1.ts')
   })
 
   test('summarizes various tool types correctly', () => {
@@ -345,10 +345,10 @@ describe('context-pruner handleSteps', () => {
     const results = runHandleSteps(messages, 50000, 10000)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('Wrote file: new-file.ts')
-    expect(content).toContain('Ran command: npm test')
-    expect(content).toContain('Code search: "function"')
-    expect(content).toContain('Spawned agents:')
+    expect(content).toContain('wrote file: new-file.ts')
+    expect(content).toContain('ran command: npm test')
+    expect(content).toContain('code search for "function"')
+    expect(content).toContain('delegated agents:')
     expect(content).toContain('- file-picker')
     expect(content).toContain('- commander')
   })
@@ -365,7 +365,7 @@ describe('context-pruner handleSteps', () => {
     const results = runHandleSteps(messages, 50000, 10000)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('[TOOL ERROR: read_files] File not found')
+    expect(content).toContain('Tool error from read_files: File not found')
   })
 
   test('notes when user messages have images', () => {
@@ -564,7 +564,7 @@ describe('context-pruner handleSteps', () => {
     const results = runHandleSteps(messages, 50000, 10000)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('Spawned agent: file-picker')
+    expect(content).toContain('delegated agent file-picker')
   })
 
   test('handles long terminal commands by truncating', () => {
@@ -583,7 +583,7 @@ describe('context-pruner handleSteps', () => {
 
     // Should truncate to 50 chars + ...
     expect(content).toContain(
-      'Ran command: npm run build -- --config=production --verbose --o...',
+      'ran command: npm run build -- --config=production --verbose --o...',
     )
   })
 
@@ -597,7 +597,7 @@ describe('context-pruner handleSteps', () => {
     const results = runHandleSteps(messages, 50000, 10000)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('Used tool: unknown_tool_name')
+    expect(content).toContain('used tool unknown_tool_name')
   })
 
   test('handles multiple tool calls in single assistant message', () => {
@@ -630,8 +630,8 @@ describe('context-pruner handleSteps', () => {
     const content = results[0].input.messages[0].content[0].text
 
     // Both tool calls should be in the summary
-    expect(content).toContain('Read files: a.ts')
-    expect(content).toContain('Read files: b.ts')
+    expect(content).toContain('inspected files: a.ts')
+    expect(content).toContain('inspected files: b.ts')
   })
 
   test('handles mixed text and tool calls in assistant message', () => {
@@ -659,7 +659,7 @@ describe('context-pruner handleSteps', () => {
 
     // Should have both text and tool summary
     expect(content).toContain('Let me read that file for you')
-    expect(content).toContain('Read files: test.ts')
+    expect(content).toContain('inspected files: test.ts')
   })
 })
 
@@ -803,7 +803,7 @@ describe('context-pruner code_search with flags', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('Code search: "myFunction" (-g *.ts -i)')
+    expect(content).toContain('code search for "myFunction" (-g *.ts -i)')
   })
 })
 
@@ -877,7 +877,7 @@ describe('context-pruner ask_user with questions and answers', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('[USER ANSWERED] Option B was selected')
+    expect(content).toContain('User answered: Option B was selected')
   })
 
   test('includes multi-select answers', () => {
@@ -896,7 +896,7 @@ describe('context-pruner ask_user with questions and answers', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('[USER ANSWERED] Caching, Logging, Monitoring')
+    expect(content).toContain('User answered: Caching, Logging, Monitoring')
   })
 
   test('shows when user skipped question', () => {
@@ -913,7 +913,7 @@ describe('context-pruner ask_user with questions and answers', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('[USER SKIPPED QUESTION]')
+    expect(content).toContain('User skipped question')
   })
 })
 
@@ -964,7 +964,8 @@ describe('context-pruner terminal command exit codes', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('[COMMAND FAILED] Exit code: 1')
+    expect(content).toContain('Command failed')
+    expect(content).toContain('exit code: 1')
   })
 
   test('does not show failure for successful command (exit code 0)', () => {
@@ -1285,8 +1286,9 @@ First assistant response
       .text
 
     // Both parts should be present in cycle 1
-    expect(summary1Text).toContain('[TOOL ERROR: run_terminal_command] Test suite failed')
-    expect(summary1Text).toContain('[COMMAND FAILED] Exit code: 1')
+    expect(summary1Text).toContain('Tool error from run_terminal_command: Test suite failed')
+    expect(summary1Text).toContain('Command failed')
+    expect(summary1Text).toContain('exit code: 1')
 
     // Cycle 2: re-compact — the multi-part entry should stay as one entry
     const cycle2Messages: Message[] = [
@@ -1299,8 +1301,9 @@ First assistant response
       .text
 
     // Both parts should still be present together after re-compaction
-    expect(summary2Text).toContain('[TOOL ERROR: run_terminal_command] Test suite failed')
-    expect(summary2Text).toContain('[COMMAND FAILED] Exit code: 1')
+    expect(summary2Text).toContain('Tool error from run_terminal_command: Test suite failed')
+    expect(summary2Text).toContain('Command failed')
+    expect(summary2Text).toContain('exit code: 1')
 
     // They should be within the same --- delimited chunk (not split apart)
     const separator = '\n\n---\n\n'
@@ -1308,9 +1311,9 @@ First assistant response
       .replace(/<conversation_summary>[\s\S]*?\n\n/, '')
       .replace(/<\/conversation_summary>[\s\S]*/, '')
       .split(separator)
-    const errorChunk = chunks.find((c) => c.includes('[TOOL ERROR:'))
+    const errorChunk = chunks.find((c) => c.includes('Tool error from'))
     expect(errorChunk).toBeDefined()
-    expect(errorChunk).toContain('[COMMAND FAILED] Exit code: 1')
+    expect(errorChunk).toContain('Command failed')
   })
 
   test('handles 3+ compaction cycles without nested PREVIOUS SUMMARY markers', () => {
@@ -1569,7 +1572,7 @@ describe('context-pruner str_replace and write_file tool results', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('[EDIT RESULT: str_replace]')
+    expect(content).toContain('Edit result from str_replace')
     expect(content).toContain('unifiedDiff')
     expect(content).toContain('-foo')
     expect(content).toContain('+bar')
@@ -1592,7 +1595,7 @@ describe('context-pruner str_replace and write_file tool results', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('[EDIT RESULT: write_file]')
+    expect(content).toContain('Edit result from write_file')
     expect(content).toContain('export const hello')
   })
 
@@ -1614,7 +1617,7 @@ describe('context-pruner str_replace and write_file tool results', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('[EDIT RESULT: str_replace]')
+    expect(content).toContain('Edit result from str_replace')
     expect(content).toContain('...')
     // Should not contain the full diff
     expect(content).not.toContain(longDiff)
@@ -1680,8 +1683,8 @@ describe('context-pruner str_replace and write_file tool results', () => {
     const content = results[0].input.messages[0].content[0].text
 
     // Should have both the tool call summary and the full result
-    expect(content).toContain('Edited file: src/file.ts')
-    expect(content).toContain('[EDIT RESULT: str_replace]')
+    expect(content).toContain('edited file: src/file.ts')
+    expect(content).toContain('Edit result from str_replace')
     expect(content).toContain('errorMessage')
     expect(content).toContain('No match found for old string')
   })
@@ -1731,7 +1734,7 @@ describe('context-pruner glob and list_directory tools', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('Glob: **/*.ts')
+    expect(content).toContain('glob search for **/*.ts')
   })
 
   test('summarizes list_directory tool with path', () => {
@@ -1746,7 +1749,7 @@ describe('context-pruner glob and list_directory tools', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('Listed dir: src')
+    expect(content).toContain('listed directory: src')
   })
 
   test('summarizes read_subtree tool with paths', () => {
@@ -1761,7 +1764,7 @@ describe('context-pruner glob and list_directory tools', () => {
     const results = runHandleSteps(messages)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('Read subtree: src/components, src/utils')
+    expect(content).toContain('inspected subtrees: src/components, src/utils')
   })
 })
 
@@ -2229,12 +2232,12 @@ describe('context-pruner dual-budget behavior', () => {
     expect(content).not.toContain('_LONG_ASST_MIDDLE_MARKER_') // Middle marker falls in truncated gap
 
     // === Tool call summaries present ===
-    expect(content).toContain('Read files: src/model.ts, src/service.ts')
-    expect(content).toContain('Edited file: src/model.ts')
-    expect(content).toContain('Spawned agents:')
+    expect(content).toContain('inspected files: src/model.ts, src/service.ts')
+    expect(content).toContain('edited file: src/model.ts')
+    expect(content).toContain('delegated agents:')
 
     // === str_replace result: present but truncated at 2k chars ===
-    expect(content).toContain('[EDIT RESULT: str_replace]')
+    expect(content).toContain('Edit result from str_replace')
     expect(content).toContain('DIFF_START_MARKER_')
     expect(content).not.toContain('_DIFF_END_MARKER') // Truncated by 2k result limit
 
@@ -2405,12 +2408,9 @@ describe('context-pruner hippo memory integration', () => {
     const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('Hippo memory system')
+    expect(content).toContain('hippo context-search')
     expect(content).toContain(
       '## Relevant Context from Past Sessions',
-    )
-    expect(content).toContain(
-      'relevant details about pruned context',
     )
   })
 

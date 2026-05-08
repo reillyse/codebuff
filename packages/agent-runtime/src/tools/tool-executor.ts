@@ -7,7 +7,8 @@ import { cloneDeep } from 'lodash'
 
 import { getMCPToolData } from '../mcp'
 import { MCP_TOOL_SEPARATOR } from '../mcp-constants'
-import { getAgentShortName } from '../templates/prompts'
+import { getAgentShortName, getAgentToolName } from '../templates/prompts'
+import { formatValueForError } from '../util/format-value'
 import { codebuffToolHandlers } from './handlers/list'
 import {
   getMatchingSpawn,
@@ -66,35 +67,185 @@ function sparrowChildAgentIdsFromSpawn(
 
 export type ToolCallError = {
   toolName?: string
-  input: Record<string, unknown>
+  input: unknown
   error: string
 } & Pick<CodebuffToolCall, 'toolCallId'>
+
+const bareStringFieldRepairAllowlist: Partial<
+  Record<string, readonly string[]>
+> = {
+  code_search: ['pattern'],
+  find_files: ['prompt'],
+  glob: ['pattern'],
+  list_directory: ['path'],
+  lookup_agent_info: ['agentId'],
+  read_files: ['paths'],
+  read_subtree: ['paths'],
+  skill: ['name'],
+  web_search: ['query'],
+}
+
+function repairBareStringFieldObject(input: string, toolName: string): unknown {
+  const allowedFields = bareStringFieldRepairAllowlist[toolName]
+  if (!allowedFields) {
+    return undefined
+  }
+
+  const match = input
+    .trim()
+    .match(
+      /^\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*([^"{}\[\],][^{}\[\],]*)\s*\}$/,
+    )
+  if (!match) {
+    return undefined
+  }
+
+  const [, field, rawValue] = match
+  if (!allowedFields.includes(field)) {
+    return undefined
+  }
+
+  const value = rawValue.trim()
+  if (!value || value === 'null' || value === 'undefined') {
+    return undefined
+  }
+
+  return { [field]: value }
+}
+
+function parseStringifiedToolInput(
+  input: unknown,
+  toolName: string,
+): { input: unknown; parseError?: string } {
+  let parsed = input
+  let parseError: string | undefined
+
+  for (let i = 0; i < 3 && typeof parsed === 'string'; i++) {
+    const stringInput = parsed
+    try {
+      parsed = JSON.parse(stringInput)
+      parseError = undefined
+    } catch (error) {
+      const repaired = repairBareStringFieldObject(stringInput, toolName)
+      if (repaired !== undefined) {
+        parsed = repaired
+        parseError = undefined
+      } else {
+        parseError = error instanceof Error ? error.message : String(error)
+      }
+      break
+    }
+  }
+
+  return { input: parsed, parseError }
+}
+
+function stringInputError(
+  toolName: string,
+  toolCallId: string,
+  parseError?: string,
+): ToolCallError {
+  const parseDetails = parseError
+    ? ` Parsing as JSON failed: ${parseError}. The arguments may be malformed or incomplete.`
+    : ' Parsing succeeded, but the parsed value was still a string.'
+  return {
+    toolName,
+    toolCallId,
+    input: {},
+    error: `Invalid parameters for ${toolName}: expected the tool arguments to be an object, but received a string.${parseDetails} Re-issue the tool call with the full arguments object and properly escaped string values.`,
+  }
+}
+
+function summarizeMissingReplacementFields(
+  toolName: string,
+  issues: Array<{
+    expected?: unknown
+    code?: string
+    path?: PropertyKey[]
+    message?: string
+  }>,
+): string | undefined {
+  if (toolName !== 'str_replace' && toolName !== 'propose_str_replace') {
+    return undefined
+  }
+
+  const missingFields = issues.flatMap((issue) => {
+    const [root, index, field] = issue.path ?? []
+    const isMissingReplacementString =
+      issue.code === 'invalid_type' &&
+      issue.expected === 'string' &&
+      issue.message?.includes('received undefined') &&
+      root === 'replacements' &&
+      typeof index === 'number' &&
+      (field === 'oldString' || field === 'newString')
+
+    return isMissingReplacementString ? [`replacements[${index}].${field}`] : []
+  })
+
+  if (missingFields.length !== issues.length || missingFields.length === 0) {
+    return undefined
+  }
+
+  return [
+    'Missing required replacement fields:',
+    ...missingFields.map((field) => `- ${field}`),
+    '',
+    'If the intent is deletion, set "newString": "" explicitly.',
+  ].join('\n')
+}
+
+function getToolValidationHint(toolName: string): string | undefined {
+  if (toolName === 'str_replace' || toolName === 'propose_str_replace') {
+    return 'Expected shape: { "path": string, "replacements": [{ "oldString": string, "newString": string, "allowMultiple"?: boolean }] }.'
+  }
+  if (toolName === 'write_file' || toolName === 'propose_write_file') {
+    return 'Expected shape: { "path": string, "instructions": string, "content": string }. Quote string values and escape newlines/quotes inside content.'
+  }
+  return undefined
+}
 
 export function parseRawToolCall<T extends ToolName = ToolName>(params: {
   rawToolCall: {
     toolName: T
     toolCallId: string
-    input: Record<string, unknown>
+    input: unknown
   }
 }): CodebuffToolCall<T> | ToolCallError {
   const { rawToolCall } = params
   const toolName = rawToolCall.toolName
 
-  const processedParameters = rawToolCall.input
+  const processedParameters = parseStringifiedToolInput(
+    rawToolCall.input,
+    toolName,
+  )
   const paramsSchema = toolParams[toolName].inputSchema
 
-  const result = paramsSchema.safeParse(processedParameters)
+  if (typeof processedParameters.input === 'string') {
+    return stringInputError(
+      toolName,
+      rawToolCall.toolCallId,
+      processedParameters.parseError,
+    )
+  }
+
+  const result = paramsSchema.safeParse(processedParameters.input)
 
   if (!result.success) {
+    const hint = getToolValidationHint(toolName)
+    const summary = summarizeMissingReplacementFields(
+      toolName,
+      result.error.issues,
+    )
+    const validationDetails = JSON.stringify(result.error.issues, null, 2)
     return {
       toolName,
       toolCallId: rawToolCall.toolCallId,
       input: rawToolCall.input,
-      error: `Invalid parameters for ${toolName}: ${JSON.stringify(
-        result.error.issues,
-        null,
-        2,
-      )}`,
+      error: `Invalid parameters for ${toolName}: ${
+        summary
+          ? `${summary}\n\nRaw validation issues:\n${validationDetails}`
+          : validationDetails
+      }${hint ? `\n\n${hint}` : ''}`,
     }
   }
 
@@ -200,9 +351,10 @@ export async function executeToolCall<T extends ToolName>(
   }
 
   if ('error' in toolCall) {
+    const formattedInput = formatValueForError(input)
     onResponseChunk({
       type: 'error',
-      message: toolCall.error,
+      message: `${toolCall.error}\n\nOriginal tool call input:\n${formattedInput}`,
     })
     logger.debug(
       { toolCall, error: toolCall.error },
@@ -434,8 +586,18 @@ export function parseRawCustomToolCall(params: {
     }
   }
 
+  const parsedInput = parseStringifiedToolInput(rawToolCall.input, toolName)
+
+  if (typeof parsedInput.input === 'string') {
+    return stringInputError(
+      toolName,
+      rawToolCall.toolCallId,
+      parsedInput.parseError,
+    )
+  }
+
   const processedParameters: Record<string, any> = {}
-  for (const [param, val] of Object.entries(rawToolCall.input ?? {})) {
+  for (const [param, val] of Object.entries(parsedInput.input ?? {})) {
     processedParameters[param] = val
   }
 
@@ -464,7 +626,7 @@ export function parseRawCustomToolCall(params: {
     }
   }
 
-  const input = JSON.parse(JSON.stringify(rawToolCall.input))
+  const input = JSON.parse(JSON.stringify(parsedInput.input))
   if (endsAgentStepParam in input) {
     delete input[endsAgentStepParam]
   }
@@ -535,9 +697,10 @@ export async function executeCustomToolCall(
   }
 
   if ('error' in toolCall) {
+    const formattedInput = formatValueForError(input)
     onResponseChunk({
       type: 'error',
-      message: toolCall.error,
+      message: `${toolCall.error}\n\nOriginal tool call input:\n${formattedInput}`,
     })
     logger.debug(
       { toolCall, error: toolCall.error },
@@ -646,15 +809,15 @@ export function tryTransformAgentToolCall(params: {
 }): { toolName: 'spawn_agents'; input: Record<string, unknown> } | null {
   const { toolName, input, spawnableAgents } = params
 
-  const agentShortNames = spawnableAgents.map(getAgentShortName)
-  if (!agentShortNames.includes(toolName)) {
+  const matchesAgentToolName = (agentType: AgentTemplateType) =>
+    getAgentToolName(agentType) === toolName ||
+    getAgentShortName(agentType) === toolName
+
+  // Find the full agent type for this direct-call alias.
+  const fullAgentType = spawnableAgents.find(matchesAgentToolName)
+  if (!fullAgentType) {
     return null
   }
-
-  // Find the full agent type for this short name
-  const fullAgentType = spawnableAgents.find(
-    (agentType) => getAgentShortName(agentType) === toolName,
-  )
 
   // Convert to spawn_agents call - input already has prompt and params as top-level fields
   // (consistent with spawn_agents schema)
