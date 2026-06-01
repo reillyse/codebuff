@@ -67,7 +67,7 @@ import type { AgentDefinition } from './types/agent-definition'
 const definition: AgentDefinition = {
   id: 'simple-code-reviewer',
   displayName: 'Simple Code Reviewer',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: 'anthropic/claude-sonnet-4.6',
 
   // Tools this agent can use
   toolNames: [
@@ -132,7 +132,7 @@ const definition: AgentDefinition = {
   id: 'simple-code-reviewer',
   displayName: 'Simple Code Reviewer',
   publisher: 'your-publisher-id', // ← Add this line
-  model: 'anthropic/claude-sonnet-4.5',
+  model: 'anthropic/claude-sonnet-4.6',
   // ... rest of your definition
 }
 ```
@@ -166,7 +166,7 @@ const definition: AgentDefinition = {
   id: 'deep-code-reviewer',
   displayName: 'Deep Code Reviewer',
   publisher: 'your-publisher-id',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: 'anthropic/claude-sonnet-4.6',
 
   spawnerPrompt:
     'Spawn when you need to review code changes in the git diff or staged changes',

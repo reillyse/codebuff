@@ -34,12 +34,13 @@ export const openrouterModels = {
   // Updated from claude-sonnet-4.5 to match CURRENT_SONNET_MODEL
   openrouter_claude_sonnet_4_5: 'anthropic/claude-sonnet-4.6',
   openrouter_claude_sonnet_4: 'anthropic/claude-4-sonnet-20250522',
-  openrouter_claude_opus_4: 'anthropic/claude-opus-4.6',
-  openrouter_claude_3_5_haiku: 'anthropic/claude-3.5-haiku-20241022',
+  openrouter_claude_opus_4: 'anthropic/claude-opus-4.8',
+  // Updated from claude-3.5-haiku to claude-haiku-4.5
+  openrouter_claude_3_5_haiku: 'anthropic/claude-haiku-4.5',
   openrouter_claude_3_5_sonnet: 'anthropic/claude-3.5-sonnet-20240620',
   openrouter_gpt4o: 'openai/gpt-4o-2024-11-20',
-  openrouter_gpt5: 'openai/gpt-5.1',
-  openrouter_gpt5_chat: 'openai/gpt-5.1-chat',
+  openrouter_gpt5: 'openai/gpt-5.2',
+  openrouter_gpt5_chat: 'openai/gpt-5.2-chat',
   openrouter_gpt4o_mini: 'openai/gpt-4o-mini-2024-07-18',
   openrouter_gpt4_1_nano: 'openai/gpt-4.1-nano',
   openrouter_o3_mini: 'openai/o3-mini-2025-01-31',
@@ -94,16 +95,16 @@ export const models = {
 } as const
 
 /** The current Opus model version used by agents. Update this single constant when upgrading. */
-export const CURRENT_OPUS_MODEL = (process.env.CODEBUFF_OPUS_MODEL ?? 'anthropic/claude-opus-4.6') as 'anthropic/claude-opus-4.6'
+export const CURRENT_OPUS_MODEL = (process.env.CODEBUFF_OPUS_MODEL ?? 'anthropic/claude-opus-4.8') as 'anthropic/claude-opus-4.8'
 
 /** The current Sonnet model version used by agents. Update this single constant when upgrading. */
 export const CURRENT_SONNET_MODEL = 'anthropic/claude-sonnet-4.6' as const
 
 /** The current GPT-5 model version used by agents. Update this single constant when upgrading. */
-export const CURRENT_GPT5_MODEL = 'openai/gpt-5.1' as const
+export const CURRENT_GPT5_MODEL = 'openai/gpt-5.2' as const
 
 /** The current Grok model version used by agents. Update this single constant when upgrading. */
-export const CURRENT_GROK_MODEL = 'x-ai/grok-4.1-fast' as const
+export const CURRENT_GROK_MODEL = 'x-ai/grok-4.3' as const
 
 export const shortModelNames = {
   'gemini-2.5-pro': models.openrouter_gemini2_5_pro_preview,
@@ -141,11 +142,11 @@ export const providerModelNames = {
 export type Model = (typeof models)[keyof typeof models] | (string & {})
 
 export const shouldCacheModels = [
-  'anthropic/claude-opus-4.6',
+  'anthropic/claude-opus-4.8',
   'anthropic/claude-sonnet-4',
   'anthropic/claude-opus-4',
   'anthropic/claude-3.7-sonnet',
-  'anthropic/claude-3.5-haiku',
+  'anthropic/claude-haiku-4.5',
   'z-ai/glm-4.5',
   'qwen/qwen3-coder',
 ]

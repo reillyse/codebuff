@@ -42,7 +42,7 @@ const definition: AgentDefinition = {
   displayName: 'My Custom Agent',
   spawnerPrompt:
     'Spawn this agent for specialized workflow tasks requiring custom logic',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: 'anthropic/claude-sonnet-4.6',
   outputMode: 'last_message',
   includeMessageHistory: true,
   toolNames: ['read_files', 'write_file', 'end_turn'],
@@ -83,7 +83,7 @@ const definition: AgentDefinition = {
   displayName: 'API Documentation Specialist',
   spawnerPrompt:
     'Spawn this agent to write API documentation with examples, schemas, and error codes',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: 'anthropic/claude-sonnet-4.6',
   outputMode: 'last_message',
   includeMessageHistory: true,
 
@@ -130,7 +130,7 @@ const definition: AgentDefinition = {
   displayName: 'Database Migration Specialist',
   spawnerPrompt:
     'Spawn this agent to create reversible database migrations with proper indexing and rollback procedures',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: 'anthropic/claude-sonnet-4.6',
   outputMode: 'last_message',
   includeMessageHistory: true,
 
@@ -178,7 +178,7 @@ const definition: AgentDefinition = {
   id: 'code-analyzer',
   displayName: 'Code Analysis Expert',
   spawnerPrompt: 'Spawn for deep code analysis and refactoring suggestions',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: 'anthropic/claude-sonnet-4.6',
 
   toolNames: ['read_files', 'code_search', 'spawn_agents', 'write_file'],
   spawnableAgents: ['codebuff/thinker@0.0.1', 'codebuff/reviewer@0.0.1'],

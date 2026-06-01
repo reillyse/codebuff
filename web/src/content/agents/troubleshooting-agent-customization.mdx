@@ -94,7 +94,7 @@ import type { AgentDefinition } from './types/agent-definition'
 const definition: AgentDefinition = {
   id: 'my-agent',
   displayName: 'My Agent',
-  model: 'anthropic/claude-sonnet-4.5',
+  model: 'anthropic/claude-sonnet-4.6',
   toolNames: ['read_files', 'write_file', 'end_turn'],
   instructionsPrompt: 'Process the user\'s request...',
 }
@@ -253,7 +253,7 @@ Begin with minimal overrides and add complexity gradually:
 {
   "id": "CodebuffAI/reviewer",
   "override": true,
-  "model": "anthropic/claude-sonnet-4.5"
+  "model": "anthropic/claude-sonnet-4.6"
 }
 ```
 
@@ -308,7 +308,7 @@ git commit -m "Add custom reviewer agent"
 
 - `id` — Unique identifier
 - `displayName` — Human-readable name  
-- `model` — The LLM to use (e.g., `anthropic/claude-sonnet-4.5`)
+- `model` — The LLM to use (e.g., `anthropic/claude-sonnet-4.6`)
 - `toolNames` — Array of tools the agent can use
 - `instructionsPrompt` — What the agent should do
 

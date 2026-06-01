@@ -31,7 +31,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "code-reviewer-multi-prompt": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -72,7 +72,7 @@ export const bundledAgents: Record<string, any> = {
   "code-reviewer": {
     "id": "code-reviewer",
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "displayName": "Nit Pick Nick",
     "spawnerPrompt": "Reviews file changes and responds with critical feedback. Use this after making any significant change to the codebase; otherwise, no need to use this agent for minor changes since it takes a second.",
     "inputSchema": {
@@ -157,7 +157,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "opus-agent": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -257,7 +257,7 @@ export const bundledAgents: Record<string, any> = {
   "commander-lite": {
     "id": "commander-lite",
     "publisher": "codebuff",
-    "model": "x-ai/grok-4.1-fast",
+    "model": "x-ai/grok-4.3",
     "displayName": "Commander Lite",
     "spawnerPrompt": "Runs a single terminal command and describes its output using an LLM based on what information is requested.",
     "inputSchema": {
@@ -462,7 +462,7 @@ export const bundledAgents: Record<string, any> = {
     "id": "file-lister",
     "displayName": "Liszt the File Lister",
     "publisher": "codebuff",
-    "model": "x-ai/grok-4.1-fast",
+    "model": "x-ai/grok-4.3",
     "spawnerPrompt": "Lists up to 12 files that are relevant to the prompt within the given directories. Unless you know which directories are relevant, omit the directories parameter. This agent is great for finding files that could be relevant to the prompt.",
     "inputSchema": {
       "prompt": {
@@ -540,7 +540,7 @@ export const bundledAgents: Record<string, any> = {
     "id": "file-picker-max",
     "displayName": "Fletcher the File Fetcher",
     "publisher": "codebuff",
-    "model": "x-ai/grok-4.1-fast",
+    "model": "x-ai/grok-4.3",
     "reasoningOptions": {
       "enabled": false,
       "effort": "low",
@@ -632,7 +632,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "base2-fast-no-validation": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -687,7 +687,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "base2-fast": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -742,7 +742,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "base2-plan": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -804,7 +804,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "base2-max": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -866,7 +866,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "base2": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -928,7 +928,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "base2-evals": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -1050,7 +1050,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "base2-max-evals": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -1111,7 +1111,7 @@ export const bundledAgents: Record<string, any> = {
   "researcher-web": {
     "id": "researcher-web",
     "publisher": "codebuff",
-    "model": "x-ai/grok-4.1-fast",
+    "model": "x-ai/grok-4.3",
     "displayName": "Weeb",
     "spawnerPrompt": "Browses the web to find relevant information.",
     "inputSchema": {
@@ -1133,7 +1133,7 @@ export const bundledAgents: Record<string, any> = {
   "researcher-docs": {
     "id": "researcher-docs",
     "publisher": "codebuff",
-    "model": "x-ai/grok-4.1-fast",
+    "model": "x-ai/grok-4.3",
     "displayName": "Doc",
     "spawnerPrompt": "Expert at reading technical documentation of major public libraries and frameworks to find relevant information. (e.g. React, MongoDB, Postgres, etc.)",
     "inputSchema": {
@@ -1153,7 +1153,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "editor-gpt-5": {
     "publisher": "codebuff",
-    "model": "openai/gpt-5.1",
+    "model": "openai/gpt-5.2",
     "displayName": "Code Editor",
     "spawnerPrompt": "Expert code editor that implements code changes based on the user's request. Do not specify an input prompt for this agent; it inherits the context of the entire conversation with the user. Make sure to read any files intended to be edited before spawning this agent as it cannot read files on its own.",
     "outputMode": "structured_output",
@@ -1187,7 +1187,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "editor": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -1209,7 +1209,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "best-of-n-selector2": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -1283,7 +1283,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "editor-implementor": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -1306,7 +1306,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "editor-implementor-gpt-5": {
     "publisher": "codebuff",
-    "model": "openai/gpt-5.1",
+    "model": "openai/gpt-5.2",
     "displayName": "Implementation Generator",
     "spawnerPrompt": "Generates a complete implementation using propose_* tools that draft changes without applying them",
     "includeMessageHistory": true,
@@ -1324,7 +1324,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "editor-multi-prompt": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -1369,7 +1369,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "editor-implementor-opus": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -1393,7 +1393,7 @@ export const bundledAgents: Record<string, any> = {
   "thinker": {
     "id": "thinker",
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -1451,7 +1451,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "thinker-selector-opus": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"
@@ -1566,7 +1566,7 @@ export const bundledAgents: Record<string, any> = {
   },
   "thinker-best-of-n-opus": {
     "publisher": "codebuff",
-    "model": "anthropic/claude-opus-4.6",
+    "model": "anthropic/claude-opus-4.8",
     "providerOptions": {
       "only": [
         "amazon-bedrock"

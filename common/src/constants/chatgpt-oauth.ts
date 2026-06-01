@@ -32,6 +32,7 @@ export const OPENROUTER_TO_OPENAI_MODEL_MAP: Record<string, string> = {
   'openai/gpt-5.3': 'gpt-5.3',
   'openai/gpt-5.3-codex': 'gpt-5.3-codex',
   'openai/gpt-5.2': 'gpt-5.2',
+  'openai/gpt-5.2-chat': 'gpt-5.2-chat',
   'openai/gpt-5.2-codex': 'gpt-5.2-codex',
 
   // Nearby/optimistic aliases supported in current model config.

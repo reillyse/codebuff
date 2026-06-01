@@ -36,7 +36,7 @@ Claude Code can spend 5+ minutes grep-ing and reading file excerpts one at a tim
 Codebuff's approach:
 1. **Parse your entire codebase**: We analyze all source files and extract function names, class names, and type names
 2. **Build a code tree**: This creates a compact tree of all directories, files, and symbols in your project
-3. **Grok 4.1 Fast scans the tree**: We feed this code tree to Grok 4.1 Fast, which identifies up to 12 relevant files in seconds
+3. **Grok 4.3 scans the tree**: We feed this code tree to Grok 4.3, which identifies up to 12 relevant files in seconds
 4. **Gemini Flash summarizes**: Those 12 files are read and summarized by Gemini Flash
 5. **Main agent reads multiple files at once**: With the summaries, the main agent knows exactly what to read
 

@@ -370,8 +370,8 @@ export type ModelName =
   // Recommended Models
 
   // OpenAI
-  | 'openai/gpt-5.1'
-  | 'openai/gpt-5.1-chat'
+  | 'openai/gpt-5.2'
+  | 'openai/gpt-5.2-chat'
   | 'openai/gpt-5-mini'
   | 'openai/gpt-5-nano'
 
@@ -381,6 +381,7 @@ export type ModelName =
   | 'anthropic/claude-opus-4.1'
   | 'anthropic/claude-opus-4.6'
   | 'anthropic/claude-opus-4.7'
+  | 'anthropic/claude-opus-4.8'
 
   // Gemini
   | 'google/gemini-2.5-pro'
