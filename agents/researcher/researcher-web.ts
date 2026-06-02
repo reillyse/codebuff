@@ -1,4 +1,4 @@
-import { CURRENT_GROK_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_GPT5_MINI_MODEL } from '@codebuff/common/constants/model-config'
 
 import { publisher } from '../constants'
 
@@ -8,7 +8,7 @@ import type { SecretAgentDefinition } from '../types/secret-agent-definition'
 const definition: SecretAgentDefinition = {
   id: 'researcher-web',
   publisher,
-  model: CURRENT_GROK_MODEL,
+  model: CURRENT_GPT5_MINI_MODEL,
   displayName: 'Weeb',
   spawnerPrompt: `Browses the web to find relevant information.`,
   inputSchema: {

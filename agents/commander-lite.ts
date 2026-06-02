@@ -1,4 +1,4 @@
-import { CURRENT_GROK_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_HAIKU_MODEL } from '@codebuff/common/constants/model-config'
 
 import commander from './commander'
 
@@ -8,7 +8,7 @@ const definition: AgentDefinition = {
   ...commander,
   id: 'commander-lite',
   displayName: 'Commander Lite',
-  model: CURRENT_GROK_MODEL,
+  model: CURRENT_HAIKU_MODEL,
 }
 
 export default definition

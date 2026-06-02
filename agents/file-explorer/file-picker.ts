@@ -1,4 +1,4 @@
-import { CURRENT_GROK_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_HAIKU_MODEL } from '@codebuff/common/constants/model-config'
 
 import { publisher } from '../constants'
 import {
@@ -14,7 +14,7 @@ export const createFilePicker = (
   mode: FilePickerMode,
 ): Omit<SecretAgentDefinition, 'id'> => {
   const isMax = mode === 'max'
-  const model = isMax ? CURRENT_GROK_MODEL : 'google/gemini-2.5-flash-lite'
+  const model = CURRENT_HAIKU_MODEL
 
   return {
     displayName: 'Fletcher the File Fetcher',

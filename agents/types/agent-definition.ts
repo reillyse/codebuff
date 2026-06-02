@@ -382,51 +382,7 @@ export type ModelName =
   | 'anthropic/claude-opus-4.6'
   | 'anthropic/claude-opus-4.7'
   | 'anthropic/claude-opus-4.8'
-
-  // Gemini
-  | 'google/gemini-2.5-pro'
-  | 'google/gemini-2.5-flash'
-  | 'google/gemini-2.5-flash-lite'
-  | 'google/gemini-3.1-pro-preview'
-  | 'google/gemini-3.1-flash-lite-preview'
-  | 'google/gemini-2.5-flash-preview-09-2025'
-  | 'google/gemini-2.5-flash-lite-preview-09-2025'
-
-  // X-AI
-  | 'x-ai/grok-4'
-  | 'x-ai/grok-4-fast'
-  | 'x-ai/grok-code-fast-1'
-
-  // Qwen
-  | 'qwen/qwen3-max'
-  | 'qwen/qwen3-coder-plus'
-  | 'qwen/qwen3-coder'
-  | 'qwen/qwen3-coder:nitro'
-  | 'qwen/qwen3-coder-flash'
-  | 'qwen/qwen3-235b-a22b-2507'
-  | 'qwen/qwen3-235b-a22b-2507:nitro'
-  | 'qwen/qwen3-235b-a22b-thinking-2507'
-  | 'qwen/qwen3-235b-a22b-thinking-2507:nitro'
-  | 'qwen/qwen3-30b-a3b'
-  | 'qwen/qwen3-30b-a3b:nitro'
-
-  // DeepSeek
-  | 'deepseek/deepseek-chat-v3-0324'
-  | 'deepseek/deepseek-chat-v3-0324:nitro'
-  | 'deepseek/deepseek-r1-0528'
-  | 'deepseek/deepseek-r1-0528:nitro'
-
-  // Other open source models
-  | 'moonshotai/kimi-k2'
-  | 'moonshotai/kimi-k2:nitro'
-  | 'moonshotai/kimi-k2.5'
-  | 'moonshotai/kimi-k2.5:nitro'
-  | 'z-ai/glm-4.6'
-  | 'z-ai/glm-4.6:nitro'
-  | 'z-ai/glm-4.7'
-  | 'z-ai/glm-4.7:nitro'
-  | 'z-ai/glm-4.7-flash'
-  | 'z-ai/glm-4.7-flash:nitro'
+  | 'anthropic/claude-haiku-4.5'
   | (string & {})
 
 import type { ToolName, GetToolParams } from './tools'

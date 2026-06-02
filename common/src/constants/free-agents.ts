@@ -1,6 +1,10 @@
 import { parseAgentId } from '../util/agent-id-parsing'
 
-import { CURRENT_GROK_MODEL, type CostMode } from './model-config'
+import {
+  CURRENT_GPT5_MINI_MODEL,
+  CURRENT_HAIKU_MODEL,
+  type CostMode,
+} from './model-config'
 
 /**
  * The cost mode that indicates FREE mode.
@@ -20,17 +24,17 @@ export const FREE_MODE_AGENT_MODELS: Record<string, Set<string>> = {
   // Root orchestrator
   'base2-free': new Set(['minimax/minimax-m2.5']),
 
-  // File exploration agents
-  'file-picker': new Set(['google/gemini-2.5-flash-lite']),
-  'file-picker-max': new Set([CURRENT_GROK_MODEL]),
-  'file-lister': new Set([CURRENT_GROK_MODEL]),
+  // File exploration agents (standardized on Claude Haiku via OAuth)
+  'file-picker': new Set([CURRENT_HAIKU_MODEL]),
+  'file-picker-max': new Set([CURRENT_HAIKU_MODEL]),
+  'file-lister': new Set([CURRENT_HAIKU_MODEL]),
 
-  // Research agents
-  'researcher-web': new Set([CURRENT_GROK_MODEL]),
-  'researcher-docs': new Set([CURRENT_GROK_MODEL]),
+  // Research agents (standardized on GPT-5-mini via OAuth)
+  'researcher-web': new Set([CURRENT_GPT5_MINI_MODEL]),
+  'researcher-docs': new Set([CURRENT_GPT5_MINI_MODEL]),
 
-  // Command execution
-  'commander-lite': new Set([CURRENT_GROK_MODEL]),
+  // Command execution (standardized on Claude Haiku via OAuth)
+  'commander-lite': new Set([CURRENT_HAIKU_MODEL]),
 
   // Editor for free mode
   'editor-lite': new Set(['minimax/minimax-m2.5']),

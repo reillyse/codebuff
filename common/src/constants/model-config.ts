@@ -1,12 +1,8 @@
 import { isExplicitlyDefinedModel } from '../util/model-utils'
 
-// Allowed model prefixes for validation
-export const ALLOWED_MODEL_PREFIXES = [
-  'anthropic',
-  'openai',
-  'google',
-  'x-ai',
-] as const
+// Allowed model prefixes for validation.
+// Standardized on OpenAI + Anthropic (routed via OAuth subscriptions).
+export const ALLOWED_MODEL_PREFIXES = ['anthropic', 'openai'] as const
 
 export const costModes = [
   'free',
@@ -54,12 +50,6 @@ export const openrouterModels = {
 export type openrouterModel =
   (typeof openrouterModels)[keyof typeof openrouterModels]
 
-export const deepseekModels = {
-  deepseekChat: 'deepseek-chat',
-  deepseekReasoner: 'deepseek-reasoner',
-} as const
-export type DeepseekModel = (typeof deepseekModels)[keyof typeof deepseekModels]
-
 // Vertex uses "endpoint IDs" for finetuned models, which are just integers
 export const finetunedVertexModels = {
   ft_filepicker_003: '196166068534771712',
@@ -89,7 +79,6 @@ export type FinetunedVertexModel =
 
 export const models = {
   ...openaiModels,
-  ...deepseekModels,
   ...openrouterModels,
   ...finetunedVertexModels,
 } as const
@@ -103,8 +92,11 @@ export const CURRENT_SONNET_MODEL = 'anthropic/claude-sonnet-4.6' as const
 /** The current GPT-5 model version used by agents. Update this single constant when upgrading. */
 export const CURRENT_GPT5_MODEL = 'openai/gpt-5.2' as const
 
-/** The current Grok model version used by agents. Update this single constant when upgrading. */
-export const CURRENT_GROK_MODEL = 'x-ai/grok-4.3' as const
+/** The current lightweight GPT-5 model used by reasoning/research utility agents (routed via ChatGPT OAuth). */
+export const CURRENT_GPT5_MINI_MODEL = 'openai/gpt-5-mini' as const
+
+/** The current Haiku model used by lightweight utility agents (routed via Claude OAuth). */
+export const CURRENT_HAIKU_MODEL = 'anthropic/claude-haiku-4.5' as const
 
 export const shortModelNames = {
   'gemini-2.5-pro': models.openrouter_gemini2_5_pro_preview,
@@ -195,8 +187,6 @@ export function getLogoForModel(modelName: string): string | undefined {
 
   if (Object.values(openaiModels).includes(modelName as OpenAIModel))
     domain = providerDomains.openai
-  else if (Object.values(deepseekModels).includes(modelName as DeepseekModel))
-    domain = providerDomains.deepseek
   else if (modelName.includes('claude')) domain = providerDomains.anthropic
   else if (modelName.includes('grok')) domain = providerDomains.xai
 
@@ -214,8 +204,8 @@ export const getModelForMode = (
       free: models.openrouter_gemini2_5_flash,
       normal: models.openrouter_claude_sonnet_4,
       max: models.openrouter_claude_sonnet_4,
-      experimental: models.openrouter_gemini2_5_pro_preview,
-      ask: models.openrouter_gemini2_5_pro_preview,
+      experimental: models.openrouter_claude_opus_4,
+      ask: models.openrouter_claude_opus_4,
     }[costMode]
   }
   if (operation === 'file-requests') {

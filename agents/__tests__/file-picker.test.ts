@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test'
 
-import { CURRENT_GROK_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_HAIKU_MODEL } from '@codebuff/common/constants/model-config'
 
 import filePicker, { createFilePicker } from '../file-explorer/file-picker'
 
@@ -50,9 +50,9 @@ describe('file-picker agent', () => {
   })
 
   describe('createFilePicker - default mode', () => {
-    test('uses flash-lite model', () => {
+    test('uses haiku model', () => {
       const defaultPicker = createFilePicker('default')
-      expect(defaultPicker.model).toBe('google/gemini-2.5-flash-lite')
+      expect(defaultPicker.model).toBe(CURRENT_HAIKU_MODEL)
     })
 
     test('spawns single file-lister', () => {
@@ -81,9 +81,9 @@ describe('file-picker agent', () => {
   })
 
   describe('createFilePicker - max mode', () => {
-    test('uses grok model', () => {
+    test('uses haiku model', () => {
       const maxPicker = createFilePicker('max')
-      expect(maxPicker.model).toBe(CURRENT_GROK_MODEL)
+      expect(maxPicker.model).toBe(CURRENT_HAIKU_MODEL)
     })
 
     test('spawns two file-listers in parallel', () => {

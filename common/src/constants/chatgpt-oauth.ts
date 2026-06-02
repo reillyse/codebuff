@@ -35,6 +35,9 @@ export const OPENROUTER_TO_OPENAI_MODEL_MAP: Record<string, string> = {
   'openai/gpt-5.2-chat': 'gpt-5.2-chat',
   'openai/gpt-5.2-codex': 'gpt-5.2-codex',
 
+  // Lightweight reasoning/research model (routed via ChatGPT OAuth).
+  'openai/gpt-5-mini': 'gpt-5-mini',
+
   // Nearby/optimistic aliases supported in current model config.
   'openai/gpt-5.1': 'gpt-5.1',
   'openai/gpt-5.1-chat': 'gpt-5.1-chat',
