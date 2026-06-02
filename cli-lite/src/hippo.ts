@@ -310,32 +310,30 @@ const buildRichRunSummary = (runState: RunState): string | null => {
   return combined.length > 1000 ? combined.substring(0, 1000) + '...' : combined
 }
 
+/**
+ * Build a detailed output description for hippo's --output field.
+ *
+ * The narrative prose (what was discovered, what failed, why) is the valuable
+ * signal for learning — file lists are noise here and are tracked separately
+ * via the structured `--files-changed` flag. So we prefer the agent's own
+ * summary and deliberately avoid padding the output with file names.
+ */
 const buildOutputDescription = (
   runState: RunState,
   elapsedMs: number,
-  filesChanged: string[],
 ): string => {
   if (runState.output?.type === 'error') {
     return `Error: ${runState.output.message ?? 'Unknown error'}`
   }
 
+  // Prefer the agent's own prose summary (most informative for learning)
   const richSummary = buildRichRunSummary(runState)
   if (richSummary) return richSummary
 
-  const parts: string[] = []
-  if (filesChanged.length > 0) {
-    const fileList = filesChanged.slice(0, 5).join(', ')
-    const moreFiles = filesChanged.length > 5 ? ` +${filesChanged.length - 5} more` : ''
-    parts.push(`Modified: ${fileList}${moreFiles}.`)
-  }
-
-  if (parts.length === 0) {
-    const elapsedSeconds = Math.floor(elapsedMs / 1000)
-    const messageCount = runState.sessionState?.mainAgentState?.messageHistory?.length ?? 0
-    parts.push(`Completed in ${elapsedSeconds}s with ${messageCount} messages.`)
-  }
-
-  return parts.join(' ')
+  // Minimal fallback — no file lists (those live in --files-changed)
+  const elapsedSeconds = Math.floor(elapsedMs / 1000)
+  const messageCount = runState.sessionState?.mainAgentState?.messageHistory?.length ?? 0
+  return `Completed in ${elapsedSeconds}s with ${messageCount} messages.`
 }
 
 const getOutcome = (
@@ -495,7 +493,7 @@ export const storeRunToHippo = (params: StoreRunToHippoParams): void => {
 
   const sessionId = params.sessionId ?? generateHippoSessionId(agentMode)
   const inputSummary = buildInputSummary(prompt, agentMode)
-  const outputDescription = buildOutputDescription(runState, elapsedMs, filesChanged)
+  const outputDescription = buildOutputDescription(runState, elapsedMs)
   const outcome = getOutcome(runState, filesChanged, filesRead)
 
   const args = [
@@ -588,6 +586,68 @@ export type StoreSubagentResultParams = {
   sessionId: string
 }
 
+const SUBAGENT_OUTPUT_MAX_CHARS = 500
+
+/**
+ * Narrative-bearing keys a subagent's output object actually carries via set_output.
+ * Codebuff's enriched subagents emit:
+ *   - `output`  → commander / commander-lite (e.g. { output: '...' })
+ *   - `message` → the documented set_output convention (opus-agent / gpt-5-agent)
+ * We intentionally avoid speculative keys to keep extraction predictable.
+ */
+const SUBAGENT_NARRATIVE_KEYS = ['output', 'message']
+
+const truncateNarrative = (text: string): string =>
+  text.length > SUBAGENT_OUTPUT_MAX_CHARS
+    ? text.substring(0, SUBAGENT_OUTPUT_MAX_CHARS) + '...'
+    : text
+
+/**
+ * Build a prose output description for a subagent result.
+ *
+ * Like the top-level path, we prefer narrative (what the subagent discovered /
+ * concluded) over a bare 'Completed (Ns)'. Subagents report via set_output, so we
+ * mine the narrative fields they actually emit — 'output' (commander / commander-lite)
+ * and 'message' (opus-agent / gpt-5-agent) — falling back to the duration only when
+ * there's genuinely no prose to keep.
+ */
+const buildSubagentOutputDescription = (output: unknown, elapsedMs: number): string => {
+  const completedFallback = `Completed (${Math.floor(elapsedMs / 1000)}s).`
+
+  // Plain string output → use directly
+  if (typeof output === 'string') {
+    const trimmed = output.trim()
+    return trimmed ? truncateNarrative(trimmed) : completedFallback
+  }
+
+  if (output && typeof output === 'object') {
+    const obj = output as Record<string, unknown>
+
+    // Errors: keep the error message (that's the most valuable signal)
+    if (obj.type === 'error') {
+      const msg = typeof obj.message === 'string' ? obj.message : 'Unknown error'
+      return `Error: ${truncateNarrative(msg)}`
+    }
+
+    // Cancelled: surface the cancel reason if present (outcome is 'failure',
+    // so a bare 'Completed (Ns)' here would be misleading).
+    if (obj.type === 'cancelled') {
+      const msg = typeof obj.message === 'string' ? obj.message.trim() : ''
+      return msg ? truncateNarrative(msg) : 'Cancelled'
+    }
+
+    // Prefer the first narrative-bearing field present
+    for (const key of SUBAGENT_NARRATIVE_KEYS) {
+      const value = obj[key]
+      if (typeof value === 'string' && value.trim()) {
+        return truncateNarrative(value.trim())
+      }
+    }
+  }
+
+  return completedFallback
+}
+
 /**
  * Store a subagent result to hippo memory (fire-and-forget).
  * Uses a distinct agent name (e.g. 'codebuff-commander') so hippo can
@@ -603,20 +663,7 @@ export const storeSubagentResultToHippo = (params: StoreSubagentResultParams): v
     : prompt
   const inputSummary = `[subagent:${agentType}] ${truncatedPrompt}`
 
-  let outputDescription: string
-  if (output && typeof output === 'object' && 'type' in output) {
-    const typed = output as { type: string; message?: string }
-    if (typed.type === 'error') {
-      outputDescription = `Error: ${typed.message ?? 'Unknown error'}`
-    } else if ('message' in typed && typeof typed.message === 'string') {
-      const msg = typed.message
-      outputDescription = msg.length > 500 ? msg.substring(0, 500) + '...' : msg
-    } else {
-      outputDescription = `Completed (${Math.floor(elapsedMs / 1000)}s)`
-    }
-  } else {
-    outputDescription = `Completed (${Math.floor(elapsedMs / 1000)}s)`
-  }
+  const outputDescription = buildSubagentOutputDescription(output, elapsedMs)
 
   const outType = output && typeof output === 'object' && 'type' in output
     ? (output as { type: string }).type

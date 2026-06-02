@@ -6,6 +6,7 @@ import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
 
 import {
+  buildSubagentOutputDescription,
   extractBriefTopics,
   generateHippoSessionId,
   HIPPO_BINARY,
@@ -509,5 +510,145 @@ describe('storePruningSummaryToHippo', () => {
     }).not.toThrow()
 
     expect(spawnSpy).not.toHaveBeenCalled()
+  })
+})
+
+// =============================================================================
+// buildSubagentOutputDescription
+// =============================================================================
+
+describe('buildSubagentOutputDescription', () => {
+  const ELAPSED_MS = 4000
+  const completedFallback = `Completed (${Math.floor(ELAPSED_MS / 1000)}s).`
+
+  describe('narrative keys', () => {
+    it('should use the `output` key (commander / commander-lite)', () => {
+      const result = buildSubagentOutputDescription(
+        { output: 'git log shows 3 recent commits' },
+        ELAPSED_MS,
+      )
+      expect(result).toBe('git log shows 3 recent commits')
+    })
+
+    it('should use the `message` key (opus-agent / gpt-5-agent)', () => {
+      const result = buildSubagentOutputDescription(
+        { message: 'Found the bug in the auth module' },
+        ELAPSED_MS,
+      )
+      expect(result).toBe('Found the bug in the auth module')
+    })
+
+    it('should prefer `output` over `message` when both are present', () => {
+      const result = buildSubagentOutputDescription(
+        { output: 'from output', message: 'from message' },
+        ELAPSED_MS,
+      )
+      expect(result).toBe('from output')
+    })
+
+    it('should trim surrounding whitespace from the narrative', () => {
+      const result = buildSubagentOutputDescription(
+        { output: '   trimmed value   ' },
+        ELAPSED_MS,
+      )
+      expect(result).toBe('trimmed value')
+    })
+
+    it('should skip a blank narrative value and fall back', () => {
+      const result = buildSubagentOutputDescription({ output: '   ' }, ELAPSED_MS)
+      expect(result).toBe(completedFallback)
+    })
+
+    it('should ignore non-string narrative values and fall back', () => {
+      const result = buildSubagentOutputDescription({ output: 42 }, ELAPSED_MS)
+      expect(result).toBe(completedFallback)
+    })
+  })
+
+  describe('error outputs', () => {
+    it('should surface the error message with an Error: prefix', () => {
+      const result = buildSubagentOutputDescription(
+        { type: 'error', message: 'Something broke' },
+        ELAPSED_MS,
+      )
+      expect(result).toBe('Error: Something broke')
+    })
+
+    it('should use "Unknown error" when an error output has no message', () => {
+      const result = buildSubagentOutputDescription({ type: 'error' }, ELAPSED_MS)
+      expect(result).toBe('Error: Unknown error')
+    })
+  })
+
+  describe('cancelled outputs', () => {
+    it('should surface the cancel reason when present', () => {
+      const result = buildSubagentOutputDescription(
+        { type: 'cancelled', message: 'User interrupted' },
+        ELAPSED_MS,
+      )
+      expect(result).toBe('User interrupted')
+    })
+
+    it('should return "Cancelled" when no reason is present', () => {
+      const result = buildSubagentOutputDescription({ type: 'cancelled' }, ELAPSED_MS)
+      expect(result).toBe('Cancelled')
+    })
+  })
+
+  describe('plain string outputs', () => {
+    it('should use a non-empty plain string directly', () => {
+      const result = buildSubagentOutputDescription('a plain string result', ELAPSED_MS)
+      expect(result).toBe('a plain string result')
+    })
+
+    it('should fall back for an empty/whitespace string', () => {
+      expect(buildSubagentOutputDescription('', ELAPSED_MS)).toBe(completedFallback)
+      expect(buildSubagentOutputDescription('   ', ELAPSED_MS)).toBe(completedFallback)
+    })
+  })
+
+  describe('truncation', () => {
+    it('should truncate narrative longer than 500 chars and append ...', () => {
+      const long = 'A'.repeat(600)
+      const result = buildSubagentOutputDescription({ output: long }, ELAPSED_MS)
+      expect(result.length).toBe(503) // 500 + '...'
+      expect(result.endsWith('...')).toBe(true)
+      expect(result.startsWith('A'.repeat(500))).toBe(true)
+    })
+
+    it('should truncate a long error message too', () => {
+      const long = 'E'.repeat(600)
+      const result = buildSubagentOutputDescription(
+        { type: 'error', message: long },
+        ELAPSED_MS,
+      )
+      expect(result).toBe(`Error: ${'E'.repeat(500)}...`)
+    })
+
+    it('should not truncate narrative of exactly 500 chars', () => {
+      const exact = 'B'.repeat(500)
+      const result = buildSubagentOutputDescription({ output: exact }, ELAPSED_MS)
+      expect(result).toBe(exact)
+    })
+  })
+
+  describe('Completed fallback', () => {
+    it('should fall back for an object with no narrative keys', () => {
+      const result = buildSubagentOutputDescription({ foo: 'bar' }, ELAPSED_MS)
+      expect(result).toBe(completedFallback)
+    })
+
+    it('should fall back for null output', () => {
+      expect(buildSubagentOutputDescription(null, ELAPSED_MS)).toBe(completedFallback)
+    })
+
+    it('should fall back for undefined output', () => {
+      expect(buildSubagentOutputDescription(undefined, ELAPSED_MS)).toBe(completedFallback)
+    })
+
+    it('should reflect the elapsed seconds in the fallback', () => {
+      const result = buildSubagentOutputDescription({}, 12000)
+      expect(result).toBe('Completed (12s).')
+    })
   })
 })
