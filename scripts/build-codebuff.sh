@@ -31,10 +31,15 @@ bun install
 
 echo ""
 
-# Find where global npm binaries are installed
-GLOBAL_BIN=$(npm config get prefix)/bin
+# Find where codebuff is currently installed, or fall back to npm global bin
+EXISTING_BIN=$(which codebuff 2>/dev/null || true)
+if [ -n "$EXISTING_BIN" ]; then
+  GLOBAL_BIN=$(dirname "$EXISTING_BIN")
+else
+  GLOBAL_BIN=$(npm config get prefix)/bin
+fi
 if [ ! -d "$GLOBAL_BIN" ]; then
-  echo "❌ Could not find global npm bin directory: $GLOBAL_BIN"
+  echo "❌ Could not find global bin directory: $GLOBAL_BIN"
   exit 1
 fi
 echo "Global bin directory: $GLOBAL_BIN"
