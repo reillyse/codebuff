@@ -1,6 +1,6 @@
 {
   "name": "@codebuff/cli-lite",
-  "version": "0.1.0",
+  "version": "0.1.0-8a9536f99",
   "private": true,
   "type": "module",
   "bin": {
@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "bun run prebuild:agents && bun run src/index.ts --cwd ..",
+    "stamp:version": "bun run scripts/stamp-version.ts",
     "typecheck": "tsc --noEmit -p .",
     "build:binary": "bun ./scripts/build-binary.ts codebuff-lite $npm_package_version",
     "prebuild:agents": "bun run scripts/prebuild-agents.ts"
