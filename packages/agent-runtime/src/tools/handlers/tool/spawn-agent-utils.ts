@@ -80,6 +80,10 @@ export function extractSubagentContextParams(
     logger: params.logger,
     fetch: params.fetch,
 
+    // AgentRuntimeDeps - Subagent lifecycle hooks
+    onBeforeSubagentPrompt: params.onBeforeSubagentPrompt,
+    onAfterSubagentComplete: params.onAfterSubagentComplete,
+
     // AgentRuntimeScopedDeps - Client (WebSocket)
     handleStepsLogChunk: params.handleStepsLogChunk,
     requestToolCall: params.requestToolCall,
@@ -436,10 +440,30 @@ export async function executeSubagent(
   }
   onResponseChunk(startEvent)
 
+  // Note: elapsedMs includes onBeforeSubagentPrompt latency (e.g. hippo context fetch) + subagent execution time
+  const subagentStartTime = Date.now()
+
+  // Enrich prompt via lifecycle hook (e.g. hippo context injection)
+  let effectivePrompt = prompt
+  if (withDefaults.onBeforeSubagentPrompt) {
+    try {
+      const enrichment = await withDefaults.onBeforeSubagentPrompt({
+        agentType: agentTemplate.id,
+        prompt: prompt ?? '',
+      })
+      if (enrichment?.enrichedPrompt) {
+        effectivePrompt = enrichment.enrichedPrompt
+      }
+    } catch (e) {
+      withDefaults.logger.warn({ error: e instanceof Error ? e.message : String(e), agentType: agentTemplate.id }, 'onBeforeSubagentPrompt hook failed')
+    }
+  }
+
   let result: Awaited<ReturnType<typeof loopAgentSteps>>
   try {
     result = await loopAgentSteps({
       ...withDefaults,
+      prompt: effectivePrompt,
       // Don't propagate parent's image content to subagents.
       // If subagents need to see images, they get them through includeMessageHistory,
       // not by creating new image-containing messages for their prompts.
@@ -487,6 +511,18 @@ export async function executeSubagent(
     }
     // Attach agent state so callers can recover partial costs from failed subagents
     ;(enriched as Error & { agentState: AgentState }).agentState = withDefaults.agentState
+
+    // Fire-and-forget: notify lifecycle hook about failure
+    withDefaults.onAfterSubagentComplete?.({
+      agentType: agentTemplate.id,
+      prompt: prompt ?? '',
+      output: { type: 'error', message: errorInfo.message },
+      elapsedMs: Date.now() - subagentStartTime,
+    })?.catch((e) => withDefaults.logger.warn(
+      { error: e instanceof Error ? e.message : String(e), agentType: agentTemplate.id },
+      'onAfterSubagentComplete hook failed',
+    ))
+
     throw enriched
   }
 
@@ -501,6 +537,17 @@ export async function executeSubagent(
     prompt,
     params: spawnParams,
   })
+
+  // Fire-and-forget: notify lifecycle hook about completion
+  withDefaults.onAfterSubagentComplete?.({
+    agentType: agentTemplate.id,
+    prompt: prompt ?? '',
+    output: result.output,
+    elapsedMs: Date.now() - subagentStartTime,
+  })?.catch((e) => withDefaults.logger.warn(
+    { error: e instanceof Error ? e.message : String(e), agentType: agentTemplate.id },
+    'onAfterSubagentComplete hook failed',
+  ))
 
   if (result.agentState.runId) {
     parentAgentState.childRunIds.push(result.agentState.runId)

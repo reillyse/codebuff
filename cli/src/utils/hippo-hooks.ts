@@ -760,6 +760,171 @@ export const storeErrorToHippo = (params: {
   ])
 }
 
+// ---------------------------------------------------------------------------
+// Subagent hippo helpers
+// ---------------------------------------------------------------------------
+
+const HIPPO_SUBAGENT_TIMEOUT_MS = 3000
+const HIPPO_SUBAGENT_CONTEXT_MAX_CHARS = 1500
+
+const HIPPO_ENRICHED_AGENTS = ['commander', 'commander-lite', 'file-picker', 'file-picker-max', 'opus-agent', 'gpt-5-agent']
+
+/**
+ * Extract the short agent ID from a potentially fully-qualified ID
+ * (e.g. 'codebuff/commander@latest' → 'commander').
+ */
+const getShortAgentId = (agentType: string): string => {
+  const withoutVersion = agentType.split('@')[0]
+  const parts = withoutVersion.split('/')
+  return parts[parts.length - 1]
+}
+
+/**
+ * Fetch hippo context for a subagent call. Lighter version of getHippoContext
+ * with shorter timeout and no retry (subagents are time-sensitive).
+ */
+export const getSubagentHippoContext = async (
+  agentType: string,
+  prompt: string,
+  sessionId: string,
+): Promise<HippoContextResult> => {
+  try {
+    if (!isHippoAvailable()) return { context: '', connectionOk: null, lastError: null }
+
+    const trimmedQuery = prompt.trim()
+    if (!trimmedQuery) return { context: '', connectionOk: null, lastError: null }
+
+    const truncatedQuery = trimmedQuery.length > HIPPO_QUERY_MAX_LENGTH
+      ? trimmedQuery.substring(0, HIPPO_QUERY_MAX_LENGTH)
+      : trimmedQuery
+
+    logger.debug({ agentType, query: truncatedQuery.substring(0, 80) }, 'Fetching hippo context for subagent')
+
+    const args = ['context-search', truncatedQuery, '--session', sessionId]
+
+    logHippoPrompt('query', truncatedQuery, {
+      'Type': `subagent:${agentType}`,
+      'Session': sessionId,
+    })
+
+    const { stdout, error } = await runHippoAsync(args, HIPPO_SUBAGENT_TIMEOUT_MS)
+
+    if (stdout === null) {
+      logHippoPrompt('response', '(subagent command failed)')
+      return { context: '', connectionOk: false, lastError: error ?? 'Unknown error' }
+    }
+
+    const trimmedResult = stdout.trim()
+    if (!trimmedResult || trimmedResult.toUpperCase() === 'NONE' || trimmedResult.length < 20) {
+      logger.debug({ agentType }, 'Hippo subagent context-search found nothing relevant')
+      return { context: '', connectionOk: true, lastError: null }
+    }
+
+    const cappedResult = trimmedResult.length > HIPPO_SUBAGENT_CONTEXT_MAX_CHARS
+      ? trimmedResult.substring(0, HIPPO_SUBAGENT_CONTEXT_MAX_CHARS) + '...'
+      : trimmedResult
+
+    logger.debug({ agentType, contextLength: cappedResult.length }, 'Hippo subagent context extracted')
+    logHippoPrompt('response', cappedResult, {
+      'Type': `subagent:${agentType}`,
+      'Content length': cappedResult.length,
+    })
+    return { context: cappedResult, connectionOk: true, lastError: null }
+  } catch (error) {
+    logger.debug(
+      { error: error instanceof Error ? error.message : String(error), agentType },
+      'Hippo subagent context-search failed',
+    )
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    return { context: '', connectionOk: false, lastError: errorMessage }
+  }
+}
+
+export type StoreSubagentResultParams = {
+  agentType: string
+  prompt: string
+  output: unknown
+  elapsedMs: number
+  sessionId: string
+}
+
+/**
+ * Store a subagent result to hippo memory (fire-and-forget).
+ * Uses a distinct agent name (e.g. 'codebuff-commander') so hippo can
+ * differentiate subagent runs from top-level runs.
+ */
+export const storeSubagentResultToHippo = (params: StoreSubagentResultParams): void => {
+  if (!isHippoAvailable()) return
+
+  const { agentType, prompt, output, elapsedMs, sessionId } = params
+
+  const truncatedPrompt = prompt.length > 200
+    ? prompt.substring(0, 200) + '...'
+    : prompt
+  const inputSummary = `[subagent:${agentType}] ${truncatedPrompt}`
+
+  let outputDescription: string
+  if (output && typeof output === 'object' && 'type' in output) {
+    const typed = output as { type: string; message?: string }
+    if (typed.type === 'error') {
+      outputDescription = `Error: ${typed.message ?? 'Unknown error'}`
+    } else if ('message' in typed && typeof typed.message === 'string') {
+      const msg = typed.message
+      outputDescription = msg.length > 500 ? msg.substring(0, 500) + '...' : msg
+    } else {
+      outputDescription = `Completed (${Math.floor(elapsedMs / 1000)}s)`
+    }
+  } else {
+    outputDescription = `Completed (${Math.floor(elapsedMs / 1000)}s)`
+  }
+
+  const outType = output && typeof output === 'object' && 'type' in output
+    ? (output as { type: string }).type
+    : 'success'
+  const outcome: 'success' | 'failure' = outType === 'error' || outType === 'cancelled' ? 'failure' : 'success'
+
+  const args = [
+    'store',
+    '--agent', `codebuff-${agentType}`,
+    '--session', sessionId,
+    '--input', inputSummary,
+    '--output', outputDescription,
+    '--outcome', outcome,
+  ]
+
+  logger.debug({ agentType, outcome }, 'Storing subagent result to hippo')
+
+  logHippoPrompt('store', `Input: ${inputSummary}\nOutput: ${outputDescription}`, {
+    'Session': sessionId,
+    'Type': `subagent:${agentType}`,
+    'Outcome': outcome,
+  })
+
+  spawnHippoStore(args)
+}
+
+/**
+ * Build subagent lifecycle hooks for hippo context injection.
+ * Pass the returned object spread into the CodebuffClient constructor.
+ */
+export const buildHippoSubagentHooks = (getSessionId: () => string) => {
+  return {
+    onBeforeSubagentPrompt: async ({ agentType, prompt }: { agentType: string; prompt: string }) => {
+      const shortId = getShortAgentId(agentType)
+      if (!HIPPO_ENRICHED_AGENTS.includes(shortId)) return undefined
+      if (!isHippoAvailable()) return undefined
+      const result = await getSubagentHippoContext(shortId, prompt, getSessionId())
+      if (!result.context) return undefined
+      return { enrichedPrompt: `## Relevant Context from Past Sessions\n${result.context}\n\n${prompt}` }
+    },
+    onAfterSubagentComplete: async ({ agentType, prompt, output, elapsedMs }: { agentType: string; prompt: string; output: unknown; elapsedMs: number }) => {
+      const shortId = getShortAgentId(agentType)
+      if (!HIPPO_ENRICHED_AGENTS.includes(shortId)) return
+      storeSubagentResultToHippo({ agentType: shortId, prompt, output, elapsedMs, sessionId: getSessionId() })
+    },
+  }
+}
+
 /**
  * Helper to spawn hippo store process in background
  */

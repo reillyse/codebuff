@@ -4,10 +4,12 @@ import { CodebuffClient } from '@codebuff/sdk'
 
 import { getAuthTokenDetails } from './auth'
 import { getCliEnv, getSystemProcessEnv } from './env'
+import { buildHippoSubagentHooks } from './hippo-hooks'
 import { loadAgentDefinitions } from './local-agent-registry'
 import { logger } from './logger'
 import { getRgPath } from '../native/ripgrep'
 import { getProjectRoot } from '../project-files'
+import { useChatStore } from '../state/chat-store'
 
 import type { ClientToolCall } from '@codebuff/common/tools/list'
 
@@ -95,6 +97,7 @@ export async function getCodebuffClient(): Promise<CodebuffClient | null> {
             ]
           },
         },
+        ...buildHippoSubagentHooks(() => useChatStore.getState().chatSessionId),
       })
     } catch (error) {
       logger.error(error, 'Failed to initialize CodebuffClient')

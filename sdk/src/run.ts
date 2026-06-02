@@ -123,6 +123,20 @@ export type CodebuffClientOptions = {
   >
   customToolDefinitions?: CustomToolDefinition[]
 
+  /** Optional hook called before a subagent's prompt is sent to the LLM. Return an enriched prompt to inject context. */
+  onBeforeSubagentPrompt?: (params: {
+    agentType: string
+    prompt: string
+  }) => Promise<{ enrichedPrompt: string } | undefined>
+
+  /** Optional hook called after a subagent completes (fire-and-forget). */
+  onAfterSubagentComplete?: (params: {
+    agentType: string
+    prompt: string
+    output: unknown
+    elapsedMs: number
+  }) => Promise<void>
+
   fsSource?: Source<CodebuffFileSystem>
   spawnSource?: Source<CodebuffSpawn>
   logger?: Logger
@@ -206,6 +220,9 @@ async function runOnce({
   fileFilter,
   overrideTools,
   customToolDefinitions,
+
+  onBeforeSubagentPrompt,
+  onAfterSubagentComplete,
 
   fsSource = () => require('fs').promises,
   spawnSource,
@@ -375,6 +392,8 @@ async function runOnce({
   const agentRuntimeImpl = getAgentRuntimeImpl({
     logger,
     apiKey,
+    onBeforeSubagentPrompt,
+    onAfterSubagentComplete,
     handleStepsLogChunk: () => {
       // Does nothing for now
     },

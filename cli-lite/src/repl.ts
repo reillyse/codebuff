@@ -3,6 +3,7 @@ import { createInterface } from 'readline'
 import { CodebuffClient, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, setClaudeOAuthFallbackEnabled } from '@codebuff/sdk'
 
 import {
+  buildHippoSubagentHooks,
   getHippoContext,
   storeRunToHippo,
   storeErrorToHippo,
@@ -199,19 +200,20 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     })
   }
 
+  let previousRun: RunState | undefined
+  let running = false
+  let abortController: AbortController | undefined
+  let sessionId = generateHippoSessionId(currentMode)
+  let queuedMessage: string | undefined
+
   const client = new CodebuffClient({
     apiKey, cwd, agentDefinitions,
     terminalColumns: termSize.columns, terminalRows: termSize.rows,
     overrideTools: {
       ask_user: createAskUserHandler(askUserReadLine),
     },
+    ...buildHippoSubagentHooks(() => sessionId),
   })
-
-  let previousRun: RunState | undefined
-  let running = false
-  let abortController: AbortController | undefined
-  let sessionId = generateHippoSessionId(currentMode)
-  let queuedMessage: string | undefined
 
   const runPrompt = async (prompt: string): Promise<void> => {
     if (!prompt.trim()) return
@@ -627,15 +629,16 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
     })
   }
 
+  const sessionId = generateHippoSessionId(DEFAULT_AGENT_MODE)
   const client = new CodebuffClient({
     apiKey, cwd, agentDefinitions,
     terminalColumns: columns, terminalRows: rows,
     overrideTools: {
       ask_user: createAskUserHandler(runOnceReadLine),
     },
+    ...buildHippoSubagentHooks(() => sessionId),
   })
   const abortController = new AbortController()
-  const sessionId = generateHippoSessionId(DEFAULT_AGENT_MODE)
   const startTime = Date.now()
   let lastTotalCost = 0
   const streamedChunks: string[] = []

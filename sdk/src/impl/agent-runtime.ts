@@ -27,7 +27,8 @@ export function getAgentRuntimeImpl(
     logger?: Logger
     apiKey: string
     clientEnv?: ClientEnv
-  } & Pick<
+  } & Pick<AgentRuntimeDeps, 'onBeforeSubagentPrompt' | 'onAfterSubagentComplete'>
+  & Pick<
     AgentRuntimeScopedDeps,
     | 'handleStepsLogChunk'
     | 'requestToolCall'
@@ -42,6 +43,8 @@ export function getAgentRuntimeImpl(
     logger,
     apiKey,
     clientEnv = clientEnvDefault,
+    onBeforeSubagentPrompt,
+    onAfterSubagentComplete,
     handleStepsLogChunk,
     requestToolCall,
     requestMcpToolData,
@@ -83,6 +86,10 @@ export function getAgentRuntimeImpl(
     // Other
     logger: logger ?? noopLogger,
     fetch: globalThis.fetch,
+
+    // Subagent lifecycle hooks
+    onBeforeSubagentPrompt,
+    onAfterSubagentComplete,
 
     // Client (WebSocket)
     handleStepsLogChunk,

@@ -55,6 +55,20 @@ export type AgentRuntimeDeps = {
   // Other
   logger: Logger
   fetch: typeof globalThis.fetch
+
+  /** Optional hook called before a subagent's prompt is sent to the LLM. Return an enriched prompt to inject context. */
+  onBeforeSubagentPrompt?: (params: {
+    agentType: string
+    prompt: string
+  }) => Promise<{ enrichedPrompt: string } | undefined>
+
+  /** Optional hook called after a subagent completes (fire-and-forget). */
+  onAfterSubagentComplete?: (params: {
+    agentType: string
+    prompt: string
+    output: unknown
+    elapsedMs: number
+  }) => Promise<void>
 }
 
 /** Per-run dependencies */
