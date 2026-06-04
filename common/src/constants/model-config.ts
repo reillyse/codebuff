@@ -45,7 +45,6 @@ export const openrouterModels = {
   openrouter_gemini2_5_flash: 'google/gemini-3.1-flash-lite-preview',
   openrouter_gemini2_5_flash_thinking:
     'google/gemini-2.5-flash-preview:thinking',
-  openrouter_grok_4: 'x-ai/grok-4',
 } as const
 export type openrouterModel =
   (typeof openrouterModels)[keyof typeof openrouterModels]
@@ -142,9 +141,7 @@ export const shouldCacheModels = [
   'z-ai/glm-4.5',
   'qwen/qwen3-coder',
 ]
-const nonCacheableModels = [
-  models.openrouter_grok_4,
-] satisfies string[] as string[]
+const nonCacheableModels: string[] = []
 export function supportsCacheControl(model: Model): boolean {
   if (model.startsWith('openai/')) {
     return true
