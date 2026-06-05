@@ -1,6 +1,8 @@
 import fs from 'fs'
 import path from 'path'
 
+import { formatCredits } from './output'
+
 import type { AgentMode } from './hippo'
 
 const MAX_LOG_SIZE = 5 * 1024 * 1024 // 5MB
@@ -19,6 +21,7 @@ export interface LogResponseParams {
   agentMode: AgentMode
   streamedText: string
   elapsedMs: number
+  /** Credits used (1 credit = $0.01), as reported by the finish event. */
   totalCost?: number
   outputType: string
   errorMessage?: string
@@ -129,7 +132,7 @@ export const logResponse = (params: LogResponseParams): void => {
   const timestamp = new Date().toISOString()
   const elapsedSeconds = (params.elapsedMs / 1000).toFixed(1)
   const costStr = params.totalCost != null && params.totalCost > 0
-    ? `$${params.totalCost.toFixed(4)}`
+    ? formatCredits(params.totalCost)
     : 'n/a'
 
   const lines = [

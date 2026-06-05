@@ -793,14 +793,14 @@ function handleEvent(event: PrintModeEvent, verbose: boolean): void {
       const hasError = event.output.some(
         (o) => o.type === 'json' && o.value && typeof o.value === 'object' && 'errorMessage' in o.value,
       )
-      printToolResult(event.toolName, !hasError)
+      printToolResult(event.toolName, !hasError, event.output)
       break
     }
     case 'subagent_start':
-      printSubagentStart(event.agentId, event.displayName, event.model)
+      printSubagentStart(event.agentId, event.displayName, event.model, event.prompt, event.params)
       break
     case 'subagent_finish':
-      printSubagentEnd(event.agentId, event.displayName, event.model)
+      printSubagentEnd(event.agentId, event.displayName, event.model, event.prompt, event.params)
       break
     case 'finish':
       printFinish(event.totalCost)
@@ -996,6 +996,7 @@ Environment Variables
   CODEBUFF_VERBOSE      Verbose output (default: disabled, set to '1' to enable)
   CODEBUFF_PROMPT_LOG   Log prompts and responses to a file (default: disabled, rolling, 5MB limit)
                         Set to '1' for ./debug/prompt-log.txt, or a custom path
+  CODEBUFF_DEBUG_TRUNCATE Max chars for verbose tool request/response output (default: 500, 0 = no limit)
 
 Usage
   Type your prompt and press Enter to send.

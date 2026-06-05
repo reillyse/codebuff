@@ -1,6 +1,6 @@
 {
   "name": "@codebuff/cli-lite",
-  "version": "0.1.0-8a9536f99",
+  "version": "0.1.0-28f7f3a25",
   "private": true,
   "type": "module",
   "bin": {
