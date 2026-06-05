@@ -949,6 +949,8 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
         'test-agent': llmOnlyTemplate,
       }
 
+      const chunks: string[] = []
+
       let promptCallCount = 0
       loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
         promptCallCount++
@@ -972,11 +974,19 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
         ...loopAgentStepsBaseParams,
         agentType: 'test-agent',
         localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
       })
 
       // Should have retried the mid-stream failure and succeeded on attempt 2.
       expect(promptCallCount).toBe(2)
       expect(result.output.type).not.toBe('error')
+
+      // Should surface a user-facing notice explaining the mid-stream retry.
+      const retryNotice = chunks.find((c) => c.includes('retrying in'))
+      expect(retryNotice).toBeDefined()
+      expect(retryNotice).toContain('Response stream interrupted')
     })
 
     it('should retry when a transient 529 is nested as the error cause', async () => {

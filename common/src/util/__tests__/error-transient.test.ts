@@ -3,6 +3,8 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   NO_OUTPUT_GENERATED_ERROR_NAME,
+  describeTransientApiError,
+  getTransientStatusCode,
   isNoOutputGeneratedError,
   isTransientApiError,
 } from '../error'
@@ -140,5 +142,95 @@ describe('isTransientApiError - Option A (recursive cause chain)', () => {
     const a = new Error('a')
     ;(a as Error & { cause?: unknown }).cause = a
     expect(isTransientApiError(a)).toBe(false)
+  })
+})
+
+describe('getTransientStatusCode', () => {
+  it('returns a top-level transient status code', () => {
+    expect(getTransientStatusCode(makeApiError(529))).toBe(529)
+  })
+
+  it('returns a transient status code nested in the cause chain', () => {
+    const wrapper = new Error('Step failed while streaming')
+    ;(wrapper as Error & { cause?: unknown }).cause = makeApiError(503)
+    expect(getTransientStatusCode(wrapper)).toBe(503)
+  })
+
+  it('ignores non-transient status codes', () => {
+    expect(getTransientStatusCode(makeApiError(400))).toBeUndefined()
+  })
+
+  it('finds the transient cause even when the wrapper has a non-transient code', () => {
+    const wrapper = makeApiError(400, 'Bad request')
+    ;(wrapper as Error & { cause?: unknown }).cause = makeApiError(529)
+    expect(getTransientStatusCode(wrapper)).toBe(529)
+  })
+
+  it('returns undefined when no transient code exists', () => {
+    expect(getTransientStatusCode(new Error('boom'))).toBeUndefined()
+    expect(getTransientStatusCode(null)).toBeUndefined()
+    expect(getTransientStatusCode(undefined)).toBeUndefined()
+  })
+
+  it('guards against cyclic cause chains', () => {
+    const a = new Error('a')
+    const b = new Error('b')
+    ;(a as Error & { cause?: unknown }).cause = b
+    ;(b as Error & { cause?: unknown }).cause = a
+    expect(getTransientStatusCode(a)).toBeUndefined()
+  })
+})
+
+describe('describeTransientApiError', () => {
+  it('describes a mid-stream AI_NoOutputGeneratedError (by name)', () => {
+    const error = new Error('No output generated. Check the stream for errors.')
+    error.name = NO_OUTPUT_GENERATED_ERROR_NAME
+    expect(describeTransientApiError(error)).toBe(
+      'Response stream interrupted (no output)',
+    )
+  })
+
+  it('describes a mid-stream failure by "no output generated" message', () => {
+    expect(
+      describeTransientApiError(
+        new Error('No output generated. Check the stream for errors.'),
+      ),
+    ).toBe('Response stream interrupted (no output)')
+  })
+
+  it('reports the nested transient code, not a misleading non-transient wrapper code', () => {
+    // A 400 wrapper around a 529 cause is still transient (isTransientApiError
+    // returns true); the description must show 529, not 400.
+    const wrapper = makeApiError(400, 'Bad request')
+    ;(wrapper as Error & { cause?: unknown }).cause = makeApiError(529)
+    expect(describeTransientApiError(wrapper)).toBe('Transient API error (529)')
+  })
+
+  it('includes the status code for a top-level transient error', () => {
+    expect(describeTransientApiError(makeApiError(529))).toBe(
+      'Transient API error (529)',
+    )
+  })
+
+  it('includes the status code for a nested-cause transient error', () => {
+    const wrapper = new Error('Step failed while streaming')
+    ;(wrapper as Error & { cause?: unknown }).cause = makeApiError(529)
+    expect(describeTransientApiError(wrapper)).toBe(
+      'Transient API error (529)',
+    )
+  })
+
+  it('describes an overloaded message without a status code', () => {
+    expect(
+      describeTransientApiError(
+        new Error('Overloaded. https://docs.claude.com'),
+      ),
+    ).toBe('Transient API error (provider overloaded)')
+  })
+
+  it('falls back to a generic description otherwise', () => {
+    expect(describeTransientApiError(new Error('something else'))).toBe(
+      'Transient API error',
+    )
   })
 })

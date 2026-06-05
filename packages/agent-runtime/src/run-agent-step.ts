@@ -7,7 +7,7 @@ import {
 } from '@codebuff/common/sparrow/telemetry'
 import { TOOLS_WHICH_WONT_FORCE_NEXT_STEP } from '@codebuff/common/tools/constants'
 import { buildArray } from '@codebuff/common/util/array'
-import { AbortError, getErrorObject, getErrorStatusCode, isAbortError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
+import { AbortError, describeTransientApiError, getErrorObject, getErrorStatusCode, isAbortError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
 import { abortableSleep } from '@codebuff/common/util/promise'
 import { serializeCacheDebugCorrelation } from '@codebuff/common/util/cache-debug'
 import { systemMessage, userMessage } from '@codebuff/common/util/messages'
@@ -1005,8 +1005,12 @@ export async function loopAgentSteps(
           const baseDelay = Math.min(STEP_RETRY_BASE_DELAY_MS * Math.pow(2, retryAttempt - 1), STEP_RETRY_MAX_DELAY_MS)
           const jitter = 0.8 + Math.random() * 0.4
           const delay = Math.round(baseDelay * jitter)
-          const statusCode = getErrorStatusCode(stepError)
           const delaySec = Math.round(delay / 1000)
+          // Describe *why* we're retrying. This handles both pre-stream errors
+          // (which carry a status code) and mid-stream failures like
+          // AI_NoOutputGeneratedError / nested-cause overloads, so the user sees
+          // a meaningful reason instead of a bare "Transient API error".
+          const reason = describeTransientApiError(stepError)
           logger.warn(
             {
               attempt: retryAttempt + 1,
@@ -1017,7 +1021,7 @@ export async function loopAgentSteps(
             'Retrying agent step after transient API error',
           )
           onResponseChunk(
-            `⚠️ Transient API error${statusCode ? ` (${statusCode})` : ''}, retrying in ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`,
+            `⚠️ ${reason}, retrying in ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`,
           )
           await abortableSleep(delay, signal)
           if (signal.aborted) throw new AbortError()

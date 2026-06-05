@@ -307,6 +307,72 @@ function isTransientApiErrorImpl(
 }
 
 /**
+ * Walks the `error.cause` chain (cycle-guarded) and returns the first transient
+ * HTTP status code it finds, if any. Useful when a transient 529/5xx is nested
+ * inside a wrapper error (e.g. a mid-stream overload surfaced via `cause`), so
+ * the top-level error has no status code of its own.
+ */
+export function getTransientStatusCode(error: unknown): number | undefined {
+  return getTransientStatusCodeImpl(error, new Set())
+}
+
+function getTransientStatusCodeImpl(
+  error: unknown,
+  seen: Set<unknown>,
+): number | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  if (seen.has(error)) return undefined
+  seen.add(error)
+
+  const statusCode = getErrorStatusCode(error)
+  if (statusCode !== undefined && TRANSIENT_API_STATUS_CODES.has(statusCode)) {
+    return statusCode
+  }
+  if ('cause' in error) {
+    return getTransientStatusCodeImpl((error as { cause: unknown }).cause, seen)
+  }
+  return undefined
+}
+
+/**
+ * Produces a short, human-readable reason describing *why* a transient error is
+ * being retried, for surfacing to the user in the retry notice. Distinguishes
+ * the mid-stream case (an `AI_NoOutputGeneratedError`, which means the response
+ * stream was interrupted before producing output — usually a provider overload)
+ * from the standard status-coded case.
+ *
+ * Examples:
+ * - `AI_NoOutputGeneratedError` → "Response stream interrupted (no output)"
+ * - 529 (top-level or nested cause) → "Transient API error (529)"
+ * - overloaded message, no status code → "Transient API error (provider overloaded)"
+ * - otherwise → "Transient API error"
+ */
+export function describeTransientApiError(error: unknown): string {
+  if (isNoOutputGeneratedError(error)) {
+    // Not necessarily an overload (can be an empty completion, content filter,
+    // etc.), so keep the reason neutral.
+    return 'Response stream interrupted (no output)'
+  }
+
+  // Only report a *transient* status code (walking the cause chain). Using the
+  // raw top-level code could surface a misleading non-transient code (e.g. a
+  // 400 wrapper around a 529 cause).
+  const statusCode = getTransientStatusCode(error)
+  if (statusCode !== undefined) {
+    return `Transient API error (${statusCode})`
+  }
+
+  if (
+    error instanceof Error &&
+    error.message.toLowerCase().includes('overloaded')
+  ) {
+    return 'Transient API error (provider overloaded)'
+  }
+
+  return 'Transient API error'
+}
+
+/**
  * Extracts the HTTP status code from an error object, if present.
  * Checks 'statusCode' first (our convention / AI SDK errors), then 'status' (APICallError).
  *
