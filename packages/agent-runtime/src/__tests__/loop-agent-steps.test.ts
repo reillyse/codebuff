@@ -939,6 +939,125 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(result.output.type).not.toBe('error')
     })
 
+    it('should retry runAgentStep on AI_NoOutputGeneratedError (mid-stream overload)', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        if (promptCallCount === 1) {
+          // First attempt: simulate the AI SDK's mid-stream failure where the
+          // stream opens but produces no output (e.g. a 529 swallowed inside
+          // the stream surfaces as AI_NoOutputGeneratedError).
+          const error = new Error(
+            'No output generated. Check the stream for errors.',
+          )
+          error.name = 'AI_NoOutputGeneratedError'
+          throw error
+        }
+        // Second attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // Should have retried the mid-stream failure and succeeded on attempt 2.
+      expect(promptCallCount).toBe(2)
+      expect(result.output.type).not.toBe('error')
+    })
+
+    it('should retry when a transient 529 is nested as the error cause', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        if (promptCallCount === 1) {
+          // First attempt: a wrapper error with the transient 529 nested as cause.
+          const wrapper = new Error('Step failed while streaming')
+          ;(wrapper as Error & { cause?: unknown }).cause = new APICallError({
+            message: 'Overloaded',
+            url: 'https://api.anthropic.com/v1/messages',
+            requestBodyValues: {},
+            statusCode: 529,
+            responseHeaders: undefined,
+            responseBody: undefined,
+            isRetryable: true,
+            data: undefined,
+          })
+          throw wrapper
+        }
+        // Second attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // Should have unwrapped the cause, recognized the 529, and retried.
+      expect(promptCallCount).toBe(2)
+      expect(result.output.type).not.toBe('error')
+    })
+
+    it('should exhaust retries on persistent AI_NoOutputGeneratedError (capped by MAX_STEP_RETRIES)', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        const error = new Error(
+          'No output generated. Check the stream for errors.',
+        )
+        error.name = 'AI_NoOutputGeneratedError'
+        throw error
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // Should have tried 3 times total (1 initial + MAX_STEP_RETRIES=2 retries).
+      expect(promptCallCount).toBe(3)
+      expect(result.output.type).toBe('error')
+      if (result.output.type === 'error') {
+        expect(result.output.message).toContain('No output generated')
+      }
+    })
+
     it('should not retry non-retryable errors (e.g. 402 payment required)', async () => {
       const llmOnlyTemplate = {
         ...mockTemplate,

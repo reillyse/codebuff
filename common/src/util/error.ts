@@ -221,21 +221,88 @@ export function parseApiErrorResponseBody(responseBody: unknown): {
 export const TRANSIENT_API_STATUS_CODES = new Set([500, 502, 503, 504, 529])
 
 /**
- * Check if an error is a transient API error that is safe to retry.
- * When a status code is available, it is used as the authoritative signal — a
- * non-transient code (e.g. 400) won't trigger a retry even if the message
- * happens to contain "overloaded".
- * Falls back to message heuristic for providers that return 'overloaded' errors
- * without a structured status code.
+ * Name of the AI SDK error thrown when a stream completes without producing any
+ * output. In practice this almost always reflects a transient provider failure
+ * (e.g. an Anthropic 529 "Overloaded" that arrives *after* the stream opens, so
+ * the underlying status code is swallowed inside the stream).
  */
-export function isTransientApiError(error: unknown): boolean {
-  const statusCode = getErrorStatusCode(error)
-  if (statusCode !== undefined) {
-    return TRANSIENT_API_STATUS_CODES.has(statusCode)
-  }
-  if (error instanceof Error && error.message.toLowerCase().includes('overloaded')) {
+export const NO_OUTPUT_GENERATED_ERROR_NAME = 'AI_NoOutputGeneratedError'
+
+/**
+ * Detects the AI SDK's `AI_NoOutputGeneratedError` (by name, with a message
+ * fallback). This is treated as transient/retryable because it typically masks
+ * a mid-stream provider overload — retrying (capped by MAX_STEP_RETRIES at the
+ * call site) lets the run recover instead of failing outright.
+ */
+export function isNoOutputGeneratedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  if (
+    'name' in error &&
+    (error as { name: unknown }).name === NO_OUTPUT_GENERATED_ERROR_NAME
+  ) {
     return true
   }
+  if (
+    error instanceof Error &&
+    error.message.toLowerCase().includes('no output generated')
+  ) {
+    return true
+  }
+  return false
+}
+
+/**
+ * Check if an error is a transient API error that is safe to retry.
+ *
+ * Classification (in order):
+ * - **Option B:** an `AI_NoOutputGeneratedError` is transient (mid-stream
+ *   provider overload surfaces this way).
+ * - A present status code is authoritative *for that error* — a non-transient
+ *   code (e.g. 400) won't trigger a retry even if the message happens to
+ *   contain "overloaded".
+ * - Falls back to a message heuristic for providers that return 'overloaded'
+ *   errors without a structured status code.
+ * - **Option A:** recursively unwraps `error.cause`, so a transient 529/overload
+ *   nested inside a wrapper error (e.g. surfaced mid-stream via `cause`) is
+ *   still recognized. Cycles are guarded via a `seen` set.
+ */
+export function isTransientApiError(error: unknown): boolean {
+  return isTransientApiErrorImpl(error, new Set())
+}
+
+function isTransientApiErrorImpl(
+  error: unknown,
+  seen: Set<unknown>,
+): boolean {
+  if (!error || typeof error !== 'object') return false
+  if (seen.has(error)) return false
+  seen.add(error)
+
+  // Option B: treat AI_NoOutputGeneratedError as transient.
+  if (isNoOutputGeneratedError(error)) {
+    return true
+  }
+
+  const statusCode = getErrorStatusCode(error)
+  if (statusCode !== undefined) {
+    if (TRANSIENT_API_STATUS_CODES.has(statusCode)) {
+      return true
+    }
+    // A non-transient status code is authoritative for *this* error (we don't
+    // fall back to the message heuristic), but a wrapper may still carry a
+    // transient cause underneath — so we continue to the cause check below.
+  } else if (
+    error instanceof Error &&
+    error.message.toLowerCase().includes('overloaded')
+  ) {
+    return true
+  }
+
+  // Option A: recursively unwrap the cause chain.
+  if ('cause' in error) {
+    return isTransientApiErrorImpl((error as { cause: unknown }).cause, seen)
+  }
+
   return false
 }
 
