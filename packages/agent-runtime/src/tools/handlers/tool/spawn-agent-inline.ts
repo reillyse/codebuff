@@ -1,3 +1,4 @@
+import { SUBAGENT_EXECUTION_TIMEOUT_MS } from '@codebuff/common/constants/agents'
 import { mapValues } from 'lodash'
 
 import {
@@ -6,6 +7,7 @@ import {
   executeSubagent,
   createAgentState,
   extractSubagentContextParams,
+  runWithSubagentTimeout,
 } from './spawn-agent-utils'
 
 import type { CodebuffToolHandlerFunction } from '../handler-function-type'
@@ -112,27 +114,58 @@ export const handleSpawnAgentInline = (async (
   // Extract common context params to avoid bugs from spreading all params
   const contextParams = extractSubagentContextParams(params)
 
-  const result = await executeSubagent({
-    ...contextParams,
+  const modelStr = agentTemplate.model ? String(agentTemplate.model) : undefined
 
-    // Spawn-specific params
-    ancestorRunIds: parentAgentState.ancestorRunIds,
-    userInputId: `${userInputId}-inline-${agentType}${childAgentState.agentId}`,
-    prompt: prompt || '',
-    spawnParams,
-    agentTemplate: inlineTemplate,
-    parentAgentState,
-    agentState: childAgentState,
-    fingerprintId,
-    parentSystemPrompt: system,
-    parentTools,
-    onResponseChunk: (chunk) => {
-      // Inherits parent's onResponseChunk, except for context-pruner (TODO: add an option for it to be silent?)
+  // Per-subagent timeout + hang detection so a stalled inline subagent (e.g. a
+  // degraded model client) can't hang the parent's flow indefinitely.
+  const result = await runWithSubagentTimeout({
+    parentSignal: contextParams.signal,
+    timeoutMs: SUBAGENT_EXECUTION_TIMEOUT_MS,
+    agentType,
+    logger,
+    // On timeout, emit subagent_finish so the UI doesn't show a dangling
+    // 'started' agent (the hung run may never observe the abort).
+    onTimeout: () => {
       if (agentType !== 'context-pruner') {
-        writeToClient(chunk)
+        writeToClient({
+          type: 'subagent_finish',
+          agentId: childAgentState.agentId,
+          agentType,
+          displayName: agentTemplate.displayName,
+          model: modelStr,
+          onlyChild: false,
+          parentAgentId: parentAgentState.agentId,
+          prompt: prompt || '',
+          params: spawnParams,
+        })
       }
     },
-    clearUserPromptMessagesAfterResponse: false,
+    run: (childSignal) =>
+      executeSubagent({
+        ...contextParams,
+        // Per-subagent child signal so a timeout (or parent abort) cancels the
+        // underlying LLM stream rather than letting it hang.
+        signal: childSignal,
+
+        // Spawn-specific params
+        ancestorRunIds: parentAgentState.ancestorRunIds,
+        userInputId: `${userInputId}-inline-${agentType}${childAgentState.agentId}`,
+        prompt: prompt || '',
+        spawnParams,
+        agentTemplate: inlineTemplate,
+        parentAgentState,
+        agentState: childAgentState,
+        fingerprintId,
+        parentSystemPrompt: system,
+        parentTools,
+        onResponseChunk: (chunk) => {
+          // Inherits parent's onResponseChunk, except for context-pruner (TODO: add an option for it to be silent?)
+          if (agentType !== 'context-pruner') {
+            writeToClient(chunk)
+          }
+        },
+        clearUserPromptMessagesAfterResponse: false,
+      }),
   })
 
   // Update parent agent state to reflect shared message history

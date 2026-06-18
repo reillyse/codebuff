@@ -395,6 +395,111 @@ export function logAgentSpawn(params: {
 }
 
 /**
+ * Error thrown when a spawned subagent exceeds its allotted wall-clock time.
+ * Distinct from AbortError (user-initiated cancellation) so callers can treat a
+ * timeout as a per-subagent failure to report, rather than a propagating abort.
+ */
+export class SubagentTimeoutError extends Error {
+  /**
+   * The (possibly partially-progressed) state of the timed-out subagent, so the
+   * parent's cost-aggregation can recover any credits it consumed before the
+   * timeout. Matches the `agentState` attached to normal subagent failures.
+   */
+  agentState?: AgentState
+
+  constructor(timeoutMs: number, agentType: string, agentState?: AgentState) {
+    super(
+      `Subagent '${agentType}' timed out after ${Math.round(timeoutMs / 1000)}s and was aborted`,
+    )
+    this.name = 'SubagentTimeoutError'
+    this.agentState = agentState
+  }
+}
+
+/**
+ * Runs a subagent with a per-subagent timeout and hang detection.
+ *
+ * Creates a child AbortController linked to the parent signal and passes its
+ * signal to `run`. If `run` does not settle within `timeoutMs`, the child is
+ * aborted (best-effort cancellation of the underlying LLM stream / work) and a
+ * {@link SubagentTimeoutError} is thrown. This guarantees the parent's fan-out
+ * join always makes progress even if a subagent's model client stalls without
+ * erroring.
+ *
+ * The child signal also fires when the parent signal aborts (e.g. user
+ * interrupt), so callers can use it for both abort and retry decisions.
+ *
+ * `onTimeout` is invoked once, synchronously inside the timeout handler (after
+ * the child is aborted, before the rejection). Callers use it to emit a
+ * `subagent_finish` event so the UI never shows a dangling 'started' subagent
+ * when a timeout fires — we can't rely on the aborted run to emit it, since a
+ * truly hung run may never observe the abort.
+ *
+ * `getAgentState` (if provided) is read at timeout time to attach the
+ * currently-active subagent state to the {@link SubagentTimeoutError}, so the
+ * parent's cost-aggregation can recover partial credits used before the timeout.
+ */
+export async function runWithSubagentTimeout<T>(params: {
+  parentSignal: AbortSignal
+  timeoutMs: number
+  agentType: string
+  logger: Logger
+  run: (childSignal: AbortSignal) => Promise<T>
+  onTimeout?: () => void
+  getAgentState?: () => AgentState | undefined
+}): Promise<T> {
+  const { parentSignal, timeoutMs, agentType, logger, run, onTimeout, getAgentState } =
+    params
+  const childController = new AbortController()
+
+  const onParentAbort = () => childController.abort()
+  if (parentSignal.aborted) {
+    childController.abort()
+  } else {
+    parentSignal.addEventListener('abort', onParentAbort, { once: true })
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      // Best-effort: abort the underlying work first so it stops consuming
+      // resources, then log and reject.
+      childController.abort()
+      logger.error(
+        { agentType, timeoutMs },
+        `Subagent '${agentType}' exceeded ${Math.round(timeoutMs / 1000)}s timeout — aborted and reporting as failed`,
+      )
+      // Emit a subagent_finish so the UI doesn't show a dangling 'started'
+      // subagent. A truly hung run may never observe the abort, so we can't
+      // rely on the run's own finish/error path to fire.
+      try {
+        onTimeout?.()
+      } catch (e) {
+        logger.warn(
+          { agentType, error: e instanceof Error ? e.message : String(e) },
+          'onTimeout callback failed',
+        )
+      }
+      reject(new SubagentTimeoutError(timeoutMs, agentType, getAgentState?.()))
+    }, timeoutMs)
+  })
+
+  // The losing branch of the Promise.race below is never awaited. If `run` later
+  // rejects (e.g. the aborted subagent surfaces an AbortError after the timeout
+  // has already won the race), swallow it here so it doesn't bubble up as an
+  // unhandled promise rejection.
+  const runPromise = run(childController.signal)
+  runPromise.catch(() => {})
+
+  try {
+    return await Promise.race([runPromise, timeoutPromise])
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+    parentSignal.removeEventListener('abort', onParentAbort)
+  }
+}
+
+/**
  * Executes a subagent using loopAgentSteps
  */
 export async function executeSubagent(

@@ -93,3 +93,15 @@ export const AGENT_NAME_TO_TYPES = Object.entries(AGENT_NAMES).reduce(
 )
 
 export const MAX_AGENT_STEPS_DEFAULT = 100
+
+/**
+ * Maximum wall-clock time a single spawned subagent is allowed to run before the
+ * parent's fan-out join gives up on it. This is a safety net against indefinite
+ * hangs (e.g. a degraded model API client whose stream stalls without ever
+ * erroring), which can otherwise deadlock a parent that waits for all children.
+ *
+ * Set generously so legitimate long-running agents (deep thinkers, multi-step
+ * editors) are not cut off, while still bounding the worst case to minutes
+ * instead of hours.
+ */
+export const SUBAGENT_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
