@@ -1,4 +1,4 @@
-import { CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_FABLE_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
 import { buildArray } from '@codebuff/common/util/array'
 
 import { publisher } from '../constants'
@@ -6,14 +6,19 @@ import { publisher } from '../constants'
 import type { SecretAgentDefinition } from '../types/secret-agent-definition'
 
 export const createGeneralAgent = (options: {
-  model: 'gpt-5' | 'opus'
+  model: 'gpt-5' | 'opus' | 'fable'
 }): Omit<SecretAgentDefinition, 'id'> => {
   const { model } = options
   const isGpt5 = model === 'gpt-5'
+  const isFable = model === 'fable'
 
   return {
     publisher,
-    model: isGpt5 ? 'openai/gpt-5.2' : CURRENT_OPUS_MODEL,
+    model: isGpt5
+      ? 'openai/gpt-5.2'
+      : isFable
+        ? CURRENT_FABLE_MODEL
+        : CURRENT_OPUS_MODEL,
     ...(!isGpt5 && {
       providerOptions: {
         only: ['amazon-bedrock'],
@@ -24,10 +29,11 @@ export const createGeneralAgent = (options: {
         effort: 'high' as const,
       },
     }),
-    displayName: isGpt5 ? 'GPT-5 Agent' : 'Opus Agent',
-    spawnerPrompt:
-      isGpt5 ?
-        'A general-purpose, deep-thinking (and slow) agent that can be used to solve a wide range of problems. Use this to help you solve a specific problem that requires extended reasoning. This agent has no context on the conversation history so it cannot see files you have read or previous discussion. Instead, you must provide all the relevant context via the prompt or filePaths for this agent to work well.'
+    displayName: isGpt5 ? 'GPT-5 Agent' : isFable ? 'Fable Agent' : 'Opus Agent',
+    spawnerPrompt: isGpt5
+      ? 'A general-purpose, deep-thinking (and slow) agent that can be used to solve a wide range of problems. Use this to help you solve a specific problem that requires extended reasoning. This agent has no context on the conversation history so it cannot see files you have read or previous discussion. Instead, you must provide all the relevant context via the prompt or filePaths for this agent to work well.'
+      : isFable
+        ? 'EXPENSIVE (~2x the cost of Opus): a premium deep-reasoning agent powered by Claude Fable, exceptionally strong at hard debugging and planning. Only spawn this agent for difficult problems where cheaper approaches (thinker, opus-agent, gpt-5-agent) have failed or are clearly insufficient. This agent has no context on the conversation history so it cannot see files you have read or previous discussion. Instead, you must provide all the relevant context via the prompt or filePaths for this agent to work well.'
         : 'A general-purpose capable agent that can be used to solve a wide range of problems. Use this to help you solve any problem. This agent has no context on the conversation history so it cannot see files you have read or previous discussion. Instead, you must provide all the relevant context via the prompt or filePaths for this agent to work well.',
     inputSchema: {
       prompt: {

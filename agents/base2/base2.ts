@@ -1,4 +1,4 @@
-import { CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_FABLE_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
 import { buildArray } from '@codebuff/common/util/array'
 
 import { publisher } from '../constants'
@@ -29,7 +29,11 @@ export function createBase2(
 
   return {
     publisher,
-    model: isFree ? 'minimax/minimax-m2.5' : CURRENT_OPUS_MODEL,
+    model: isFree
+      ? 'minimax/minimax-m2.5'
+      : planOnly
+        ? CURRENT_FABLE_MODEL
+        : CURRENT_OPUS_MODEL,
     providerOptions: isFree ? {
       only: ['inceptron/fp8'],
       order: ['inceptron/fp8'],
@@ -82,7 +86,7 @@ export function createBase2(
       'researcher-docs',
       isFree ? 'commander-lite' : 'commander',
       isDefault && 'thinker',
-      (isDefault || isMax) && ['opus-agent', 'gpt-5-agent'],
+      (isDefault || isMax) && ['opus-agent', 'gpt-5-agent', 'fable-agent'],
       isMax && 'thinker-best-of-n-opus',
       isDefault && 'editor',
       isMax && 'editor-multi-prompt',

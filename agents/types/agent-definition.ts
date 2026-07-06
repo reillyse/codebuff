@@ -382,6 +382,7 @@ export type ModelName =
   | 'anthropic/claude-opus-4.6'
   | 'anthropic/claude-opus-4.7'
   | 'anthropic/claude-opus-4.8'
+  | 'anthropic/claude-fable-5'
   | 'anthropic/claude-haiku-4.5'
   | (string & {})
 

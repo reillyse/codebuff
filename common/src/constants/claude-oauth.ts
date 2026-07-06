@@ -85,6 +85,10 @@ export const OPENROUTER_TO_ANTHROPIC_MODEL_MAP: Record<string, string> = {
   'anthropic/claude-4-sonnet-20250522': 'claude-sonnet-4-20250514',
   'anthropic/claude-4-sonnet': 'claude-sonnet-4-20250514',
 
+  // Claude Fable models
+  'anthropic/claude-fable-5': 'claude-fable-5',
+  'anthropic/claude-fable-latest': 'claude-fable-5',
+
   // Claude 4.x Opus models
   'anthropic/claude-opus-4.8': 'claude-opus-4-8',
   'anthropic/claude-opus-4.7': 'claude-opus-4-7',

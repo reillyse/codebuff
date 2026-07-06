@@ -31,6 +31,7 @@ export const openrouterModels = {
   openrouter_claude_sonnet_4_5: 'anthropic/claude-sonnet-4.6',
   openrouter_claude_sonnet_4: 'anthropic/claude-4-sonnet-20250522',
   openrouter_claude_opus_4: 'anthropic/claude-opus-4.8',
+  openrouter_claude_fable_5: 'anthropic/claude-fable-5',
   // Updated from claude-3.5-haiku to claude-haiku-4.5
   openrouter_claude_3_5_haiku: 'anthropic/claude-haiku-4.5',
   openrouter_claude_3_5_sonnet: 'anthropic/claude-3.5-sonnet-20240620',
@@ -88,6 +89,13 @@ export const CURRENT_OPUS_MODEL = (process.env.CODEBUFF_OPUS_MODEL ?? 'anthropic
 /** The current Sonnet model version used by agents. Update this single constant when upgrading. */
 export const CURRENT_SONNET_MODEL = 'anthropic/claude-sonnet-4.6' as const
 
+/**
+ * The current Fable model version used by agents. Update this single constant when upgrading.
+ * Fable is Anthropic's premium planning/debugging model (~2x the cost of Opus), so it is only
+ * used on deliberate, opt-in paths (PLAN mode and the spawnable fable-agent).
+ */
+export const CURRENT_FABLE_MODEL = (process.env.CODEBUFF_FABLE_MODEL ?? 'anthropic/claude-fable-5') as 'anthropic/claude-fable-5'
+
 /** The current GPT-5 model version used by agents. Update this single constant when upgrading. */
 export const CURRENT_GPT5_MODEL = 'openai/gpt-5.2' as const
 
@@ -134,6 +142,7 @@ export type Model = (typeof models)[keyof typeof models] | (string & {})
 
 export const shouldCacheModels = [
   'anthropic/claude-opus-4.8',
+  'anthropic/claude-fable-5',
   'anthropic/claude-sonnet-4',
   'anthropic/claude-opus-4',
   'anthropic/claude-3.7-sonnet',
