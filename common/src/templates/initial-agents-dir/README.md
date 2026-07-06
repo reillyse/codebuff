@@ -172,7 +172,7 @@ Choose models based on your agent's needs:
 
 - **`anthropic/claude-sonnet-4`**: Best for complex reasoning and code generation
 - **`openai/gpt-5`**: Strong general-purpose capabilities
-- **`x-ai/grok-4-fast`**: Fast and cost-effective for simple or medium-complexity tasks
+- **`openai/gpt-5-mini`**: Fast and cost-effective for simple or medium-complexity tasks
 
 **Any model on OpenRouter**: Unlike Claude Code which locks you into Anthropic's models, Codebuff supports any model available on [OpenRouter](https://openrouter.ai/models) - from Claude and GPT to specialized models like Qwen, DeepSeek, and others. Switch models for different tasks or use the latest releases without waiting for platform updates.
 

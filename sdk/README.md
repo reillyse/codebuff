@@ -75,7 +75,7 @@ async function main() {
   // Define your own custom agents!
   const myCustomAgent: AgentDefinition = {
     id: 'my-custom-agent',
-    model: 'x-ai/grok-4-fast',
+    model: 'openai/gpt-5-mini',
     displayName: 'Sentiment analyzer',
     toolNames: ['fetch_api_data'], // Defined below!
     instructionsPrompt: `

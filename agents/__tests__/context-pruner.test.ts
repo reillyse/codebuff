@@ -2405,12 +2405,12 @@ describe('context-pruner hippo memory integration', () => {
     const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
-    expect(content).toContain('Hippo memory system')
+    expect(content).toContain('hippo context-search')
     expect(content).toContain(
       '## Relevant Context from Past Sessions',
     )
     expect(content).toContain(
-      'relevant details about pruned context',
+      'details from before this pruning event',
     )
   })
 
@@ -2434,7 +2434,7 @@ describe('context-pruner hippo memory integration', () => {
         .filter((p: Record<string, unknown>) => p.type === 'text')
         .map((p: Record<string, unknown>) => p.text)
         .join('')
-      expect(textContent).not.toContain('Hippo memory system')
+      expect(textContent).not.toContain('hippo context-search')
     }
   })
 })

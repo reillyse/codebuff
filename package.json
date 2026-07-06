@@ -34,6 +34,7 @@
     "init-worktree": "bun scripts/init-worktree.ts",
     "cleanup-worktree": "bun scripts/cleanup-worktree.ts",
     "generate-tool-definitions": "bun scripts/generate-tool-definitions.ts",
+    "check-no-grok-models": "bun scripts/check-no-grok-models.ts",
     "dev:lite": "bun --cwd cli-lite dev",
     "start-lite": "bun run --cwd cli-lite src/index.ts"
   },

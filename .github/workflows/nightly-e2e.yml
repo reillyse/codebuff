@@ -46,6 +46,9 @@ jobs:
           echo "NEXT_PUBLIC_INFISICAL_UP=true" >> $GITHUB_ENV
           echo "CODEBUFF_GITHUB_TOKEN=${{ secrets.CODEBUFF_GITHUB_TOKEN }}" >> $GITHUB_ENV
 
+      - name: Guard against deprecated Grok model references
+        run: bun scripts/check-no-grok-models.ts
+
       - name: Build SDK
         run: cd sdk && bun run build
 
