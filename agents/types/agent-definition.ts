@@ -376,6 +376,7 @@ export type ModelName =
   | 'openai/gpt-5-nano'
 
   // Anthropic
+  | 'anthropic/claude-sonnet-5'
   | 'anthropic/claude-sonnet-4.5'
   | 'anthropic/claude-sonnet-4.6'
   | 'anthropic/claude-opus-4.1'

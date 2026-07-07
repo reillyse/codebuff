@@ -23,6 +23,15 @@ describe('toAnthropicModelId', () => {
     )
   })
 
+  it('maps Sonnet 5 OpenRouter ids to the Anthropic Sonnet 5 id (subscription routing)', () => {
+    expect(toAnthropicModelId('anthropic/claude-sonnet-5')).toBe(
+      'claude-sonnet-5',
+    )
+    expect(toAnthropicModelId('anthropic/claude-sonnet-latest')).toBe(
+      'claude-sonnet-5',
+    )
+  })
+
   it('returns already-Anthropic ids unchanged', () => {
     expect(toAnthropicModelId('claude-fable-5')).toBe('claude-fable-5')
     expect(toAnthropicModelId('claude-opus-4-8')).toBe('claude-opus-4-8')

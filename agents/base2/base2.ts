@@ -1,4 +1,4 @@
-import { CURRENT_FABLE_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_FABLE_MODEL, CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
 import { buildArray } from '@codebuff/common/util/array'
 
 import { publisher } from '../constants'
@@ -33,7 +33,7 @@ export function createBase2(
       ? 'minimax/minimax-m2.5'
       : planOnly
         ? CURRENT_FABLE_MODEL
-        : CURRENT_OPUS_MODEL,
+        : CURRENT_SONNET_MODEL,
     providerOptions: isFree ? {
       only: ['inceptron/fp8'],
       order: ['inceptron/fp8'],

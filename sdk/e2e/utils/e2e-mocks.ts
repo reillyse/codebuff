@@ -38,7 +38,7 @@ function buildMockAgentTemplate(params: {
   return {
     id,
     displayName: `${agentId} (mock)`,
-    model: models.openrouter_claude_sonnet_4_5,
+    model: models.openrouter_claude_sonnet_5,
     mcpServers: {},
     toolNames: [],
     spawnableAgents: [],

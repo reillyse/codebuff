@@ -57,7 +57,7 @@ const providerOrder = {
     'Anthropic',
     'Amazon Bedrock',
   ],
-  [models.openrouter_claude_sonnet_4_5]: [
+  [models.openrouter_claude_sonnet_5]: [
     'Google',
     'Anthropic',
     'Amazon Bedrock',
