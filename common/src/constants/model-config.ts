@@ -219,7 +219,7 @@ export const getModelForMode = (
     return {
       free: models.openrouter_claude_3_5_haiku,
       normal: models.openrouter_claude_3_5_haiku,
-      max: models.openrouter_claude_sonnet_4,
+      max: models.openrouter_claude_sonnet_5,
       experimental: models.openrouter_claude_sonnet_4,
       ask: models.openrouter_claude_3_5_haiku,
     }[costMode]
@@ -228,7 +228,7 @@ export const getModelForMode = (
     return {
       free: models.openrouter_claude_3_5_haiku,
       normal: models.openrouter_claude_sonnet_4,
-      max: models.openrouter_claude_sonnet_4,
+      max: models.openrouter_claude_sonnet_5,
       experimental: models.openrouter_claude_sonnet_4,
       ask: models.openrouter_claude_sonnet_4,
     }[costMode]
