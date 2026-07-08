@@ -235,3 +235,37 @@ export const getModelForMode = (
   }
   throw new Error(`Unknown operation: ${operation}`)
 }
+
+/**
+ * Escalation ladder used to escape Anthropic 529 (Overloaded) errors.
+ *
+ * A 529 is an Anthropic-wide capacity signal, so we first try a *sibling*
+ * Anthropic model (a different model may draw from a different capacity pool),
+ * and if that keeps overloading we cross-provider fall back to GPT-5, which
+ * leaves Anthropic entirely.
+ *
+ * Returns the next model to try, or `undefined` when there is no further
+ * fallback (e.g. we're already on an OpenAI model).
+ *
+ * Example ladders:
+ *   sonnet-5 -> haiku-4.5 -> gpt-5.2
+ *   fable-5  -> sonnet-5  -> haiku-4.5 -> gpt-5.2
+ *   opus     -> sonnet-5  -> haiku-4.5 -> gpt-5.2
+ */
+export function getOverloadFallbackModel(
+  currentModel: Model,
+): Model | undefined {
+  // Already off Anthropic — no further overload fallback needed.
+  if (currentModel.startsWith('openai/')) return undefined
+
+  if (currentModel === CURRENT_SONNET_MODEL) return CURRENT_HAIKU_MODEL
+  if (currentModel === CURRENT_FABLE_MODEL) return CURRENT_SONNET_MODEL
+  if (currentModel === CURRENT_OPUS_MODEL) return CURRENT_SONNET_MODEL
+  if (currentModel === CURRENT_HAIKU_MODEL) return CURRENT_GPT5_MODEL
+
+  // Any other Anthropic model: escalate straight to GPT-5.
+  if (currentModel.startsWith('anthropic/')) return CURRENT_GPT5_MODEL
+
+  // Non-Anthropic, non-OpenAI models: escape to GPT-5.
+  return CURRENT_GPT5_MODEL
+}

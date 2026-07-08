@@ -1,4 +1,9 @@
 import * as analytics from '@codebuff/common/analytics'
+import {
+  CURRENT_GPT5_MODEL,
+  CURRENT_HAIKU_MODEL,
+  CURRENT_SONNET_MODEL,
+} from '@codebuff/common/constants/model-config'
 import { TEST_USER_ID } from '@codebuff/common/old-constants'
 import { createTestAgentRuntimeParams } from '@codebuff/common/testing/fixtures/agent-runtime'
 import {
@@ -903,6 +908,232 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       // Should have called LLM twice (first attempt failed with 529, second succeeded)
       expect(promptCallCount).toBe(2)
       expect(result.output.type).not.toBe('error')
+    })
+
+    it('should switch to a sibling model on a confirmed 529 and succeed on retry', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        model: CURRENT_SONNET_MODEL,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const modelsUsed: (string | undefined)[] = []
+      const chunks: string[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
+        promptCallCount++
+        modelsUsed.push(params.model)
+        if (promptCallCount === 1) {
+          // First attempt: confirmed Anthropic 529 Overloaded error.
+          throw new APICallError({
+            message: 'Overloaded',
+            url: 'https://api.anthropic.com/v1/messages',
+            requestBodyValues: {},
+            statusCode: 529,
+            responseHeaders: undefined,
+            responseBody: undefined,
+            isRetryable: true,
+            data: undefined,
+          })
+        }
+        // Second attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
+      })
+
+      // First attempt used the original model; after the confirmed 529 the
+      // retry switched to the sibling Anthropic model.
+      expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_HAIKU_MODEL)
+      expect(result.output.type).not.toBe('error')
+
+      // The user should be told about the model switch.
+      const switchNotice = chunks.find((c) => c.includes('switching to'))
+      expect(switchNotice).toBeDefined()
+      expect(switchNotice).toContain(CURRENT_HAIKU_MODEL)
+    })
+
+    it('should switch models when AI_NoOutputGeneratedError has a 529 nested in its cause chain', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        model: CURRENT_SONNET_MODEL,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const modelsUsed: (string | undefined)[] = []
+      const chunks: string[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
+        promptCallCount++
+        modelsUsed.push(params.model)
+        if (promptCallCount === 1) {
+          // Mid-stream 529 swallowed inside the stream surfaces as
+          // AI_NoOutputGeneratedError but carries the real 529 via `cause`.
+          const error = new Error(
+            'No output generated. Check the stream for errors.',
+          )
+          error.name = 'AI_NoOutputGeneratedError'
+          ;(error as Error & { cause?: unknown }).cause = new APICallError({
+            message: 'Overloaded',
+            url: 'https://api.anthropic.com/v1/messages',
+            requestBodyValues: {},
+            statusCode: 529,
+            responseHeaders: undefined,
+            responseBody: undefined,
+            isRetryable: true,
+            data: undefined,
+          })
+          throw error
+        }
+        // Second attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
+      })
+
+      // The nested 529 was detected via getTransientStatusCode walking the
+      // cause chain, so the retry switched to the sibling Anthropic model.
+      expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_HAIKU_MODEL)
+      expect(result.output.type).not.toBe('error')
+
+      const switchNotice = chunks.find((c) => c.includes('switching to'))
+      expect(switchNotice).toBeDefined()
+      expect(switchNotice).toContain(CURRENT_HAIKU_MODEL)
+    })
+
+    it('should NOT switch models on a mid-stream AI_NoOutputGeneratedError (no confirmed 529)', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        model: CURRENT_SONNET_MODEL,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const modelsUsed: (string | undefined)[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
+        promptCallCount++
+        modelsUsed.push(params.model)
+        if (promptCallCount === 1) {
+          // Mid-stream failure with no 529 in the cause chain — ambiguous, so
+          // the retry must keep the same model.
+          const error = new Error(
+            'No output generated. Check the stream for errors.',
+          )
+          error.name = 'AI_NoOutputGeneratedError'
+          throw error
+        }
+        // Second attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // No confirmed 529 → same model on retry (no ladder switch).
+      expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_SONNET_MODEL)
+      expect(result.output.type).not.toBe('error')
+    })
+
+    it('should escalate model across retries (sonnet -> haiku -> gpt-5) when 529s persist', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        model: CURRENT_SONNET_MODEL,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const modelsUsed: (string | undefined)[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
+        promptCallCount++
+        modelsUsed.push(params.model)
+        if (promptCallCount <= 2) {
+          // First two attempts: confirmed Anthropic 529 Overloaded errors, so
+          // the ladder escalates on each retry.
+          throw new APICallError({
+            message: 'Overloaded',
+            url: 'https://api.anthropic.com/v1/messages',
+            requestBodyValues: {},
+            statusCode: 529,
+            responseHeaders: undefined,
+            responseBody: undefined,
+            isRetryable: true,
+            data: undefined,
+          })
+        }
+        // Third attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // Full two-hop escalation: sonnet-5 -> haiku-4.5 -> gpt-5.
+      expect(promptCallCount).toBe(3)
+      expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_HAIKU_MODEL)
+      expect(modelsUsed[2]).toBe(CURRENT_GPT5_MODEL)
+      expect(result.output.type).not.toBe('error')
+      // Guard against silent extra calls.
+      expect(modelsUsed.length).toBe(promptCallCount)
     })
 
     it('should retry via message fallback when error contains Overloaded but has no retryable status code', async () => {

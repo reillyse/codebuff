@@ -11,7 +11,7 @@ import {
 } from '@codebuff/common/sparrow/telemetry'
 import { buildArray } from '@codebuff/common/util/array'
 import { normalizeProviderRequestBodyForCacheDebug } from '@codebuff/common/util/cache-debug'
-import { getErrorObject, promptAborted, promptSuccess } from '@codebuff/common/util/error'
+import { getErrorObject, getTransientStatusCode, isNoOutputGeneratedError, promptAborted, promptSuccess } from '@codebuff/common/util/error'
 import { convertCbToModelMessages } from '@codebuff/common/util/messages'
 import { isExplicitlyDefinedModel } from '@codebuff/common/util/model-utils'
 import { StopSequenceHandler } from '@codebuff/common/util/stop-sequence'
@@ -1040,6 +1040,24 @@ export async function* promptAiSdkStream(
   if (sparrowIsTopLevel) sparrowHandle.end()
 
   return promptSuccess(messageId)
+  } catch (error) {
+    // Diagnostic: when the AI SDK reports no output was generated, dump the
+    // full error (getErrorObject walks the cause chain to surface
+    // statusCode/responseBody/url) plus the model, so we can confirm whether
+    // this is masking a transient provider overload (e.g. Anthropic 529).
+    if (isNoOutputGeneratedError(error)) {
+      logger.warn(
+        {
+          site: 'sdk/llm.promptAiSdkStream',
+          error: getErrorObject(error),
+          transientStatusCode: getTransientStatusCode(error),
+          requestModel: requestedModel,
+          model: params.model,
+        },
+        'AI_NoOutputGeneratedError while streaming — dumping cause chain to determine if this is a transient provider overload (e.g. 529)',
+      )
+    }
+    throw error
   } finally {
     // SPARROW: safety-net end — idempotent, so a no-op if the success or
     // explicit error paths already called end(). Covers unexpected throws

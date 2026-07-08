@@ -1,4 +1,5 @@
 import { AnalyticsEvent } from '@codebuff/common/constants/analytics-events'
+import { getOverloadFallbackModel } from '@codebuff/common/constants/model-config'
 import { supportsCacheControl } from '@codebuff/common/old-constants'
 // SPARROW: telemetry — wrap agent runs and steps in dedicated spans
 import {
@@ -7,7 +8,7 @@ import {
 } from '@codebuff/common/sparrow/telemetry'
 import { TOOLS_WHICH_WONT_FORCE_NEXT_STEP } from '@codebuff/common/tools/constants'
 import { buildArray } from '@codebuff/common/util/array'
-import { AbortError, describeTransientApiError, getErrorObject, getErrorStatusCode, isAbortError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
+import { AbortError, describeTransientApiError, getErrorObject, getErrorStatusCode, getTransientStatusCode, isAbortError, isNoOutputGeneratedError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
 import { abortableSleep } from '@codebuff/common/util/promise'
 import { serializeCacheDebugCorrelation } from '@codebuff/common/util/cache-debug'
 import { systemMessage, userMessage } from '@codebuff/common/util/messages'
@@ -999,6 +1000,11 @@ export async function loopAgentSteps(
       // Retry transient API errors (e.g. Anthropic 500s) with exponential backoff
       let stepError: unknown
       let stepResult: Awaited<ReturnType<typeof runAgentStep>> | undefined
+      // Model-fallback ladder for Anthropic 529 (Overloaded): on a confirmed 529 we
+      // switch to a sibling Anthropic model, then escalate to GPT-5 if it keeps
+      // failing, so the retry doesn't just hit the same overloaded model again.
+      let currentModel: string = agentTemplate.model
+      let modelSwitchNotice: string | undefined
       for (let retryAttempt = 0; retryAttempt <= MAX_STEP_RETRIES; retryAttempt++) {
         if (retryAttempt > 0) {
           if (signal.aborted) throw new AbortError()
@@ -1016,13 +1022,18 @@ export async function loopAgentSteps(
               attempt: retryAttempt + 1,
               maxAttempts: MAX_STEP_RETRIES + 1,
               delayMs: delay,
+              modelSwitch: modelSwitchNotice,
               error: getErrorObject(stepError),
             },
             'Retrying agent step after transient API error',
           )
           onResponseChunk(
-            `⚠️ ${reason}, retrying in ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`,
+            modelSwitchNotice
+              ? `\n⚠️ ${reason} — ${modelSwitchNotice}, retrying in ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`
+              : `\n⚠️ ${reason}, retrying in ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`,
           )
+          // Only surface the switch notice once per switch.
+          modelSwitchNotice = undefined
           await abortableSleep(delay, signal)
           if (signal.aborted) throw new AbortError()
         }
@@ -1031,7 +1042,10 @@ export async function loopAgentSteps(
             ...params,
 
             agentState: currentAgentState,
-            agentTemplate,
+            agentTemplate:
+              currentModel === agentTemplate.model
+                ? agentTemplate
+                : { ...agentTemplate, model: currentModel },
             n,
             prompt: currentPrompt,
             runId,
@@ -1046,6 +1060,49 @@ export async function loopAgentSteps(
           break
         } catch (error) {
           stepError = error
+          // Diagnostic: capture the FIRST occurrence of
+          // AI_NoOutputGeneratedError (the retry-notice log below only fires on
+          // retryAttempt > 0). getErrorObject walks the cause chain to surface
+          // statusCode/responseBody, letting us confirm whether this masks a
+          // transient 529/overload.
+          if (isNoOutputGeneratedError(error)) {
+            logger.warn(
+              {
+                site: 'agent-runtime/loopAgentSteps',
+                error: getErrorObject(error),
+                transientStatusCode: getTransientStatusCode(error),
+                // Report the ACTUAL model used on this attempt (may have been
+                // switched by the 529 fallback ladder), not the original template model.
+                model: currentModel,
+                attempt: retryAttempt + 1,
+                runId,
+              },
+              'AI_NoOutputGeneratedError caught in agent step — dumping cause chain (statusCode/responseBody) to confirm whether it is a transient 529/overload',
+            )
+          }
+          // On a CONFIRMED Anthropic 529 (Overloaded), escalate the model ladder so
+          // the next retry uses a different model instead of hitting the same
+          // overload. Only fires for a real 529 (walks the cause chain); ambiguous
+          // AI_NoOutputGeneratedError without a 529 keeps the same-model retry.
+          if (
+            getTransientStatusCode(error) === 529 &&
+            retryAttempt < MAX_STEP_RETRIES
+          ) {
+            const fallbackModel = getOverloadFallbackModel(currentModel)
+            if (fallbackModel && fallbackModel !== currentModel) {
+              logger.warn(
+                {
+                  fromModel: currentModel,
+                  toModel: fallbackModel,
+                  attempt: retryAttempt + 1,
+                  runId,
+                },
+                'Anthropic 529 Overloaded — switching model for retry',
+              )
+              modelSwitchNotice = `provider overloaded on ${currentModel}, switching to ${fallbackModel}`
+              currentModel = fallbackModel
+            }
+          }
           if (
             !signal.aborted &&
             retryAttempt < MAX_STEP_RETRIES &&
