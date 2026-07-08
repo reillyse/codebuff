@@ -12,9 +12,9 @@ import {
 import type { Model } from '../model-config'
 
 describe('getOverloadFallbackModel', () => {
-  it('steps sonnet-5 down to a sibling Anthropic model (haiku)', () => {
+  it('steps sonnet-5 down to a peer-strength sibling (opus)', () => {
     expect(getOverloadFallbackModel(CURRENT_SONNET_MODEL)).toBe(
-      CURRENT_HAIKU_MODEL,
+      CURRENT_OPUS_MODEL,
     )
   })
 
@@ -24,9 +24,9 @@ describe('getOverloadFallbackModel', () => {
     )
   })
 
-  it('steps opus down to sonnet-5', () => {
+  it('steps opus across providers to GPT-5', () => {
     expect(getOverloadFallbackModel(CURRENT_OPUS_MODEL)).toBe(
-      CURRENT_SONNET_MODEL,
+      CURRENT_GPT5_MODEL,
     )
   })
 
@@ -66,10 +66,10 @@ describe('getOverloadFallbackModel', () => {
     expect(current).toBeUndefined()
     // It must leave Anthropic by ending on an OpenAI model.
     expect(chain[chain.length - 1].startsWith('openai/')).toBe(true)
-    // Concretely: sonnet-5 -> haiku-4.5 -> gpt-5.
+    // Concretely: sonnet-5 -> opus -> gpt-5.
     expect(chain).toEqual([
       CURRENT_SONNET_MODEL,
-      CURRENT_HAIKU_MODEL,
+      CURRENT_OPUS_MODEL,
       CURRENT_GPT5_MODEL,
     ])
   })

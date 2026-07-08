@@ -1,7 +1,7 @@
 import * as analytics from '@codebuff/common/analytics'
 import {
   CURRENT_GPT5_MODEL,
-  CURRENT_HAIKU_MODEL,
+  CURRENT_OPUS_MODEL,
   CURRENT_SONNET_MODEL,
 } from '@codebuff/common/constants/model-config'
 import { TEST_USER_ID } from '@codebuff/common/old-constants'
@@ -959,15 +959,15 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       })
 
       // First attempt used the original model; after the confirmed 529 the
-      // retry switched to the sibling Anthropic model.
+      // retry switched to the peer-strength sibling Anthropic model.
       expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
-      expect(modelsUsed[1]).toBe(CURRENT_HAIKU_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_OPUS_MODEL)
       expect(result.output.type).not.toBe('error')
 
       // The user should be told about the model switch.
       const switchNotice = chunks.find((c) => c.includes('switching to'))
       expect(switchNotice).toBeDefined()
-      expect(switchNotice).toContain(CURRENT_HAIKU_MODEL)
+      expect(switchNotice).toContain(CURRENT_OPUS_MODEL)
     })
 
     it('should switch models when AI_NoOutputGeneratedError has a 529 nested in its cause chain', async () => {
@@ -1025,14 +1025,14 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       })
 
       // The nested 529 was detected via getTransientStatusCode walking the
-      // cause chain, so the retry switched to the sibling Anthropic model.
+      // cause chain, so the retry switched to the peer-strength sibling model.
       expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
-      expect(modelsUsed[1]).toBe(CURRENT_HAIKU_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_OPUS_MODEL)
       expect(result.output.type).not.toBe('error')
 
       const switchNotice = chunks.find((c) => c.includes('switching to'))
       expect(switchNotice).toBeDefined()
-      expect(switchNotice).toContain(CURRENT_HAIKU_MODEL)
+      expect(switchNotice).toContain(CURRENT_OPUS_MODEL)
     })
 
     it('should NOT switch models on a mid-stream AI_NoOutputGeneratedError (no confirmed 529)', async () => {
@@ -1081,7 +1081,7 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(result.output.type).not.toBe('error')
     })
 
-    it('should escalate model across retries (sonnet -> haiku -> gpt-5) when 529s persist', async () => {
+    it('should escalate model across retries (sonnet -> opus -> gpt-5) when 529s persist', async () => {
       const llmOnlyTemplate = {
         ...mockTemplate,
         model: CURRENT_SONNET_MODEL,
@@ -1126,10 +1126,10 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
         localAgentTemplates,
       })
 
-      // Full two-hop escalation: sonnet-5 -> haiku-4.5 -> gpt-5.
+      // Full two-hop escalation: sonnet-5 -> opus -> gpt-5.
       expect(promptCallCount).toBe(3)
       expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
-      expect(modelsUsed[1]).toBe(CURRENT_HAIKU_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_OPUS_MODEL)
       expect(modelsUsed[2]).toBe(CURRENT_GPT5_MODEL)
       expect(result.output.type).not.toBe('error')
       // Guard against silent extra calls.
