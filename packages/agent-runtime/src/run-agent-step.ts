@@ -176,6 +176,7 @@ export const runAgentStep = async (
   shouldEndTurn: boolean
   messageId: string | null
   nResponses?: string[]
+  isEmptyResponse: boolean
 }> => {
   // SPARROW: telemetry — wrap step in agent.step span. stepNumber is taken
   // from params.sparrowStepNumber if provided by the caller (loopAgentSteps),
@@ -255,6 +256,7 @@ export const runAgentStep = async (
       fullResponse: STEP_WARNING_MESSAGE,
       shouldEndTurn: true,
       messageId: null,
+      isEmptyResponse: false,
     }
   }
 
@@ -406,6 +408,7 @@ export const runAgentStep = async (
         shouldEndTurn: true,
         messageId: null,
         nResponses: undefined,
+        isEmptyResponse: false,
       }
     }
 
@@ -436,6 +439,7 @@ export const runAgentStep = async (
       shouldEndTurn: false,
       messageId: null,
       nResponses,
+      isEmptyResponse: false,
     }
   }
 
@@ -547,18 +551,15 @@ export const runAgentStep = async (
   // tool calls, NO tool results, and NO text content. This is the classic
   // "stops randomly" symptom — a dropped/truncated provider stream (e.g. a
   // swallowed mid-stream 529) that the SDK finished as a normal completion.
-  // Per product decision we only SURFACE it (visible warning + persistent WARN
-  // log); we do NOT auto-retry here.
-  const isEmptyTurn =
+  // We report it via `isEmptyResponse` so loopAgentSteps can RETRY it (with
+  // backoff) before surfacing a warning and ending the turn.
+  const isEmptyResponse =
     shouldEndTurn &&
     !hasTaskCompleted &&
     hasNoToolResults &&
     fullResponse.trim().length === 0
-  if (isEmptyTurn) {
-    onResponseChunk(
-      '\n⚠️ The model returned an empty response (no content and no tool call). This can happen when the provider drops the stream mid-response. Ending the turn — you can continue with `codebuff --continue` or by sending another message.\n\n',
-    )
-    logger.warn(
+  if (isEmptyResponse) {
+    logger.debug(
       {
         iteration: iterationNum,
         agentType,
@@ -567,7 +568,7 @@ export const runAgentStep = async (
         runId: agentState.runId,
         finishReason: 'empty-response',
       },
-      'Agent step ended with an empty response (no content, no tool calls) — likely a dropped/truncated provider stream',
+      'Agent step returned an empty response (no content, no tool calls); loopAgentSteps will retry before ending the turn',
     )
   }
 
@@ -602,6 +603,7 @@ export const runAgentStep = async (
     shouldEndTurn,
     messageId,
     nResponses: undefined,
+    isEmptyResponse,
   }
     },
   )
@@ -1042,6 +1044,12 @@ export async function loopAgentSteps(
       // Retry transient API errors (e.g. Anthropic 500s) with exponential backoff
       let stepError: unknown
       let stepResult: Awaited<ReturnType<typeof runAgentStep>> | undefined
+      // A successful-but-EMPTY step (no content, no tool calls) is treated like a
+      // transient failure: it's the classic "stops randomly" symptom of a
+      // dropped/truncated provider stream that finished "cleanly". We retry it
+      // through the same backoff path, and only surface the give-up warning if
+      // it's still empty after exhausting retries.
+      let lastAttemptWasEmpty = false
       // Model-fallback ladder for Anthropic 529 (Overloaded): on a confirmed 529 we
       // switch to a sibling Anthropic model, then escalate to GPT-5 if it keeps
       // failing, so the retry doesn't just hit the same overloaded model again.
@@ -1057,17 +1065,22 @@ export async function loopAgentSteps(
           // Describe *why* we're retrying. This handles both pre-stream errors
           // (which carry a status code) and mid-stream failures like
           // AI_NoOutputGeneratedError / nested-cause overloads, so the user sees
-          // a meaningful reason instead of a bare "Transient API error".
-          const reason = describeTransientApiError(stepError)
+          // a meaningful reason instead of a bare "Transient API error". When the
+          // previous attempt returned an empty response (rather than throwing),
+          // use an empty-response-specific reason.
+          const reason = lastAttemptWasEmpty
+            ? 'The model returned an empty response (the provider likely dropped the stream)'
+            : describeTransientApiError(stepError)
           logger.warn(
             {
               attempt: retryAttempt + 1,
               maxAttempts: MAX_STEP_RETRIES + 1,
               delayMs: delay,
               modelSwitch: modelSwitchNotice,
-              error: getErrorObject(stepError),
+              emptyResponse: lastAttemptWasEmpty,
+              error: stepError ? getErrorObject(stepError) : undefined,
             },
-            'Retrying agent step after transient API error',
+            'Retrying agent step after transient API error or empty response',
           )
           onResponseChunk(
             modelSwitchNotice
@@ -1099,9 +1112,23 @@ export async function loopAgentSteps(
             tools,
             additionalToolDefinitions: additionalToolDefinitionsWithCache,
           })
+          // If the step succeeded but returned an EMPTY response (dropped/
+          // truncated stream), retry it through the backoff path instead of
+          // ending the turn silently. Clear any prior thrown error so the retry
+          // notice uses the empty-response reason.
+          if (
+            stepResult.isEmptyResponse &&
+            retryAttempt < MAX_STEP_RETRIES &&
+            !signal.aborted
+          ) {
+            lastAttemptWasEmpty = true
+            stepError = undefined
+            continue
+          }
           break
         } catch (error) {
           stepError = error
+          lastAttemptWasEmpty = false
           // Diagnostic: capture the FIRST occurrence of
           // AI_NoOutputGeneratedError (the retry-notice log below only fires on
           // retryAttempt > 0). getErrorObject walks the cause chain to surface
@@ -1161,7 +1188,28 @@ export async function loopAgentSteps(
         shouldEndTurn: llmShouldEndTurn,
         messageId,
         nResponses: generatedResponses,
+        isEmptyResponse,
       } = stepResult!
+
+      // If, after exhausting retries, the step is STILL empty (no content, no
+      // tool calls), surface a visible warning + a persistent WARN log instead
+      // of ending the turn silently. This is the "gave up after retries" signal.
+      if (isEmptyResponse) {
+        onResponseChunk(
+          '\n⚠️ The model returned an empty response (no content and no tool call) after several retries. This can happen when the provider drops the stream mid-response. Ending the turn — you can continue with `codebuff --continue` or by sending another message.\n\n',
+        )
+        logger.warn(
+          {
+            agentType,
+            agentId: newAgentState.agentId,
+            model: agentTemplate.model,
+            runId,
+            totalSteps,
+            finishReason: 'empty-response',
+          },
+          'Agent step still returned an empty response after retries; ending the turn',
+        )
+      }
 
       if (newAgentState.runId) {
         await addAgentStep({

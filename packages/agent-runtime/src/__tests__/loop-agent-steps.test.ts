@@ -1136,6 +1136,94 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(modelsUsed.length).toBe(promptCallCount)
     })
 
+    it('should retry an empty response (dropped stream) and succeed on the next attempt', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const chunks: string[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        if (promptCallCount === 1) {
+          // Empty response: the stream yields NO text and NO tool call (a
+          // dropped/truncated provider stream that finishes "cleanly").
+          return promptSuccess('mock-message-id')
+        }
+        // Second attempt: succeed
+        yield { type: 'text' as const, text: 'Success after retry\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
+      })
+
+      // Should have retried the empty response and succeeded on attempt 2.
+      expect(promptCallCount).toBe(2)
+      expect(result.output.type).not.toBe('error')
+
+      // Should surface a retry notice explaining the empty response.
+      const retryNotice = chunks.find((c) => c.includes('retrying in'))
+      expect(retryNotice).toBeDefined()
+      expect(retryNotice).toContain('empty response')
+
+      // Should NOT surface the final "ending the turn" warning — we recovered.
+      const giveUpNotice = chunks.find((c) => c.includes('Ending the turn'))
+      expect(giveUpNotice).toBeUndefined()
+    })
+
+    it('should exhaust retries on persistent empty responses and surface the warning', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const chunks: string[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        // Always an empty response (no text, no tool call).
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
+      })
+
+      // 1 initial + MAX_STEP_RETRIES (2) = 3 attempts, then give up.
+      expect(promptCallCount).toBe(3)
+      // The run still "completes" (ends the turn) rather than erroring.
+      expect(result.output.type).not.toBe('error')
+
+      // Should surface the final "ending the turn" empty-response warning.
+      const giveUpNotice = chunks.find((c) => c.includes('Ending the turn'))
+      expect(giveUpNotice).toBeDefined()
+      expect(giveUpNotice).toContain('empty response')
+    })
+
     it('should retry via message fallback when error contains Overloaded but has no retryable status code', async () => {
       const llmOnlyTemplate = {
         ...mockTemplate,
