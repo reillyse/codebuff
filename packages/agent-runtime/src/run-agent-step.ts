@@ -543,6 +543,34 @@ export const runAgentStep = async (
     shouldEndTurn = hasTaskCompleted || (hasNoToolResults && !isThinkOnly)
   }
 
+  // Detect a truly EMPTY turn: the turn is ending, but the model produced NO
+  // tool calls, NO tool results, and NO text content. This is the classic
+  // "stops randomly" symptom — a dropped/truncated provider stream (e.g. a
+  // swallowed mid-stream 529) that the SDK finished as a normal completion.
+  // Per product decision we only SURFACE it (visible warning + persistent WARN
+  // log); we do NOT auto-retry here.
+  const isEmptyTurn =
+    shouldEndTurn &&
+    !hasTaskCompleted &&
+    hasNoToolResults &&
+    fullResponse.trim().length === 0
+  if (isEmptyTurn) {
+    onResponseChunk(
+      '\n⚠️ The model returned an empty response (no content and no tool call). This can happen when the provider drops the stream mid-response. Ending the turn — you can continue with `codebuff --continue` or by sending another message.\n\n',
+    )
+    logger.warn(
+      {
+        iteration: iterationNum,
+        agentType,
+        agentId: agentState.agentId,
+        model,
+        runId: agentState.runId,
+        finishReason: 'empty-response',
+      },
+      'Agent step ended with an empty response (no content, no tool calls) — likely a dropped/truncated provider stream',
+    )
+  }
+
   agentState = {
     ...agentState,
     stepsRemaining: agentState.stepsRemaining - 1,

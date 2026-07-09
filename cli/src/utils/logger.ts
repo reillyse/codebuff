@@ -1,4 +1,5 @@
-import { appendFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import os from 'os'
 import path, { dirname } from 'path'
 import { format as stringFormat } from 'util'
 
@@ -30,6 +31,50 @@ export const loggerContext: LoggerContext = {}
 
 let logPath: string | undefined = undefined
 let pinoLogger: any = undefined
+
+// Persistent, discoverable global log sink for the installed CLI. Unlike the
+// per-conversation `log.jsonl` (which is scattered across chat dirs), this is a
+// single stable file so a "random stop" always leaves a findable trail of
+// WARN/ERROR/FATAL entries. Size-rotated like prompt-logger/hippo-logger.
+const GLOBAL_LOG_MAX_SIZE = 5 * 1024 * 1024 // 5MB
+const GLOBAL_LOG_TRUNCATE_TO = 2.5 * 1024 * 1024 // Keep last ~2.5MB after truncation
+
+function getGlobalLogPath(): string | null {
+  try {
+    return path.join(os.homedir(), '.codebuff', 'logs', 'cli.jsonl')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Append a line to the persistent global CLI log. No-op in dev/test/ci (those
+ * already have their own discoverable logs). Best-effort: never throws.
+ */
+function appendToGlobalLog(entry: string): void {
+  if (IS_DEV || IS_TEST || IS_CI) return
+  const filePath = getGlobalLogPath()
+  if (!filePath) return
+
+  try {
+    mkdirSync(dirname(filePath), { recursive: true })
+    // Truncate when over the size cap, keeping the last chunk snapped to a
+    // newline boundary so we never leave a partial JSON line at the top.
+    if (existsSync(filePath)) {
+      const stat = statSync(filePath)
+      if (stat.size > GLOBAL_LOG_MAX_SIZE) {
+        const content = readFileSync(filePath)
+        const kept = content.slice(content.length - GLOBAL_LOG_TRUNCATE_TO)
+        const firstNewline = kept.indexOf(10) // 0x0A = '\n'
+        const clean = firstNewline >= 0 ? kept.slice(firstNewline + 1) : kept
+        writeFileSync(filePath, clean)
+      }
+    }
+    appendFileSync(filePath, entry)
+  } catch {
+    // Best-effort logging — the logger must never throw.
+  }
+}
 
 const loggingLevels = ['info', 'debug', 'warn', 'error', 'fatal'] as const
 type LogLevel = (typeof loggingLevels)[number]
@@ -200,6 +245,19 @@ function sendAnalyticsAndLog(
     const base = { ...loggerContext }
     const obj = includeData ? { ...base, data: normalizedData } : base
     pinoLogger[level](obj, normalizedMsg as any, ...args)
+  }
+
+  // Always mirror WARN/ERROR/FATAL to the persistent global log so the next
+  // "random stop" leaves a findable trail (no-op in dev/test/ci).
+  if (level === 'warn' || level === 'error' || level === 'fatal') {
+    const globalEntry = safeStringify({
+      level: level.toUpperCase(),
+      timestamp: new Date().toISOString(),
+      ...loggerContext,
+      ...(includeData ? { data: normalizedData } : {}),
+      msg: stringFormat(normalizedMsg ?? '', ...args),
+    })
+    appendToGlobalLog(globalEntry + '\n')
   }
 }
 
