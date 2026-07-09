@@ -1,5 +1,8 @@
 import { AnalyticsEvent } from '@codebuff/common/constants/analytics-events'
-import { getOverloadFallbackModel } from '@codebuff/common/constants/model-config'
+import {
+  getEmptyResponseFallbackModel,
+  getOverloadFallbackModel,
+} from '@codebuff/common/constants/model-config'
 import { supportsCacheControl } from '@codebuff/common/old-constants'
 // SPARROW: telemetry — wrap agent runs and steps in dedicated spans
 import {
@@ -1123,6 +1126,24 @@ export async function loopAgentSteps(
           ) {
             lastAttemptWasEmpty = true
             stepError = undefined
+            // Switch models on empty (like the 529 ladder): retrying the SAME
+            // model that just dropped the stream rarely recovers, so step down
+            // the empty-response ladder (sonnet-5 -> sonnet-4.6 -> opus -> gpt-5)
+            // so the next attempt hits a different model/capacity pool.
+            const fallbackModel = getEmptyResponseFallbackModel(currentModel)
+            if (fallbackModel && fallbackModel !== currentModel) {
+              logger.warn(
+                {
+                  fromModel: currentModel,
+                  toModel: fallbackModel,
+                  attempt: retryAttempt + 1,
+                  runId,
+                },
+                'Empty response (dropped stream) — switching model for retry',
+              )
+              modelSwitchNotice = `switching to ${fallbackModel}`
+              currentModel = fallbackModel
+            }
             continue
           }
           break

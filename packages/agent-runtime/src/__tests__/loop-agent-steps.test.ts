@@ -2,6 +2,7 @@ import * as analytics from '@codebuff/common/analytics'
 import {
   CURRENT_GPT5_MODEL,
   CURRENT_OPUS_MODEL,
+  CURRENT_SONNET_FALLBACK_MODEL,
   CURRENT_SONNET_MODEL,
 } from '@codebuff/common/constants/model-config'
 import { TEST_USER_ID } from '@codebuff/common/old-constants'
@@ -1136,9 +1137,10 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(modelsUsed.length).toBe(promptCallCount)
     })
 
-    it('should retry an empty response (dropped stream) and succeed on the next attempt', async () => {
+    it('should retry an empty response (dropped stream), switch models, and succeed on the next attempt', async () => {
       const llmOnlyTemplate = {
         ...mockTemplate,
+        model: CURRENT_SONNET_MODEL,
         handleSteps: undefined,
       }
 
@@ -1147,10 +1149,14 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       }
 
       const chunks: string[] = []
+      const modelsUsed: (string | undefined)[] = []
 
       let promptCallCount = 0
-      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
         promptCallCount++
+        modelsUsed.push(params.model)
         if (promptCallCount === 1) {
           // Empty response: the stream yields NO text and NO tool call (a
           // dropped/truncated provider stream that finishes "cleanly").
@@ -1175,14 +1181,64 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(promptCallCount).toBe(2)
       expect(result.output.type).not.toBe('error')
 
-      // Should surface a retry notice explaining the empty response.
+      // The empty response switched models down the empty-response ladder:
+      // attempt 1 on sonnet-5, attempt 2 on the distinct older Sonnet (4.6).
+      expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_SONNET_FALLBACK_MODEL)
+
+      // Should surface a retry notice explaining the empty response + switch.
       const retryNotice = chunks.find((c) => c.includes('retrying in'))
       expect(retryNotice).toBeDefined()
       expect(retryNotice).toContain('empty response')
+      const switchNotice = chunks.find((c) => c.includes('switching to'))
+      expect(switchNotice).toBeDefined()
+      expect(switchNotice).toContain(CURRENT_SONNET_FALLBACK_MODEL)
 
       // Should NOT surface the final "ending the turn" warning — we recovered.
       const giveUpNotice = chunks.find((c) => c.includes('Ending the turn'))
       expect(giveUpNotice).toBeUndefined()
+    })
+
+    it('should escalate models across retries (sonnet-5 -> sonnet-4.6 -> opus) when empty responses persist', async () => {
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        model: CURRENT_SONNET_MODEL,
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const modelsUsed: (string | undefined)[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
+        promptCallCount++
+        modelsUsed.push(params.model)
+        // Always an empty response (no text, no tool call), so the ladder
+        // steps down on each retry.
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // 1 initial + MAX_STEP_RETRIES (2) = 3 attempts, stepping down the
+      // empty-response ladder: sonnet-5 -> sonnet-4.6 -> opus.
+      expect(promptCallCount).toBe(3)
+      expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_SONNET_FALLBACK_MODEL)
+      expect(modelsUsed[2]).toBe(CURRENT_OPUS_MODEL)
+      // The run still "completes" (ends the turn) rather than erroring.
+      expect(result.output.type).not.toBe('error')
+      // Guard against silent extra calls.
+      expect(modelsUsed.length).toBe(promptCallCount)
     })
 
     it('should exhaust retries on persistent empty responses and surface the warning', async () => {

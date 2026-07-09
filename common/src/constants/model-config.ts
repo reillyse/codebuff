@@ -28,6 +28,7 @@ export type OpenAIModel = (typeof openaiModels)[keyof typeof openaiModels]
 
 export const openrouterModels = {
   openrouter_claude_sonnet_5: 'anthropic/claude-sonnet-5',
+  openrouter_claude_sonnet_4_6: 'anthropic/claude-sonnet-4.6',
   openrouter_claude_sonnet_4: 'anthropic/claude-4-sonnet-20250522',
   openrouter_claude_opus_4: 'anthropic/claude-opus-4.8',
   openrouter_claude_fable_5: 'anthropic/claude-fable-5',
@@ -89,6 +90,16 @@ export const CURRENT_OPUS_MODEL = (process.env.CODEBUFF_OPUS_MODEL ?? 'anthropic
 export const CURRENT_SONNET_MODEL = 'anthropic/claude-sonnet-5' as const
 
 /**
+ * The Sonnet model we step *down* to when the current Sonnet drops streams
+ * (empty responses). This is a distinct, slightly-older Sonnet — it preserves
+ * coding quality (still a Sonnet) while likely drawing from a different
+ * capacity pool than the current Sonnet, so it can recover a dropped stream.
+ * Update this single constant when the Sonnet ladder changes.
+ */
+export const CURRENT_SONNET_FALLBACK_MODEL =
+  'anthropic/claude-sonnet-4.6' as const
+
+/**
  * The current Fable model version used by agents. Update this single constant when upgrading.
  * Fable is Anthropic's premium planning/debugging model (~2x the cost of Opus), so it is only
  * used on deliberate, opt-in paths (PLAN mode and the spawnable fable-agent).
@@ -110,7 +121,7 @@ export const shortModelNames = {
   'flash-2.5': models.openrouter_gemini2_5_flash, // deprecated alias
   'opus-4': models.openrouter_claude_opus_4,
   'sonnet-5': models.openrouter_claude_sonnet_5,
-  'sonnet-4.6': models.openrouter_claude_sonnet_5, // deprecated alias
+  'sonnet-4.6': models.openrouter_claude_sonnet_4_6,
   'sonnet-4.5': models.openrouter_claude_sonnet_5, // deprecated alias
   'sonnet-4': models.openrouter_claude_sonnet_4,
   'sonnet-3.7': models.openrouter_claude_sonnet_4,
@@ -144,6 +155,7 @@ export const shouldCacheModels = [
   'anthropic/claude-opus-4.8',
   'anthropic/claude-fable-5',
   'anthropic/claude-sonnet-5',
+  'anthropic/claude-sonnet-4.6',
   'anthropic/claude-sonnet-4',
   'anthropic/claude-opus-4',
   'anthropic/claude-3.7-sonnet',
@@ -259,6 +271,44 @@ export function getOverloadFallbackModel(
   if (currentModel.startsWith('openai/')) return undefined
 
   if (currentModel === CURRENT_SONNET_MODEL) return CURRENT_OPUS_MODEL
+  if (currentModel === CURRENT_FABLE_MODEL) return CURRENT_SONNET_MODEL
+  if (currentModel === CURRENT_OPUS_MODEL) return CURRENT_GPT5_MODEL
+  if (currentModel === CURRENT_HAIKU_MODEL) return CURRENT_GPT5_MODEL
+
+  // Any other Anthropic model: escalate straight to GPT-5.
+  if (currentModel.startsWith('anthropic/')) return CURRENT_GPT5_MODEL
+
+  // Non-Anthropic, non-OpenAI models: escape to GPT-5.
+  return CURRENT_GPT5_MODEL
+}
+
+/**
+ * Escalation ladder used to escape EMPTY responses (a dropped/truncated
+ * provider stream that finished "cleanly" — no content, no tool calls).
+ *
+ * Unlike a 529 (an Anthropic-wide capacity signal), an empty response is often
+ * a per-model/per-request stream hiccup, so we first step *down* to a distinct,
+ * slightly-older Sonnet (preserves coding quality while likely drawing from a
+ * different capacity pool), then escalate to Opus, and finally cross-provider
+ * to GPT-5 if the stream keeps dropping. This is intentionally SEPARATE from
+ * getOverloadFallbackModel so changing empty-response recovery never alters 529
+ * behavior.
+ *
+ * Returns the next model to try, or `undefined` when there is no further
+ * fallback (e.g. we're already on an OpenAI model).
+ *
+ * Example ladder:
+ *   sonnet-5 -> sonnet-4.6 -> opus -> gpt-5.2
+ */
+export function getEmptyResponseFallbackModel(
+  currentModel: Model,
+): Model | undefined {
+  // Already off Anthropic — no further empty-response fallback needed.
+  if (currentModel.startsWith('openai/')) return undefined
+
+  if (currentModel === CURRENT_SONNET_MODEL)
+    return CURRENT_SONNET_FALLBACK_MODEL
+  if (currentModel === CURRENT_SONNET_FALLBACK_MODEL) return CURRENT_OPUS_MODEL
   if (currentModel === CURRENT_FABLE_MODEL) return CURRENT_SONNET_MODEL
   if (currentModel === CURRENT_OPUS_MODEL) return CURRENT_GPT5_MODEL
   if (currentModel === CURRENT_HAIKU_MODEL) return CURRENT_GPT5_MODEL
