@@ -16,7 +16,7 @@ import { APICallError, type ToolSet } from 'ai'
 import { cloneDeep, mapValues } from 'lodash'
 
 import { CACHE_DEBUG_FULL_LOGGING } from './constants'
-import { callTokenCountAPI } from './llm-api/codebuff-web-api'
+import { callTokenCountAPI, MISSING_CODEBUFF_CREDENTIALS_ERROR } from './llm-api/codebuff-web-api'
 import { getMCPToolData } from './mcp'
 import { getAgentStreamFromTemplate } from './prompt-agent-stream'
 import { runProgrammaticStep } from './run-programmatic-step'
@@ -934,10 +934,24 @@ export async function loopAgentSteps(
       if (tokenCountResult.inputTokens !== undefined) {
         currentAgentState.contextTokenCount = tokenCountResult.inputTokens
       } else if (tokenCountResult.error) {
-        logger.warn(
-          { error: tokenCountResult.error },
-          'Failed to get token count from Anthropic API',
-        )
+        // 'Missing Codebuff base URL or API key' is a BENIGN, expected condition
+        // (e.g. Claude OAuth without a Codebuff API key): we already fall back to
+        // a local token estimate below. Log it at debug so it doesn't spam the
+        // persistent log and bury real failures. All OTHER token-count errors
+        // (real API/network failures) stay at warn so genuine problems surface.
+        const isNotConfigured =
+          tokenCountResult.error === MISSING_CODEBUFF_CREDENTIALS_ERROR
+        if (isNotConfigured) {
+          logger.debug(
+            { error: tokenCountResult.error },
+            'Skipping remote token count (Codebuff base URL/API key not configured); using local estimate',
+          )
+        } else {
+          logger.warn(
+            { error: tokenCountResult.error },
+            'Failed to get token count from Anthropic API',
+          )
+        }
         // Fall back to local estimate
         const estimatedTokens =
           countTokensJson(currentAgentState.messageHistory) +

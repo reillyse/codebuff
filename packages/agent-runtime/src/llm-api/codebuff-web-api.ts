@@ -8,6 +8,14 @@ const MAX_RETRIES = 3
 const RETRY_BASE_DELAY_MS = 1000
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 
+/**
+ * Benign, expected error returned when the Codebuff base URL / API key are not
+ * configured (e.g. Claude OAuth without a Codebuff API key). Callers may use
+ * this constant to distinguish the not-configured case from real API failures.
+ */
+export const MISSING_CODEBUFF_CREDENTIALS_ERROR =
+  'Missing Codebuff base URL or API key'
+
 interface CodebuffWebApiEnv {
   clientEnv: ClientEnv
   ciEnv: CiEnv
@@ -50,7 +58,7 @@ const callCodebuffV1 = async (params: {
   const apiKey = params.apiKey ?? env.ciEnv.CODEBUFF_API_KEY
 
   if (!baseUrl || !apiKey) {
-    return { error: 'Missing Codebuff base URL or API key' }
+    return { error: MISSING_CODEBUFF_CREDENTIALS_ERROR }
   }
 
   const url = `${baseUrl}${endpoint}`
@@ -241,7 +249,7 @@ export async function callTokenCountAPI(params: {
   const apiKey = params.apiKey ?? env.ciEnv.CODEBUFF_API_KEY
 
   if (!baseUrl || !apiKey) {
-    return { error: 'Missing Codebuff base URL or API key' }
+    return { error: MISSING_CODEBUFF_CREDENTIALS_ERROR }
   }
 
   const url = `${baseUrl}/api/v1/token-count`
