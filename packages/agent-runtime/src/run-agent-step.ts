@@ -3,6 +3,11 @@ import {
   getEmptyResponseFallbackModel,
   getOverloadFallbackModel,
 } from '@codebuff/common/constants/model-config'
+import {
+  pickStartModelSkippingCooldown,
+  recordEmptyResponseCooldown,
+  shouldNotifyCooldownOnce,
+} from './empty-response-cooldown'
 import { supportsCacheControl } from '@codebuff/common/old-constants'
 // SPARROW: telemetry — wrap agent runs and steps in dedicated spans
 import {
@@ -1056,8 +1061,34 @@ export async function loopAgentSteps(
       // Model-fallback ladder for Anthropic 529 (Overloaded): on a confirmed 529 we
       // switch to a sibling Anthropic model, then escalate to GPT-5 if it keeps
       // failing, so the retry doesn't just hit the same overloaded model again.
-      let currentModel: string = agentTemplate.model
+      //
+      // Session-scoped empty-response cooldown: if the template's model dropped a
+      // stream earlier in THIS session, it's on a 30-min cooldown, so we START
+      // this turn on the next non-cooled rung of the empty-response ladder
+      // (e.g. sonnet-5 cooled -> start on sonnet-4.6) instead of hitting the same
+      // bad model at the top of every turn.
+      let currentModel: string = pickStartModelSkippingCooldown(
+        clientSessionId,
+        agentTemplate.model,
+      )
       let modelSwitchNotice: string | undefined
+      if (currentModel !== agentTemplate.model) {
+        logger.warn(
+          {
+            preferredModel: agentTemplate.model,
+            startModel: currentModel,
+            runId,
+          },
+          'Preferred model is on empty-response cooldown for this session; starting turn on fallback model',
+        )
+        // Only tell the user once per (session, model) cooldown so we don't spam
+        // the transcript at the start of every turn for the full 30 minutes.
+        if (shouldNotifyCooldownOnce(clientSessionId, agentTemplate.model)) {
+          onResponseChunk(
+            `\n⚠️ ${agentTemplate.model} recently returned an empty response in this session and is on cooldown — using ${currentModel} for now.\n\n`,
+          )
+        }
+      }
       for (let retryAttempt = 0; retryAttempt <= MAX_STEP_RETRIES; retryAttempt++) {
         if (retryAttempt > 0) {
           if (signal.aborted) throw new AbortError()
@@ -1126,6 +1157,9 @@ export async function loopAgentSteps(
           ) {
             lastAttemptWasEmpty = true
             stepError = undefined
+            // Put the model that just dropped the stream on a session-scoped
+            // cooldown so future turns won't start on it for a while.
+            recordEmptyResponseCooldown(clientSessionId, currentModel)
             // Switch models on empty (like the 529 ladder): retrying the SAME
             // model that just dropped the stream rarely recovers, so step down
             // the empty-response ladder (sonnet-5 -> sonnet-4.6 -> opus -> gpt-5)
@@ -1216,6 +1250,9 @@ export async function loopAgentSteps(
       // tool calls), surface a visible warning + a persistent WARN log instead
       // of ending the turn silently. This is the "gave up after retries" signal.
       if (isEmptyResponse) {
+        // The final model was also empty — cool it down for this session too so
+        // the next turn doesn't start on it.
+        recordEmptyResponseCooldown(clientSessionId, currentModel)
         onResponseChunk(
           '\n⚠️ The model returned an empty response (no content and no tool call) after several retries. This can happen when the provider drops the stream mid-response. Ending the turn — you can continue with `codebuff --continue` or by sending another message.\n\n',
         )

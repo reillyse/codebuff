@@ -30,6 +30,7 @@ import {
 } from 'bun:test'
 import { z } from 'zod/v4'
 
+import { __resetEmptyResponseCooldowns } from '../empty-response-cooldown'
 import { loopAgentSteps } from '../run-agent-step'
 import { clearAgentGeneratorCache } from '../run-programmatic-step'
 import { createToolCallChunk, mockFileContext } from './test-utils'
@@ -143,6 +144,8 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
     clearAgentGeneratorCache(agentRuntimeImpl)
     dbSpies.restore()
     mock.restore()
+    // Session-scoped empty-response cooldown state must not leak between tests.
+    __resetEmptyResponseCooldowns()
     const {
       agentTemplate: _,
       localAgentTemplates: __,
@@ -1239,6 +1242,62 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(result.output.type).not.toBe('error')
       // Guard against silent extra calls.
       expect(modelsUsed.length).toBe(promptCallCount)
+    })
+
+    it('should skip a cooled-down model on the NEXT turn within the same session', async () => {
+      // First turn: sonnet-5 returns an empty response, which puts it on a
+      // session-scoped cooldown. Then it recovers on sonnet-4.6.
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        model: CURRENT_SONNET_MODEL,
+        handleSteps: undefined,
+      }
+      const localAgentTemplates = { 'test-agent': llmOnlyTemplate }
+
+      // Turn 1: empty on first call (sonnet-5), success on second (sonnet-4.6).
+      const turn1Models: (string | undefined)[] = []
+      let turn1Count = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
+        turn1Count++
+        turn1Models.push(params.model)
+        if (turn1Count === 1) {
+          return promptSuccess('mock-message-id')
+        }
+        yield { type: 'text' as const, text: 'Recovered\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+      expect(turn1Models[0]).toBe(CURRENT_SONNET_MODEL)
+
+      // Turn 2 (same clientSessionId): sonnet-5 is now on cooldown, so the turn
+      // should START on sonnet-4.6 instead of sonnet-5.
+      const turn2Models: (string | undefined)[] = []
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
+        turn2Models.push(params.model)
+        yield { type: 'text' as const, text: 'Second turn\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // The second turn skipped the cooled sonnet-5 and started on sonnet-4.6.
+      expect(turn2Models[0]).toBe(CURRENT_SONNET_FALLBACK_MODEL)
+      expect(result.output.type).not.toBe('error')
     })
 
     it('should exhaust retries on persistent empty responses and surface the warning', async () => {
