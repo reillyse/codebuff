@@ -92,6 +92,23 @@ const STEP_RETRY_BASE_DELAY_MS = 2000
 /** Maximum delay in ms between retries (cap for exponential backoff) */
 const STEP_RETRY_MAX_DELAY_MS = 30_000
 
+/**
+ * No-progress guard: the maximum number of CONSECUTIVE steps a turn may take
+ * that keep the loop alive without making any tool progress (no successful,
+ * non-excluded tool result and no task_completed/end_turn) before we force the
+ * turn to end.
+ *
+ * This catches degenerate loops where the model keeps producing steps that
+ * re-enter the loop but never execute a tool or finish — e.g. repeated
+ * malformed/partial tool calls (which set `hadToolCallError` and thus force a
+ * next step) or repeated "think-only" responses. Without this guard such a turn
+ * only stops when it burns through `stepsRemaining` (MAX_AGENT_STEPS_DEFAULT =
+ * 100), by which point the message history can balloon to hundreds of MB and
+ * the session appears hung. 8 is generous enough for legitimate multi-step
+ * thinking/tool-repair sequences while bounding the pathological case.
+ */
+const MAX_CONSECUTIVE_NO_PROGRESS_STEPS = 8
+
 async function additionalToolDefinitions(
   params: {
     agentTemplate: AgentTemplate
@@ -185,6 +202,7 @@ export const runAgentStep = async (
   messageId: string | null
   nResponses?: string[]
   isEmptyResponse: boolean
+  hadToolProgress: boolean
 }> => {
   // SPARROW: telemetry — wrap step in agent.step span. stepNumber is taken
   // from params.sparrowStepNumber if provided by the caller (loopAgentSteps),
@@ -265,6 +283,7 @@ export const runAgentStep = async (
       shouldEndTurn: true,
       messageId: null,
       isEmptyResponse: false,
+      hadToolProgress: false,
     }
   }
 
@@ -417,6 +436,7 @@ export const runAgentStep = async (
         messageId: null,
         nResponses: undefined,
         isEmptyResponse: false,
+        hadToolProgress: false,
       }
     }
 
@@ -448,6 +468,10 @@ export const runAgentStep = async (
       messageId: null,
       nResponses,
       isEmptyResponse: false,
+      // The `n`-parameter path generates candidate responses rather than
+      // executing tools; treat it as progress so it never trips the
+      // no-progress guard (it always advances via the programmatic step).
+      hadToolProgress: true,
     }
   }
 
@@ -527,6 +551,25 @@ export const runAgentStep = async (
     (call) =>
       call.toolName === 'task_completed' || call.toolName === 'end_turn',
   )
+
+  // Whether this step made real "progress": it either finished the turn
+  // (task_completed/end_turn) or produced at least one non-excluded tool
+  // result. A step that keeps the loop alive with NO tool result at all (e.g. a
+  // malformed/partial tool call, which sets `hadToolCallError` but emits no
+  // result, or a "think-only" response) is NOT progress. loopAgentSteps uses
+  // this to detect and break degenerate no-progress loops before they exhaust
+  // `stepsRemaining`.
+  //
+  // Note: this counts any non-excluded tool result as progress; it does NOT
+  // distinguish successful results from error results. That's intentional — a
+  // tool that runs and returns an error IS making progress (the agent gets
+  // feedback and can adjust); the pathological case we're guarding against is
+  // the model producing steps that yield no tool result at all.
+  const hadToolResult =
+    toolResults.filter(
+      (result) => !TOOLS_WHICH_WONT_FORCE_NEXT_STEP.includes(result.toolName),
+    ).length > 0
+  const hadToolProgress = hasTaskCompleted || hadToolResult
 
   // If the response is only <think>...</think> tags with no other non-whitespace content,
   // the model was just thinking and should continue rather than end its turn.
@@ -612,6 +655,7 @@ export const runAgentStep = async (
     messageId,
     nResponses: undefined,
     isEmptyResponse,
+    hadToolProgress,
   }
     },
   )
@@ -904,6 +948,11 @@ export async function loopAgentSteps(
   let currentParams = spawnParams
   let totalSteps = 0
   let nResponses: string[] | undefined = undefined
+  // No-progress guard: count CONSECUTIVE steps that kept the loop alive without
+  // making any tool progress. Reset to 0 whenever a step makes progress (or ends
+  // the turn). When it reaches MAX_CONSECUTIVE_NO_PROGRESS_STEPS we force the
+  // turn to end so a degenerate loop can't grind to the 100-step ceiling.
+  let consecutiveNoProgressSteps = 0
 
   try {
     while (true) {
@@ -1290,6 +1339,36 @@ export async function loopAgentSteps(
 
       currentPrompt = undefined
       currentParams = undefined
+
+      // No-progress guard: if this step kept the loop alive (didn't end the
+      // turn) but made no tool progress, count it. A run of such steps is a
+      // degenerate loop (repeated malformed tool calls or think-only
+      // responses) that would otherwise only stop at the 100-step ceiling
+      // after ballooning the message history. Force the turn to end once we
+      // hit the threshold.
+      if (!shouldEndTurn && !stepResult!.hadToolProgress) {
+        consecutiveNoProgressSteps++
+        if (consecutiveNoProgressSteps >= MAX_CONSECUTIVE_NO_PROGRESS_STEPS) {
+          logger.warn(
+            {
+              agentType,
+              agentId: currentAgentState.agentId,
+              model: agentTemplate.model,
+              runId,
+              totalSteps,
+              consecutiveNoProgressSteps,
+              finishReason: 'no-progress',
+            },
+            'Agent made no tool progress for too many consecutive steps; ending the turn to break a degenerate loop',
+          )
+          onResponseChunk(
+            `\n⚠️ The agent produced ${consecutiveNoProgressSteps} responses in a row without calling a tool or finishing. Ending the turn to avoid a loop — you can continue with \`codebuff --continue\` or by sending another message.\n\n`,
+          )
+          shouldEndTurn = true
+        }
+      } else {
+        consecutiveNoProgressSteps = 0
+      }
     }
 
     if (clearUserPromptMessagesAfterResponse) {

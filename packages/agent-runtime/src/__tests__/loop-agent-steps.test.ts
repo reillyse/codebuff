@@ -819,6 +819,108 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
     expect(result.agentState.output).toEqual({ result: 'done' })
   })
 
+  describe('no-progress guard', () => {
+    it('should force the turn to end after too many consecutive no-progress steps', async () => {
+      // A degenerate loop: the model keeps producing a "think-only" response
+      // (only <think> tags, no tool call, no end_turn), which keeps the turn
+      // alive but makes NO tool progress. Without the guard this would grind
+      // until stepsRemaining hits 0; with the guard it ends early.
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        // No task_completed tool, so shouldEndTurn is driven by tool results.
+        toolNames: ['read_files', 'write_file', 'end_turn'],
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      // Give the loop plenty of headroom so the guard (not the step ceiling)
+      // is what ends the turn.
+      mockAgentState.stepsRemaining = 100
+
+      const chunks: string[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        // Think-only response: <think> content only, no tool call. This keeps
+        // the turn alive (isThinkOnly) without any tool progress.
+        yield { type: 'text' as const, text: '<think>still thinking</think>' }
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
+      })
+
+      // The guard forces the turn to end after MAX_CONSECUTIVE_NO_PROGRESS_STEPS
+      // (8) no-progress steps — far fewer than the 100-step ceiling.
+      expect(promptCallCount).toBe(8)
+      expect(result.output.type).not.toBe('error')
+
+      // Should surface the no-progress notice to the user.
+      const noProgressNotice = chunks.find((c) =>
+        c.includes('without calling a tool or finishing'),
+      )
+      expect(noProgressNotice).toBeDefined()
+    })
+
+    it('should reset the no-progress counter when a step makes tool progress', async () => {
+      // Interleave no-progress (think-only) steps with a real tool call. The
+      // successful tool result resets the counter, so the guard should NOT fire
+      // at 8 total no-progress steps if they aren't CONSECUTIVE.
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        toolNames: ['read_files', 'write_file', 'end_turn'],
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      mockAgentState.stepsRemaining = 100
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        if (promptCallCount <= 5) {
+          // 5 no-progress (think-only) steps — below the threshold.
+          yield { type: 'text' as const, text: '<think>thinking</think>' }
+          return promptSuccess('mock-message-id')
+        }
+        if (promptCallCount === 6) {
+          // A real tool call resets the no-progress counter.
+          yield { type: 'text' as const, text: 'Reading a file\n\n' }
+          yield createToolCallChunk('read_files', { paths: ['a.txt'] })
+          return promptSuccess('mock-message-id')
+        }
+        // Then finish normally.
+        yield { type: 'text' as const, text: 'Done\n\n' }
+        yield createToolCallChunk('end_turn', {})
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+      })
+
+      // 5 think-only + 1 tool call + 1 end_turn = 7 calls, and the run ends
+      // cleanly rather than tripping the guard.
+      expect(promptCallCount).toBe(7)
+      expect(result.output.type).not.toBe('error')
+    })
+  })
+
   describe('transient API error retry', () => {
     beforeAll(() => {
       mock.module('@codebuff/common/util/promise', () => ({
