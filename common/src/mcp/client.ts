@@ -5,7 +5,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import type { FetchLike, Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type {
   BlobResourceContents,
   CallToolResult,
@@ -156,12 +156,52 @@ export async function getMCPClient(
   const headers = substituteEnvInRecord(config.headers)
   const useOAuth = Boolean(config.oauth && oauthOptions)
 
+  // When using OAuth, wrap fetch to strip `null` scope values from JSON
+  // responses before the MCP SDK's Zod schema validates them. Some servers
+  // (e.g. Sparrow) return `"scope": null` in token/DCR responses, but the
+  // MCP SDK's `OAuthTokensSchema` uses `z.string().optional()` which accepts
+  // `undefined` (field absent) but rejects `null`, causing a parse error.
+  const oauthFetch: FetchLike | undefined = useOAuth
+    ? async (...args: Parameters<FetchLike>) => {
+        const response = await globalThis.fetch(...args)
+        const contentType = response.headers.get('content-type') ?? ''
+        if (!contentType.includes('application/json')) return response
+        const text = await response.text()
+        let body = text
+        try {
+          const json: unknown = JSON.parse(text)
+          if (
+            json !== null &&
+            typeof json === 'object' &&
+            'scope' in json &&
+            (json as Record<string, unknown>).scope === null
+          ) {
+            const sanitized = { ...(json as Record<string, unknown>) }
+            delete sanitized.scope
+            body = JSON.stringify(sanitized)
+          }
+        } catch {
+          // Not valid JSON — pass through unchanged.
+        }
+        // Copy headers and remove content-length: the sanitized body may be a
+        // different size and the runtime will recalculate it from the new body.
+        const responseHeaders = new Headers(response.headers)
+        responseHeaders.delete('content-length')
+        return new Response(body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: responseHeaders,
+        })
+      }
+    : undefined
+
   const createHttpTransport = (): StreamableHTTPClientTransport | SSEClientTransport => {
     const authProvider = useOAuth ? oauthOptions!.authProvider : undefined
     if (config.type === 'http') {
       return new StreamableHTTPClientTransport(url, {
         requestInit: { headers },
         authProvider,
+        fetch: oauthFetch,
       })
     }
     if (config.type === 'sse') {
