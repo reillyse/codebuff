@@ -87,13 +87,33 @@ export async function validateAgents(
     // Use provided websiteUrl or fall back to the default from environment
     const websiteUrl = options.websiteUrl || WEBSITE_URL
 
+    // Strip client-side-only fields from mcpServers before sending to the
+    // server. `oauth: true` is consumed locally by getMcpOAuthOptions() and
+    // the production server's schema doesn't know about it (causing
+    // "Invalid input" errors on deployed versions that predate this field).
+    const sanitizedDefinitions = definitions.map((def) => {
+      if (!def?.mcpServers || Object.keys(def.mcpServers).length === 0) {
+        return def
+      }
+      const sanitizedServers: Record<string, object> = {}
+      for (const [name, config] of Object.entries(def.mcpServers)) {
+        if (config && typeof config === 'object' && 'oauth' in config) {
+          const { oauth: _oauth, ...rest } = config as Record<string, unknown>
+          sanitizedServers[name] = rest
+        } else {
+          sanitizedServers[name] = config
+        }
+      }
+      return { ...def, mcpServers: sanitizedServers }
+    })
+
     try {
       const response = await fetch(`${websiteUrl}/api/agents/validate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ agentDefinitions: definitions }),
+        body: JSON.stringify({ agentDefinitions: sanitizedDefinitions }),
       })
 
       if (!response.ok) {
