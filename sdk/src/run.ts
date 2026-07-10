@@ -12,6 +12,7 @@ import {
   listMCPTools,
   callMCPTool,
 } from '@codebuff/common/mcp/client'
+import { McpOAuthProvider } from './mcp/oauth-provider'
 import { toolNames } from '@codebuff/common/tools/constants'
 import { clientToolCallSchema } from '@codebuff/common/tools/list'
 import { AgentOutputSchema } from '@codebuff/common/types/session-state'
@@ -34,6 +35,7 @@ import type { CustomToolDefinition } from './custom-tool'
 import type { RunState } from './run-state'
 import type { FileFilter } from './tools/read-files'
 import type { ServerAction } from '@codebuff/common/actions'
+import type { MCPConfig } from '@codebuff/common/types/mcp'
 import type { AgentDefinition } from '@codebuff/common/templates/initial-agents-dir/types/agent-definition'
 import type {
   PublishedToolName,
@@ -57,6 +59,20 @@ import type { PrintModeEvent } from '@codebuff/common/types/print-mode'
 import type { SessionState } from '@codebuff/common/types/session-state'
 import type { Source } from '@codebuff/common/types/source'
 import type { CodebuffSpawn } from '@codebuff/common/types/spawn'
+
+/**
+ * Build interactive OAuth options for a remote MCP server that opts into the
+ * OAuth flow via `"oauth": true`. Returns undefined for stdio servers or when
+ * OAuth is not enabled, leaving the static-header auth path untouched.
+ */
+function getMcpOAuthOptions(
+  config: MCPConfig,
+): { authProvider: McpOAuthProvider } | undefined {
+  if (config.type !== 'stdio' && config.oauth) {
+    return { authProvider: new McpOAuthProvider(config.url) }
+  }
+  return undefined
+}
 
 /**
  * Wraps content for user messages, ensuring text is wrapped in <user_message> tags.
@@ -420,7 +436,10 @@ async function runOnce({
       })
     },
     requestMcpToolData: async ({ mcpConfig, toolNames }) => {
-      const mcpClientId = await getMCPClient(mcpConfig)
+      const mcpClientId = await getMCPClient(
+        mcpConfig,
+        getMcpOAuthOptions(mcpConfig),
+      )
       const listToolsResult = await listMCPTools(mcpClientId)
       const tools = listToolsResult.tools
       const filteredTools: typeof tools = []
@@ -630,7 +649,10 @@ async function handleToolCall({
   // Handle MCP tool calls when mcpConfig is present
   if (action.mcpConfig) {
     try {
-      const mcpClientId = await getMCPClient(action.mcpConfig)
+      const mcpClientId = await getMCPClient(
+        action.mcpConfig,
+        getMcpOAuthOptions(action.mcpConfig),
+      )
       const result = await callMCPTool(mcpClientId, {
         name: toolName,
         arguments: input,

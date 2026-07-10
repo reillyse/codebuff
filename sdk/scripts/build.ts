@@ -102,11 +102,14 @@ async function build() {
           },
           libraries: {
             // Treat all @codebuff/* workspace packages as external imports
-            // so dts-bundle-generator doesn't fail on their internal relative imports
+            // so dts-bundle-generator doesn't fail on their internal relative imports.
+            // Also treat @modelcontextprotocol/sdk as external to avoid bundling
+            // its zod-based generics which dts-bundle-generator cannot resolve.
             importedLibraries: [
               '@codebuff/common',
               '@codebuff/agent-runtime',
               '@codebuff/code-map',
+              '@modelcontextprotocol/sdk',
             ],
           },
         },

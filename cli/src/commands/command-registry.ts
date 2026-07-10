@@ -1,5 +1,8 @@
 import { CHATGPT_OAUTH_ENABLED } from '@codebuff/common/constants/chatgpt-oauth'
 import { CLAUDE_OAUTH_ENABLED } from '@codebuff/common/constants/claude-oauth'
+import { getMCPClient } from '@codebuff/common/mcp/client'
+import { loadMCPConfig, loadMCPConfigSync } from '@codebuff/sdk'
+import { clearMcpOAuthCredentials, getMcpOAuthStatus, McpOAuthProvider } from '@codebuff/sdk/mcp/oauth-provider'
 import open from 'open'
 
 import { handleAdsEnable, handleAdsDisable } from './ads'
@@ -602,6 +605,173 @@ const ALL_COMMANDS: CommandDefinition[] = [
         }),
       ]
     : []),
+  defineCommandWithArgs({
+    name: 'connect:mcp',
+    handler: async (params, args) => {
+      const serverName = args.trim()
+      const inputText = params.inputValue.trim()
+      params.saveToHistory(inputText)
+      clearInput(params)
+
+      if (!serverName) {
+        // No args: show status of all OAuth-configured servers
+        const connections = getMcpOAuthStatus()
+        if (connections.length === 0) {
+          params.setMessages((prev) => [
+            ...prev,
+            getUserMessage(inputText),
+            getSystemMessage(
+              'No MCP OAuth connections found. Add `"oauth": true` to a remote MCP server in your mcp.json, then run `/connect:mcp <name>` to authenticate.',
+            ),
+          ])
+          return
+        }
+        const lines = [
+          'MCP OAuth connections:',
+          '',
+          ...connections.map((c) => {
+            const status = c.hasTokens ? '✓ authenticated' : '○ not authenticated'
+            return `  ${status}  ${c.serverUrl}`
+          }),
+          '',
+          'Use `/connect:mcp <name>` to authenticate a server, or `/disconnect:mcp <url>` to clear credentials.',
+        ]
+        params.setMessages((prev) => [
+          ...prev,
+          getUserMessage(inputText),
+          getSystemMessage(lines.join('\n')),
+        ])
+        return
+      }
+
+      // Proactive auth flow for a named server
+      const mcpConfig = await loadMCPConfig({ verbose: false })
+      const serverConfig = mcpConfig.mcpServers[serverName]
+
+      if (!serverConfig) {
+        const available = Object.keys(mcpConfig.mcpServers)
+        const hint =
+          available.length > 0
+            ? `\n\nAvailable servers: ${available.join(', ')}`
+            : '\n\nNo MCP servers configured. Add servers to ~/.agents/mcp.json.'
+        params.setMessages((prev) => [
+          ...prev,
+          getUserMessage(inputText),
+          getSystemMessage(`MCP server "${serverName}" not found in mcp.json.${hint}`),
+        ])
+        return
+      }
+
+      if (serverConfig.type === 'stdio') {
+        params.setMessages((prev) => [
+          ...prev,
+          getUserMessage(inputText),
+          getSystemMessage(
+            `"${serverName}" is a stdio MCP server and does not use OAuth authentication.`,
+          ),
+        ])
+        return
+      }
+
+      if (!serverConfig.oauth) {
+        params.setMessages((prev) => [
+          ...prev,
+          getUserMessage(inputText),
+          getSystemMessage(
+            `"${serverName}" does not have OAuth enabled. Add \`"oauth": true\` to its entry in mcp.json to enable OAuth authentication.`,
+          ),
+        ])
+        return
+      }
+
+      // Show connecting message before opening browser
+      params.setMessages((prev) => [
+        ...prev,
+        getUserMessage(inputText),
+        getSystemMessage(
+          `Connecting to ${serverName} (${serverConfig.url})...\n\nIf authorization is needed, your browser will open — return here after approving access.`,
+        ),
+      ])
+
+      try {
+        await getMCPClient(serverConfig, {
+          authProvider: new McpOAuthProvider(serverConfig.url),
+        })
+        params.setMessages((prev) => [
+          ...prev,
+          getSystemMessage(
+            `✓ Connected to ${serverName}. MCP tools from this server are now available.`,
+          ),
+        ])
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        params.setMessages((prev) => [
+          ...prev,
+          getSystemMessage(`Failed to connect to ${serverName}: ${message}`),
+        ])
+      }
+    },
+  }),
+  defineCommandWithArgs({
+    name: 'disconnect:mcp',
+    handler: (params, args) => {
+      const serverNameOrUrl = args.trim()
+      const inputText = params.inputValue.trim()
+      params.saveToHistory(inputText)
+      clearInput(params)
+
+      if (serverNameOrUrl) {
+        // Accept either a server name (from mcp.json) or a direct URL
+        let serverUrl = serverNameOrUrl
+        if (!serverNameOrUrl.startsWith('http')) {
+          const mcpConfig = loadMCPConfigSync({ verbose: false })
+          const config = mcpConfig.mcpServers[serverNameOrUrl]
+          if (config && config.type !== 'stdio') {
+            serverUrl = config.url
+          }
+        }
+
+        const connections = getMcpOAuthStatus()
+        const match = connections.find((c) => c.serverUrl === serverUrl)
+        if (!match) {
+          params.setMessages((prev) => [
+            ...prev,
+            getUserMessage(inputText),
+            getSystemMessage(
+              `No MCP OAuth credentials found for: ${serverNameOrUrl}`,
+            ),
+          ])
+          return
+        }
+        clearMcpOAuthCredentials(serverUrl)
+        params.setMessages((prev) => [
+          ...prev,
+          getUserMessage(inputText),
+          getSystemMessage(
+            `Cleared MCP OAuth credentials for ${serverNameOrUrl}. You will be prompted to re-authenticate next time this server is used.`,
+          ),
+        ])
+      } else {
+        const connections = getMcpOAuthStatus()
+        if (connections.length === 0) {
+          params.setMessages((prev) => [
+            ...prev,
+            getUserMessage(inputText),
+            getSystemMessage('No MCP OAuth credentials to clear.'),
+          ])
+          return
+        }
+        clearMcpOAuthCredentials()
+        params.setMessages((prev) => [
+          ...prev,
+          getUserMessage(inputText),
+          getSystemMessage(
+            `Cleared OAuth credentials for ${connections.length} MCP server${connections.length === 1 ? '' : 's'}. You will be prompted to re-authenticate next time these servers are used.`,
+          ),
+        ])
+      }
+    },
+  }),
   defineCommand({
     name: 'history',
     aliases: ['chats'],

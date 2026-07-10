@@ -15,6 +15,12 @@ export const mcpConfigRemoteSchema = z.strictObject({
   url: z.string(),
   params: z.record(z.string(), z.string()).default(() => ({})),
   headers: z.record(z.string(), z.string()).default(() => ({})),
+  /**
+   * When true, connect to this server using an interactive OAuth 2.0 flow
+   * (browser-based authorization + PKCE) instead of static header auth.
+   * Tokens are persisted per-server so subsequent runs reuse them.
+   */
+  oauth: z.boolean().optional(),
 })
 
 export const mcpConfigSchema = z.union([

@@ -1,16 +1,53 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
-import type { MCPConfig } from '../types/mcp'
-import type { ToolResultOutput } from '../types/messages/content-part'
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import type {
   BlobResourceContents,
   CallToolResult,
   TextResourceContents,
 } from '@modelcontextprotocol/sdk/types.js'
+
+import type { MCPConfig } from '../types/mcp'
+import type { ToolResultOutput } from '../types/messages/content-part'
+
+/**
+ * OAuth client provider for a remote MCP server, extended with the callback
+ * lifecycle that {@link getMCPClient} drives during an interactive auth flow.
+ * The concrete implementation lives in the SDK (`sdk/src/mcp/oauth-provider.ts`)
+ * so this package stays free of browser/HTTP-server concerns.
+ */
+export interface McpOAuthClientProvider extends OAuthClientProvider {
+  /** Start the local callback server; resolves once it is listening. */
+  startCallbackServer(): Promise<void>
+  /** Resolve with the authorization code once the callback is received. */
+  waitForCode(): Promise<string>
+  /** Close the callback server. */
+  stopCallbackServer(): void
+}
+
+// Module-level mutex to serialize interactive OAuth flows.
+// If multiple servers need OAuth at startup they queue up and open browser
+// tabs one at a time instead of all simultaneously.
+let oauthFlowMutex: Promise<void> = Promise.resolve()
+
+async function runWithOAuthMutex<T>(fn: () => Promise<T>): Promise<T> {
+  let release!: () => void
+  const previous = oauthFlowMutex
+  oauthFlowMutex = oauthFlowMutex.then(
+    () => new Promise<void>(resolve => { release = resolve }),
+  )
+  await previous
+  try {
+    return await fn()
+  } finally {
+    release()
+  }
+}
 
 const runningClients: Record<string, Client> = {}
 const listToolsCache: Record<
@@ -59,6 +96,7 @@ function hashConfig(config: MCPConfig): string {
       type: 'http',
       url: config.url,
       params: config.params,
+      oauth: config.oauth ?? false,
     })
   }
   if (config.type === 'sse') {
@@ -66,6 +104,7 @@ function hashConfig(config: MCPConfig): string {
       type: 'sse',
       url: config.url,
       params: config.params,
+      oauth: config.oauth ?? false,
     })
   }
   config.type satisfies never
@@ -74,42 +113,13 @@ function hashConfig(config: MCPConfig): string {
   )
 }
 
-export async function getMCPClient(config: MCPConfig): Promise<string> {
-  let key = hashConfig(config)
+export async function getMCPClient(
+  config: MCPConfig,
+  oauthOptions?: { authProvider: McpOAuthClientProvider },
+): Promise<string> {
+  const key = hashConfig(config)
   if (key in runningClients) {
     return key
-  }
-
-  let transport: Transport
-  if (config.type === 'stdio') {
-    transport = new StdioClientTransport({
-      command: config.command,
-      args: config.args,
-      env: substituteEnvInRecord(config.env),
-      stderr: 'ignore',
-    })
-  } else {
-    const url = new URL(config.url)
-    for (const [key, value] of Object.entries(config.params)) {
-      url.searchParams.set(key, value)
-    }
-    const headers = substituteEnvInRecord(config.headers)
-    if (config.type === 'http') {
-      transport = new StreamableHTTPClientTransport(url, {
-        requestInit: {
-          headers,
-        },
-      })
-    } else if (config.type === 'sse') {
-      transport = new SSEClientTransport(url, {
-        requestInit: {
-          headers,
-        },
-      })
-    } else {
-      config.type satisfies never
-      throw new Error(`Internal error: invalid MCP config type ${config.type}`)
-    }
   }
 
   const client = new Client({
@@ -117,8 +127,79 @@ export async function getMCPClient(config: MCPConfig): Promise<string> {
     version: '1.0.0',
   })
 
-  await client.connect(transport)
-  runningClients[key] = client
+  if (config.type === 'stdio') {
+    const transport = new StdioClientTransport({
+      command: config.command,
+      args: config.args,
+      env: substituteEnvInRecord(config.env),
+      stderr: 'ignore',
+    })
+    await client.connect(transport)
+    runningClients[key] = client
+    return key
+  }
+
+  // Remote (http/sse) transports.
+  const url = new URL(config.url)
+  for (const [paramKey, value] of Object.entries(config.params)) {
+    url.searchParams.set(paramKey, value)
+  }
+  const headers = substituteEnvInRecord(config.headers)
+  const useOAuth = Boolean(config.oauth && oauthOptions)
+
+  const createHttpTransport = (): StreamableHTTPClientTransport | SSEClientTransport => {
+    const authProvider = useOAuth ? oauthOptions!.authProvider : undefined
+    if (config.type === 'http') {
+      return new StreamableHTTPClientTransport(url, {
+        requestInit: { headers },
+        authProvider,
+      })
+    }
+    if (config.type === 'sse') {
+      return new SSEClientTransport(url, {
+        requestInit: { headers },
+        authProvider,
+      })
+    }
+    config.type satisfies never
+    throw new Error(`Internal error: invalid MCP config type ${config.type}`)
+  }
+
+  if (useOAuth) {
+    // Serialize OAuth flows so multiple servers requesting auth at startup
+    // queue up and open one browser tab at a time.
+    await runWithOAuthMutex(async () => {
+      // Re-check the cache inside the mutex: a concurrent call for the same
+      // server might have completed while we were waiting.
+      if (key in runningClients) return
+
+      const { authProvider } = oauthOptions!
+      // Start the callback server first so the redirect URL (and dynamic client
+      // registration) uses the real ephemeral port before we connect.
+      await authProvider.startCallbackServer()
+      const transport = createHttpTransport()
+      try {
+        await client.connect(transport)
+        // Already authorized (existing tokens) — no browser needed.
+        authProvider.stopCallbackServer()
+      } catch (error) {
+        if (!(error instanceof UnauthorizedError)) {
+          authProvider.stopCallbackServer()
+          throw error
+        }
+        // The SDK opened the browser via redirectToAuthorization; wait for the
+        // user to authorize, finish the exchange, then reconnect with the token.
+        const authCode = await authProvider.waitForCode()
+        await transport.finishAuth(authCode)
+        await client.connect(createHttpTransport())
+      }
+      runningClients[key] = client
+    })
+  } else {
+    const transport: Transport = createHttpTransport()
+    await client.connect(transport)
+    runningClients[key] = client
+  }
 
   return key
 }

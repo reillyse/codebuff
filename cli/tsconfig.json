@@ -13,7 +13,8 @@
     "skipLibCheck": true,
     "preserveSymlinks": false,
     "paths": {
-      "@codebuff/sdk": ["../sdk/src/index.ts"]
+      "@codebuff/sdk": ["../sdk/src/index.ts"],
+      "@codebuff/sdk/*": ["../sdk/src/*"]
     }
   },
   "include": ["src/**/*"],

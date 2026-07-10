@@ -1,6 +1,8 @@
 import { createInterface } from 'readline'
 
-import { CodebuffClient, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, setClaudeOAuthFallbackEnabled } from '@codebuff/sdk'
+import { getMCPClient } from '@codebuff/common/mcp/client'
+import { CodebuffClient, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, loadMCPConfig, loadMCPConfigSync, setClaudeOAuthFallbackEnabled } from '@codebuff/sdk'
+import { clearMcpOAuthCredentials, getMcpOAuthStatus, McpOAuthProvider } from '@codebuff/sdk/mcp/oauth-provider'
 
 import {
   buildHippoSubagentHooks,
@@ -502,6 +504,20 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       return
     }
 
+    if (trimmed === '/connect:mcp' || trimmed.startsWith('/connect:mcp ')) {
+      const serverName = trimmed.slice('/connect:mcp'.length).trim()
+      await handleConnectMcp(serverName)
+      rl.prompt()
+      return
+    }
+
+    if (trimmed === '/disconnect:mcp' || trimmed.startsWith('/disconnect:mcp ')) {
+      const serverNameOrUrl = trimmed.slice('/disconnect:mcp'.length).trim()
+      handleDisconnectMcp(serverNameOrUrl)
+      rl.prompt()
+      return
+    }
+
     if (trimmed === '') {
       rl.prompt()
       return
@@ -970,6 +986,97 @@ async function handleUsageCommand(apiKey: string): Promise<void> {
   }
 }
 
+async function handleConnectMcp(serverName: string): Promise<void> {
+  if (!serverName) {
+    const connections = getMcpOAuthStatus()
+    if (connections.length === 0) {
+      writeErr(
+        'No MCP OAuth connections found. Add `"oauth": true` to a remote MCP server in your mcp.json, then run `/connect:mcp <name>` to authenticate.\n\n',
+      )
+      return
+    }
+    writeErr('MCP OAuth connections:\n\n')
+    for (const c of connections) {
+      const status = c.hasTokens ? '✓ authenticated' : '○ not authenticated'
+      writeErr(`  ${status}  ${c.serverUrl}\n`)
+    }
+    writeErr('\nUse `/connect:mcp <name>` to authenticate a server, or `/disconnect:mcp <name>` to clear credentials.\n\n')
+    return
+  }
+
+  const mcpConfig = await loadMCPConfig({ verbose: false })
+  const serverConfig = mcpConfig.mcpServers[serverName]
+
+  if (!serverConfig) {
+    const available = Object.keys(mcpConfig.mcpServers)
+    const hint =
+      available.length > 0
+        ? `\nAvailable servers: ${available.join(', ')}`
+        : '\nNo MCP servers configured. Add servers to ~/.agents/mcp.json.'
+    writeErr(`MCP server "${serverName}" not found in mcp.json.${hint}\n\n`)
+    return
+  }
+
+  if (serverConfig.type === 'stdio') {
+    writeErr(`"${serverName}" is a stdio MCP server and does not use OAuth authentication.\n\n`)
+    return
+  }
+
+  if (!serverConfig.oauth) {
+    writeErr(
+      `"${serverName}" does not have OAuth enabled. Add \`"oauth": true\` to its entry in mcp.json to enable OAuth authentication.\n\n`,
+    )
+    return
+  }
+
+  writeErr(`Connecting to ${serverName} (${serverConfig.url})...\n`)
+  writeErr('If authorization is needed, your browser will open — return here after approving access.\n\n')
+
+  try {
+    await getMCPClient(serverConfig, {
+      authProvider: new McpOAuthProvider(serverConfig.url),
+    })
+    writeErr(`✓ Connected to ${serverName}. MCP tools from this server are now available.\n\n`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    writeErr(`Failed to connect to ${serverName}: ${message}\n\n`)
+  }
+}
+
+function handleDisconnectMcp(serverNameOrUrl: string): void {
+  if (serverNameOrUrl) {
+    let serverUrl = serverNameOrUrl
+    if (!serverNameOrUrl.startsWith('http')) {
+      const mcpConfig = loadMCPConfigSync({ verbose: false })
+      const config = mcpConfig.mcpServers[serverNameOrUrl]
+      if (config && config.type !== 'stdio') {
+        serverUrl = config.url
+      }
+    }
+
+    const connections = getMcpOAuthStatus()
+    const match = connections.find((c) => c.serverUrl === serverUrl)
+    if (!match) {
+      writeErr(`No MCP OAuth credentials found for: ${serverNameOrUrl}\n\n`)
+      return
+    }
+    clearMcpOAuthCredentials(serverUrl)
+    writeErr(
+      `Cleared MCP OAuth credentials for ${serverNameOrUrl}. You will be prompted to re-authenticate next time this server is used.\n\n`,
+    )
+  } else {
+    const connections = getMcpOAuthStatus()
+    if (connections.length === 0) {
+      writeErr('No MCP OAuth credentials to clear.\n\n')
+      return
+    }
+    clearMcpOAuthCredentials()
+    writeErr(
+      `Cleared OAuth credentials for ${connections.length} MCP server${connections.length === 1 ? '' : 's'}. You will be prompted to re-authenticate next time these servers are used.\n\n`,
+    )
+  }
+}
+
 function printHelp(): void {
   writeErr(`
 Commands
@@ -990,6 +1097,12 @@ Hippo Memory
   /hippo:on          Enable hippo memory
   /hippo:off         Disable hippo memory
   /hippo:retry       Test hippo connection
+
+MCP OAuth
+  /connect:mcp             Show all MCP OAuth connection statuses
+  /connect:mcp <name>      Proactively authenticate a named MCP server
+  /disconnect:mcp          Clear all MCP OAuth credentials
+  /disconnect:mcp <name>   Clear credentials for a specific server (name or URL)
 
 Environment Variables
   CODEBUFF_DEFAULT_MODE Set default agent mode (default, max, plan). Default: default
