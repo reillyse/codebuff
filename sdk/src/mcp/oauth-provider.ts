@@ -233,12 +233,14 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
     // Generate a fresh state nonce for each new auth flow.
     this.cachedState = null
 
-    // Clear any stale client registration. We use an ephemeral port each time,
-    // so the redirect_uri changes on every auth flow. Reusing an old client_id
-    // (registered with a different port) causes the authorization server to
-    // reject the redirect_uri mismatch. Clearing it here forces fresh DCR so
-    // the new client is registered with the correct current port.
+    // Clear any stale client registration and PKCE code verifier. We use an
+    // ephemeral port each time, so the redirect_uri changes on every auth flow.
+    // Reusing an old client_id (registered with a different port) causes the
+    // authorization server to reject the redirect_uri mismatch. Clearing here
+    // forces fresh DCR with the correct current port. The verifier is cleared
+    // so the MCP SDK generates a fresh PKCE pair for this flow.
     this.invalidateCredentials('client')
+    this.invalidateCredentials('verifier')
 
     this.codePromise = new Promise<string>((resolve, reject) => {
       this.codeResolve = resolve
