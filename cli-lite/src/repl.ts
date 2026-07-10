@@ -1,6 +1,6 @@
 import { createInterface } from 'readline'
 
-import { getMCPClient } from '@codebuff/common/mcp/client'
+import { getMCPClient, isMCPClientConnected } from '@codebuff/common/mcp/client'
 import { CodebuffClient, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, loadMCPConfig, loadMCPConfigSync, setClaudeOAuthFallbackEnabled } from '@codebuff/sdk'
 import { clearMcpOAuthCredentials, getMcpOAuthStatus, McpOAuthProvider } from '@codebuff/sdk/mcp/oauth-provider'
 
@@ -1026,6 +1026,16 @@ async function handleConnectMcp(serverName: string): Promise<void> {
     writeErr(
       `"${serverName}" does not have OAuth enabled. Add \`"oauth": true\` to its entry in mcp.json to enable OAuth authentication.\n\n`,
     )
+    return
+  }
+
+  if (isMCPClientConnected(serverConfig)) {
+    const status = getMcpOAuthStatus()
+    const serverStatus = status.find((s) => s.serverUrl === serverConfig.url)
+    const tokenInfo = serverStatus?.hasTokens
+      ? 'OAuth tokens are valid.'
+      : 'No stored tokens.'
+    writeErr(`✓ Already connected to ${serverName} (${serverConfig.url}).\n${tokenInfo}\nUse /disconnect:mcp ${serverName} to clear credentials and reconnect.\n\n`)
     return
   }
 

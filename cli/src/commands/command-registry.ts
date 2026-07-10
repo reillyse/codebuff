@@ -1,6 +1,6 @@
 import { CHATGPT_OAUTH_ENABLED } from '@codebuff/common/constants/chatgpt-oauth'
 import { CLAUDE_OAUTH_ENABLED } from '@codebuff/common/constants/claude-oauth'
-import { getMCPClient } from '@codebuff/common/mcp/client'
+import { getMCPClient, isMCPClientConnected } from '@codebuff/common/mcp/client'
 import { loadMCPConfig, loadMCPConfigSync } from '@codebuff/sdk'
 import { clearMcpOAuthCredentials, getMcpOAuthStatus, McpOAuthProvider } from '@codebuff/sdk/mcp/oauth-provider'
 import open from 'open'
@@ -679,6 +679,25 @@ const ALL_COMMANDS: CommandDefinition[] = [
           getUserMessage(inputText),
           getSystemMessage(
             `"${serverName}" does not have OAuth enabled. Add \`"oauth": true\` to its entry in mcp.json to enable OAuth authentication.`,
+          ),
+        ])
+        return
+      }
+
+      // Already connected — show status and skip the OAuth flow
+      if (isMCPClientConnected(serverConfig)) {
+        const oauthStatus = getMcpOAuthStatus()
+        const serverStatus = oauthStatus.find(
+          (s) => s.serverUrl === serverConfig.url,
+        )
+        const tokenInfo = serverStatus?.hasTokens
+          ? 'OAuth tokens are valid.'
+          : 'No stored tokens (using implicit auth or tokens not yet saved).'
+        params.setMessages((prev) => [
+          ...prev,
+          getUserMessage(inputText),
+          getSystemMessage(
+            `✓ Already connected to ${serverName} (${serverConfig.url}).\n${tokenInfo}\n\nUse /disconnect:mcp ${serverName} to clear credentials and reconnect.`,
           ),
         ])
         return

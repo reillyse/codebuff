@@ -113,6 +113,15 @@ function hashConfig(config: MCPConfig): string {
   )
 }
 
+/**
+ * Returns true if a client for this config is already connected and cached.
+ * Useful for commands that want to avoid re-running an interactive auth flow
+ * for a server that's already connected.
+ */
+export function isMCPClientConnected(config: MCPConfig): boolean {
+  return hashConfig(config) in runningClients
+}
+
 export async function getMCPClient(
   config: MCPConfig,
   oauthOptions?: { authProvider: McpOAuthClientProvider },
