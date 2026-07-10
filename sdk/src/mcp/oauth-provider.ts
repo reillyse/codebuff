@@ -180,17 +180,22 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
 
   redirectToAuthorization(authorizationUrl: URL): void {
     const urlStr = authorizationUrl.toString()
-    // Always write the URL to stderr so the user can copy-paste it into
-    // any browser where they're logged in (e.g. if the default browser
-    // doesn't have a Notion session).
-    process.stderr.write(
-      `\nMCP OAuth: Opening browser for authorization.\n` +
-        `If a login loop occurs, paste this URL into the browser where you're logged in:\n` +
-        `${urlStr}\n\n`,
-    )
-    this.onAuthorizationUrl?.(urlStr)
+    if (this.onAuthorizationUrl) {
+      // Callback registered (e.g. TUI CLI): surface URL through the callback
+      // so it appears in the scrollable content area. Don't write to stderr
+      // as that would corrupt the TUI rendering.
+      this.onAuthorizationUrl(urlStr)
+    } else {
+      // No callback (cli-lite or auto-triggered MCP auth): write to stderr
+      // so the user can copy-paste the URL into their logged-in browser.
+      process.stderr.write(
+        `\nMCP OAuth: Opening browser for authorization.\n` +
+          `If a login loop occurs, paste this URL into the browser where you're logged in:\n` +
+          `${urlStr}\n\n`,
+      )
+    }
     open(urlStr).catch(() => {
-      // URL already written to stderr above
+      // URL already shown via callback or stderr above
     })
   }
 
@@ -359,7 +364,14 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
         // ignore
       }
       this.callbackServer = null
-      this.callbackPort = null
+      // NOTE: deliberately do NOT reset callbackPort here. The MCP SDK's
+      // token exchange (transport.finishAuth) reads provider.redirectUrl AFTER
+      // the callback has been received (and this method has run), and the
+      // redirect_uri in the token exchange must match the one used during the
+      // authorization request. Resetting the port to null would make
+      // redirectUrl fall back to http://localhost:0/callback, causing a
+      // redirect_uri mismatch / ERR_UNSAFE_PORT. A fresh startCallbackServer()
+      // always assigns a new port, so keeping the last value here is safe.
     }
   }
 

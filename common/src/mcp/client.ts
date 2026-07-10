@@ -190,7 +190,16 @@ export async function getMCPClient(
         // The SDK opened the browser via redirectToAuthorization; wait for the
         // user to authorize, finish the exchange, then reconnect with the token.
         const authCode = await authProvider.waitForCode()
-        await transport.finishAuth(authCode)
+        try {
+          // finishAuth runs the token exchange, which reads redirectUrl for the
+          // redirect_uri param. The callback server is already stopped by the
+          // request handler, but the port value is preserved (see
+          // oauth-provider.ts) so the redirect_uri matches. Stop the server
+          // afterwards as a safety net in case no callback ever arrived.
+          await transport.finishAuth(authCode)
+        } finally {
+          authProvider.stopCallbackServer()
+        }
         await client.connect(createHttpTransport())
       }
       runningClients[key] = client
