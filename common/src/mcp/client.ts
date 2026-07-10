@@ -187,30 +187,61 @@ export async function getMCPClient(
       // registration) uses the real ephemeral port before we connect.
       await authProvider.startCallbackServer()
       const transport = createHttpTransport()
-      try {
-        await client.connect(transport)
-        // Already authorized (existing tokens) — no browser needed.
-        authProvider.stopCallbackServer()
-      } catch (error) {
-        if (!(error instanceof UnauthorizedError)) {
-          authProvider.stopCallbackServer()
-          throw error
-        }
-        // The SDK opened the browser via redirectToAuthorization; wait for the
-        // user to authorize, finish the exchange, then reconnect with the token.
+
+      // Helper: exchange the auth code that arrives at the callback server.
+      // The SDK has already opened the browser; we just wait for the code.
+      const completeAuthFlow = async () => {
         const authCode = await authProvider.waitForCode()
         try {
-          // finishAuth runs the token exchange, which reads redirectUrl for the
-          // redirect_uri param. The callback server is already stopped by the
-          // request handler, but the port value is preserved (see
-          // oauth-provider.ts) so the redirect_uri matches. Stop the server
-          // afterwards as a safety net in case no callback ever arrived.
+          // finishAuth runs the token exchange. The callback server has been
+          // stopped by the request handler, but callbackPort is preserved (see
+          // oauth-provider.ts) so redirectUrl still has the correct port for
+          // the redirect_uri parameter.
           await transport.finishAuth(authCode)
         } finally {
           authProvider.stopCallbackServer()
         }
-        await client.connect(createHttpTransport())
       }
+
+      try {
+        await client.connect(transport)
+      } catch (connectError) {
+        if (!(connectError instanceof UnauthorizedError)) {
+          authProvider.stopCallbackServer()
+          throw connectError
+        }
+        // connect() triggered an auth redirect. Complete the flow and reconnect.
+        await completeAuthFlow()
+        await client.connect(createHttpTransport())
+        runningClients[key] = client
+        return
+      }
+
+      // connect() succeeded. Some servers (e.g. Sparrow) accept the MCP
+      // initialize handshake without auth but require it for tool calls.
+      // If we don't have tokens yet, probe with listTools while the callback
+      // server is still listening so we can handle the 401 correctly.
+      if (!authProvider.tokens()) {
+        try {
+          await client.listTools()
+          // Succeeded — server doesn't need auth for tool calls either.
+        } catch (listError) {
+          if (listError instanceof UnauthorizedError) {
+            // listTools() triggered an auth redirect (SDK opened the browser).
+            // The callback server is still running — complete the flow.
+            // No reconnect needed: the MCP session is already established;
+            // subsequent requests will carry the new Bearer token.
+            await completeAuthFlow()
+            runningClients[key] = client
+            return
+          }
+          // Any other listTools error (permission denied, unsupported, etc.)
+          // is non-fatal here — individual tool calls will surface the error.
+        }
+      }
+
+      // Already authorized (tokens existed or listTools succeeded without auth).
+      authProvider.stopCallbackServer()
       runningClients[key] = client
     })
   } else {
