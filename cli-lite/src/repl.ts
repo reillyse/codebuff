@@ -1030,7 +1030,8 @@ async function handleConnectMcp(serverName: string): Promise<void> {
   }
 
   writeErr(`Connecting to ${serverName} (${serverConfig.url})...\n`)
-  writeErr('If authorization is needed, your browser will open — return here after approving access.\n\n')
+  writeErr('If authorization is needed, your browser will open.\n')
+  writeErr('If you see a login loop, copy the URL from your terminal and paste it into the browser where you are logged in.\n\n')
 
   try {
     await getMCPClient(serverConfig, {

@@ -113,6 +113,7 @@ export function clearMcpOAuthCredentials(serverUrl?: string): void {
  */
 export class McpOAuthProvider implements McpOAuthClientProvider {
   private readonly serverUrl: string
+  private readonly onAuthorizationUrl?: (url: string) => void
   private callbackServer: http.Server | null = null
   private callbackPort: number | null = null
   private cachedState: string | null = null
@@ -122,8 +123,12 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
   private codeReject: ((error: Error) => void) | null = null
   private callbackTimeout: ReturnType<typeof setTimeout> | null = null
 
-  constructor(serverUrl: string) {
+  constructor(
+    serverUrl: string,
+    options?: { onAuthorizationUrl?: (url: string) => void },
+  ) {
     this.serverUrl = serverUrl
+    this.onAuthorizationUrl = options?.onAuthorizationUrl
   }
 
   get redirectUrl(): string {
@@ -174,10 +179,18 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
   }
 
   redirectToAuthorization(authorizationUrl: URL): void {
-    open(authorizationUrl.toString()).catch(() => {
-      console.error(
-        `MCP OAuth: could not open browser automatically. Please open this URL to authorize:\n${authorizationUrl.toString()}`,
-      )
+    const urlStr = authorizationUrl.toString()
+    // Always write the URL to stderr so the user can copy-paste it into
+    // any browser where they're logged in (e.g. if the default browser
+    // doesn't have a Notion session).
+    process.stderr.write(
+      `\nMCP OAuth: Opening browser for authorization.\n` +
+        `If a login loop occurs, paste this URL into the browser where you're logged in:\n` +
+        `${urlStr}\n\n`,
+    )
+    this.onAuthorizationUrl?.(urlStr)
+    open(urlStr).catch(() => {
+      // URL already written to stderr above
     })
   }
 

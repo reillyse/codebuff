@@ -689,14 +689,22 @@ const ALL_COMMANDS: CommandDefinition[] = [
         ...prev,
         getUserMessage(inputText),
         getSystemMessage(
-          `Connecting to ${serverName} (${serverConfig.url})...\n\nIf authorization is needed, your browser will open — return here after approving access.`,
+          `Connecting to ${serverName} (${serverConfig.url})...\n\nIf authorization is needed, your browser will open. The authorization URL will also appear in your terminal — if you see a login loop, paste that URL into the browser where you're logged in.`,
         ),
       ])
 
       try {
-        await getMCPClient(serverConfig, {
-          authProvider: new McpOAuthProvider(serverConfig.url),
+        const authProvider = new McpOAuthProvider(serverConfig.url, {
+          onAuthorizationUrl: (url) => {
+            params.setMessages((prev) => [
+              ...prev,
+              getSystemMessage(
+                `Authorization URL (paste into your logged-in browser if needed):\n${url}`,
+              ),
+            ])
+          },
         })
+        await getMCPClient(serverConfig, { authProvider })
         params.setMessages((prev) => [
           ...prev,
           getSystemMessage(
