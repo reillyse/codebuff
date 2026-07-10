@@ -3,6 +3,7 @@ import {
   getEmptyResponseFallbackModel,
   getOverloadFallbackModel,
 } from '@codebuff/common/constants/model-config'
+import { RETRY_NOTICE_MARKER } from '@codebuff/common/constants/retry-notice'
 import {
   pickStartModelSkippingCooldown,
   recordEmptyResponseCooldown,
@@ -620,8 +621,17 @@ export const runAgentStep = async (
   // swallowed mid-stream 529) that the SDK finished as a normal completion.
   // We report it via `isEmptyResponse` so loopAgentSteps can RETRY it (with
   // backoff) before surfacing a warning and ending the turn.
+  //
+  // IMPORTANT: this must NOT be gated on `shouldEndTurn`. For agents that
+  // require explicit completion (they have `task_completed`), `shouldEndTurn`
+  // is `hasTaskCompleted` — which is `false` on an empty response — so gating on
+  // it would make an empty stream invisible to the retry ladder. Such an agent
+  // would then loop, re-empty, and only stop at the no-progress guard (~8 steps
+  // of dead air) instead of retrying + ending the turn promptly. The condition
+  // below (no completion, no tool results, no content) fully characterizes an
+  // empty turn on its own; for non-explicit-completion agents `shouldEndTurn`
+  // is already true whenever these hold, so dropping the gate is a no-op there.
   const isEmptyResponse =
-    shouldEndTurn &&
     !hasTaskCompleted &&
     hasNoToolResults &&
     fullResponse.trim().length === 0
@@ -1209,10 +1219,14 @@ export async function loopAgentSteps(
             },
             'Retrying agent step after transient API error or empty response',
           )
+          // NOTE: the `RETRY_NOTICE_MARKER` ("retrying in") is a load-bearing
+          // substring: the CLI detects it to re-arm the stream-activity
+          // heartbeat so the "stalled Ns" indicator resets per retry attempt
+          // instead of climbing across the whole run. Keep it in this string.
           onResponseChunk(
             modelSwitchNotice
-              ? `\n⚠️ ${reason} — ${modelSwitchNotice}, retrying in ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`
-              : `\n⚠️ ${reason}, retrying in ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`,
+              ? `\n⚠️ ${reason} — ${modelSwitchNotice}, ${RETRY_NOTICE_MARKER} ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`
+              : `\n⚠️ ${reason}, ${RETRY_NOTICE_MARKER} ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`,
           )
           // Only surface the switch notice once per switch.
           modelSwitchNotice = undefined
@@ -1378,7 +1392,16 @@ export async function loopAgentSteps(
       }
 
       currentAgentState = newAgentState
-      shouldEndTurn = llmShouldEndTurn
+      // If the empty-response retry ladder GAVE UP (still empty after all
+      // retries), force the turn to end. For agents that require explicit
+      // completion (they have `task_completed`), runAgentStep computes
+      // shouldEndTurn = hasTaskCompleted = false on an empty response, so
+      // without this the turn would NOT end here — it would loop and re-empty
+      // until the no-progress guard (MAX_CONSECUTIVE_NO_PROGRESS_STEPS) finally
+      // stops it, minutes later. That's the "waiting on provider for 200s"
+      // symptom. Ending here also matches the user-facing "Ending the turn"
+      // message printed above.
+      shouldEndTurn = llmShouldEndTurn || isEmptyResponse
       nResponses = generatedResponses
 
       currentPrompt = undefined

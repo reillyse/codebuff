@@ -1510,6 +1510,61 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(giveUpNotice).toContain('empty response')
     })
 
+    it('should END THE TURN (not grind the no-progress guard) when an explicit-completion agent gives up after empty responses', async () => {
+      // Regression for the "waiting on provider for 200s" symptom: an agent that
+      // requires explicit completion (has task_completed) that keeps getting
+      // empty responses. runAgentStep computes shouldEndTurn = hasTaskCompleted
+      // = false on an empty response, so before the fix the give-up path did
+      // NOT end the turn — it looped, re-emptied, and only stopped at the
+      // 8-step no-progress guard (8 steps x 3 attempts = 24 LLM calls, minutes
+      // of dead air). After the fix, giving up (isEmptyResponse after retries)
+      // forces the turn to end immediately: exactly 3 calls (1 + MAX_STEP_RETRIES).
+      const explicitCompletionTemplate = {
+        ...mockTemplate,
+        // task_completed => requiresExplicitCompletion === true
+        toolNames: ['read_files', 'write_file', 'task_completed'],
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': explicitCompletionTemplate,
+      }
+
+      mockAgentState.stepsRemaining = 100
+
+      const chunks: string[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        // Always an empty response (no text, no tool call).
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
+      })
+
+      // The give-up path ends the turn after exactly 3 attempts — it does NOT
+      // fall through to the no-progress guard (which would be 8 x 3 = 24 calls)
+      // or the step ceiling.
+      expect(promptCallCount).toBe(3)
+      expect(result.output.type).not.toBe('error')
+
+      // Should surface the give-up notice, and NOT the no-progress notice.
+      const giveUpNotice = chunks.find((c) => c.includes('Ending the turn'))
+      expect(giveUpNotice).toBeDefined()
+      const noProgressNotice = chunks.find((c) =>
+        c.includes('without calling a tool or finishing'),
+      )
+      expect(noProgressNotice).toBeUndefined()
+    })
+
     it('should retry via message fallback when error contains Overloaded but has no retryable status code', async () => {
       const llmOnlyTemplate = {
         ...mockTemplate,

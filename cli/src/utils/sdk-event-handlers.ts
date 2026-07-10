@@ -26,7 +26,9 @@ import {
   destinationFromChunkEvent,
   processTextChunk,
 } from './stream-chunk-processor'
-import { markStreamActivity } from './stream-activity'
+import { markStreamActivity, resetStreamActivity } from './stream-activity'
+
+import { RETRY_NOTICE_MARKER } from '@codebuff/common/constants/retry-notice'
 
 import type { AgentMode } from './constants'
 import type { MessageUpdater } from './message-updater'
@@ -474,6 +476,22 @@ export const createStreamChunkHandler =
     }
 
     ensureStreaming(state)
+
+    // A retry-notice chunk ("...retrying in Ns (attempt X/Y)...") marks the
+    // start of a NEW attempt, so the "stalled Ns" indicator should measure only
+    // the CURRENT attempt's silence, not climb across the whole run. Today
+    // ensureStreaming's markStreamActivity() already bumps the heartbeat for
+    // this chunk, so this reset is defensive: it's an explicit, self-documenting
+    // lock-in (keyed off the shared RETRY_NOTICE_MARKER) so the per-attempt
+    // reset survives a future refactor that routes notices off the per-chunk
+    // activity path. The accompanying test asserts this behavior directly.
+    if (
+      destination.type === 'root' &&
+      destination.textType === 'text' &&
+      text.includes(RETRY_NOTICE_MARKER)
+    ) {
+      resetStreamActivity()
+    }
 
     if (destination.type === 'root') {
       if (destination.textType === 'text') {

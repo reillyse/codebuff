@@ -1,3 +1,4 @@
+import { RETRY_NOTICE_MARKER } from '@codebuff/common/constants/retry-notice'
 import { describe, expect, test } from 'bun:test'
 
 import { createAgentBlock } from '../message-block-helpers'
@@ -6,6 +7,11 @@ import {
   createEventHandler,
   createStreamChunkHandler,
 } from '../sdk-event-handlers'
+import {
+  getLastStreamActivityAt,
+  resetStreamActivity,
+} from '../stream-activity'
+import { getStatusIndicatorState } from '../status-indicator-state'
 
 import type { StreamStatus } from '../../hooks/use-message-queue'
 import type { AgentContentBlock, ChatMessage } from '../../types/chat'
@@ -168,6 +174,48 @@ const createTestContext = (agentMode: AgentMode = 'DEFAULT') => {
 }
 
 describe('sdk-event-handlers', () => {
+  test('re-arms the stream-activity heartbeat on a retry-notice chunk (per-attempt stall reset)', () => {
+    const { ctx } = createTestContext()
+    const handleChunk = createStreamChunkHandler(ctx)
+
+    // Simulate a run that armed the heartbeat long ago (a stale, "stalled"
+    // state that has been climbing across the whole run).
+    const staleActivityAt = Date.now() - 200_000
+    resetStreamActivity(staleActivityAt)
+
+    // Before the retry notice, the indicator would show a large "stalled" gap.
+    expect(
+      getStatusIndicatorState({
+        streamStatus: 'waiting',
+        nextCtrlCWillExit: false,
+        isConnected: true,
+        lastStreamActivityAt: getLastStreamActivityAt(),
+      }),
+    ).toMatchObject({ kind: 'stalled' })
+
+    // A retry notice arrives (marks the start of a NEW attempt).
+    handleChunk(
+      `\n⚠️ The model returned an empty response, ${RETRY_NOTICE_MARKER} 4s (attempt 2/3)...\n\n`,
+    )
+
+    // The heartbeat should be re-armed to ~now, so the stall counter resets and
+    // the indicator is no longer stalled.
+    const after = getLastStreamActivityAt()
+    expect(after).not.toBeNull()
+    expect(Date.now() - (after as number)).toBeLessThan(1_000)
+    expect(
+      getStatusIndicatorState({
+        streamStatus: 'waiting',
+        nextCtrlCWillExit: false,
+        isConnected: true,
+        lastStreamActivityAt: after,
+      }),
+    ).not.toMatchObject({ kind: 'stalled' })
+
+    // Clean up module-singleton state for other tests.
+    resetStreamActivity(null)
+  })
+
   test('extracts plan content from root stream', () => {
     const { ctx, getMessages, getHasPlanResponse } = createTestContext('PLAN')
     const handleChunk = createStreamChunkHandler(ctx)
