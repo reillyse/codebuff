@@ -133,11 +133,7 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
 
   get redirectUrl(): string {
     const port = this.callbackPort ?? 0
-    // Use 127.0.0.1 explicitly instead of localhost. On macOS, Chrome resolves
-    // localhost to ::1 (IPv6) but our server only binds to 127.0.0.1 (IPv4),
-    // causing ERR_CONNECTION_REFUSED. RFC 8252 §7.3 recommends 127.0.0.1 for
-    // loopback OAuth redirect URIs.
-    return `http://127.0.0.1:${port}${CALLBACK_PATH}`
+    return `http://localhost:${port}${CALLBACK_PATH}`
   }
 
   get clientMetadata(): OAuthClientMetadata {
@@ -313,20 +309,44 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
         this.stopCallbackServer()
       })
 
-      server.on('error', (err) => {
+      // Bind to '::' (IPv6 wildcard) which enables dual-stack on macOS/Linux,
+      // accepting connections from both 127.0.0.1 (IPv4) and ::1 (IPv6). On
+      // macOS, Chrome resolves 'localhost' to ::1 first; if the server only
+      // binds to 127.0.0.1 the browser gets ERR_CONNECTION_REFUSED.
+      // On systems where IPv6 is disabled, fall back to 127.0.0.1.
+      const tryListen = (host: string) => {
+        server.listen(0, host, () => {
+          const addr = server.address()
+          if (addr && typeof addr === 'object') {
+            this.callbackPort = addr.port
+          }
+          this.callbackServer = server
+          resolveReady()
+        })
+      }
+
+      server.on('error', (err: NodeJS.ErrnoException) => {
+        if (
+          (err.code === 'EADDRNOTAVAIL' || err.code === 'EAFNOSUPPORT') &&
+          server.address() === null &&
+          this.callbackServer === null
+        ) {
+          // IPv6 not available on this system — retry on IPv4 loopback.
+          server.removeAllListeners('error')
+          server.on('error', (err2) => {
+            this.callbackServer = null
+            this.callbackPort = null
+            rejectReady(err2)
+          })
+          tryListen('127.0.0.1')
+          return
+        }
         this.callbackServer = null
         this.callbackPort = null
         rejectReady(err)
       })
 
-      server.listen(0, '127.0.0.1', () => {
-        const addr = server.address()
-        if (addr && typeof addr === 'object') {
-          this.callbackPort = addr.port
-        }
-        this.callbackServer = server
-        resolveReady()
-      })
+      tryListen('::')
     })
   }
 
