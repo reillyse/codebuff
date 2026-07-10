@@ -133,7 +133,11 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
 
   get redirectUrl(): string {
     const port = this.callbackPort ?? 0
-    return `http://localhost:${port}${CALLBACK_PATH}`
+    // Use 127.0.0.1 explicitly instead of localhost. On macOS, Chrome resolves
+    // localhost to ::1 (IPv6) but our server only binds to 127.0.0.1 (IPv4),
+    // causing ERR_CONNECTION_REFUSED. RFC 8252 §7.3 recommends 127.0.0.1 for
+    // loopback OAuth redirect URIs.
+    return `http://127.0.0.1:${port}${CALLBACK_PATH}`
   }
 
   get clientMetadata(): OAuthClientMetadata {
