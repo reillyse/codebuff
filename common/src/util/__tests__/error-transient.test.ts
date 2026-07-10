@@ -3,9 +3,11 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   NO_OUTPUT_GENERATED_ERROR_NAME,
+  StreamStallError,
   describeTransientApiError,
   getTransientStatusCode,
   isNoOutputGeneratedError,
+  isStreamStallError,
   isTransientApiError,
 } from '../error'
 
@@ -142,6 +144,62 @@ describe('isTransientApiError - Option A (recursive cause chain)', () => {
     const a = new Error('a')
     ;(a as Error & { cause?: unknown }).cause = a
     expect(isTransientApiError(a)).toBe(false)
+  })
+})
+
+describe('StreamStallError', () => {
+  it('sets name, message, and structured fields', () => {
+    const error = new StreamStallError(60_000, 'mid-stream')
+    expect(error.name).toBe('StreamStallError')
+    expect(error.stallMs).toBe(60_000)
+    expect(error.phase).toBe('mid-stream')
+    expect(error.message).toContain('60000')
+    expect(error.message).toContain('mid-stream')
+  })
+})
+
+describe('isStreamStallError', () => {
+  it('detects a StreamStallError instance', () => {
+    expect(isStreamStallError(new StreamStallError(120_000, 'first-chunk'))).toBe(
+      true,
+    )
+  })
+
+  it('detects by name so it survives serialization / cross-realm', () => {
+    const plain = { name: 'StreamStallError', message: 'stalled' }
+    expect(isStreamStallError(plain)).toBe(true)
+  })
+
+  it('returns false for unrelated errors and non-objects', () => {
+    expect(isStreamStallError(new Error('boom'))).toBe(false)
+    expect(isStreamStallError(null)).toBe(false)
+    expect(isStreamStallError(undefined)).toBe(false)
+    expect(isStreamStallError('StreamStallError')).toBe(false)
+  })
+})
+
+describe('isTransientApiError - stream stall', () => {
+  it('treats a StreamStallError as transient (retry on same model)', () => {
+    expect(isTransientApiError(new StreamStallError(60_000, 'mid-stream'))).toBe(
+      true,
+    )
+  })
+
+  it('treats a StreamStallError nested in the cause chain as transient', () => {
+    const wrapper = new Error('Step failed')
+    ;(wrapper as Error & { cause?: unknown }).cause = new StreamStallError(
+      60_000,
+      'first-chunk',
+    )
+    expect(isTransientApiError(wrapper)).toBe(true)
+  })
+})
+
+describe('describeTransientApiError - stream stall', () => {
+  it('describes a stream stall distinctly from the no-output case', () => {
+    expect(
+      describeTransientApiError(new StreamStallError(60_000, 'mid-stream')),
+    ).toBe('Response stream stalled (no data received)')
   })
 })
 

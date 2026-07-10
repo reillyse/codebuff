@@ -172,6 +172,40 @@ export function isAbortError(error: unknown): boolean {
 }
 
 /**
+ * Error thrown when an LLM response stream goes silent for too long — no chunk
+ * (text/reasoning/tool-call/error) arrives within the inactivity window. This
+ * is a LOCAL inactivity timeout, not a provider status code: it catches
+ * half-open sockets / stalled upstreams where the stream neither closes nor
+ * errors, which would otherwise hang the `for await` loop forever.
+ *
+ * It is deliberately treated as transient (see `isTransientApiError`) so the
+ * existing retry+backoff ladder recovers on the same model, but it is NOT
+ * faked as a 529 — that would dishonestly trigger the overload model-switch
+ * ladder for what is actually a connection stall.
+ */
+export class StreamStallError extends Error {
+  constructor(
+    public readonly stallMs: number,
+    public readonly phase: 'first-chunk' | 'mid-stream',
+  ) {
+    super(`LLM stream stalled: no data received for ${stallMs}ms (${phase})`)
+    this.name = 'StreamStallError'
+  }
+}
+
+/**
+ * Detects a {@link StreamStallError} (by name, so it survives serialization /
+ * cross-realm boundaries).
+ */
+export function isStreamStallError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    (error as { name?: unknown }).name === 'StreamStallError'
+  )
+}
+
+/**
  * Unwrap a PromptResult, returning the value if successful or throwing if aborted.
  *
  * Use this helper for consistent abort handling when you want aborts to propagate
@@ -278,6 +312,12 @@ function isTransientApiErrorImpl(
   if (seen.has(error)) return false
   seen.add(error)
 
+  // A local stream-stall timeout is transient: retrying (same model) usually
+  // recovers from a stalled/half-open connection.
+  if (isStreamStallError(error)) {
+    return true
+  }
+
   // Option B: treat AI_NoOutputGeneratedError as transient.
   if (isNoOutputGeneratedError(error)) {
     return true
@@ -348,6 +388,10 @@ function getTransientStatusCodeImpl(
  * - otherwise → "Transient API error"
  */
 export function describeTransientApiError(error: unknown): string {
+  if (isStreamStallError(error)) {
+    return 'Response stream stalled (no data received)'
+  }
+
   if (isNoOutputGeneratedError(error)) {
     // Not necessarily an overload (can be an empty completion, content filter,
     // etc.), so keep the reason neutral.

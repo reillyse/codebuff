@@ -86,18 +86,17 @@ export const models = {
 /** The current Opus model version used by agents. Update this single constant when upgrading. */
 export const CURRENT_OPUS_MODEL = (process.env.CODEBUFF_OPUS_MODEL ?? 'anthropic/claude-opus-4.8') as 'anthropic/claude-opus-4.8'
 
-/** The current Sonnet model version used by agents. Update this single constant when upgrading. */
-export const CURRENT_SONNET_MODEL = 'anthropic/claude-sonnet-5' as const
-
 /**
- * The Sonnet model we step *down* to when the current Sonnet drops streams
- * (empty responses). This is a distinct, slightly-older Sonnet — it preserves
- * coding quality (still a Sonnet) while likely drawing from a different
- * capacity pool than the current Sonnet, so it can recover a dropped stream.
- * Update this single constant when the Sonnet ladder changes.
+ * The current Sonnet model version used by agents. Update this single constant
+ * when upgrading.
+ *
+ * NOTE: temporarily pinned to sonnet-4.6 (was sonnet-5). sonnet-5 was dropping
+ * streams (empty responses) for many sessions, so it's been pulled from the
+ * default/agent path for now. The `openrouter_claude_sonnet_5` model constant
+ * and the `'sonnet-5'` short name are retained so it can still be selected
+ * explicitly and re-promoted here later.
  */
-export const CURRENT_SONNET_FALLBACK_MODEL =
-  'anthropic/claude-sonnet-4.6' as const
+export const CURRENT_SONNET_MODEL = 'anthropic/claude-sonnet-4.6' as const
 
 /**
  * The current Fable model version used by agents. Update this single constant when upgrading.
@@ -122,7 +121,7 @@ export const shortModelNames = {
   'opus-4': models.openrouter_claude_opus_4,
   'sonnet-5': models.openrouter_claude_sonnet_5,
   'sonnet-4.6': models.openrouter_claude_sonnet_4_6,
-  'sonnet-4.5': models.openrouter_claude_sonnet_5, // deprecated alias
+  'sonnet-4.5': models.openrouter_claude_sonnet_4_6, // deprecated alias (was sonnet-5; repointed while sonnet-5 is pulled)
   'sonnet-4': models.openrouter_claude_sonnet_4,
   'sonnet-3.7': models.openrouter_claude_sonnet_4,
   'sonnet-3.6': models.openrouter_claude_3_5_sonnet,
@@ -221,8 +220,8 @@ export const getModelForMode = (
   if (operation === 'agent') {
     return {
       free: models.openrouter_gemini2_5_flash,
-      normal: models.openrouter_claude_sonnet_5,
-      max: models.openrouter_claude_sonnet_5,
+      normal: models.openrouter_claude_sonnet_4_6,
+      max: models.openrouter_claude_sonnet_4_6,
       experimental: models.openrouter_claude_opus_4,
       ask: models.openrouter_claude_opus_4,
     }[costMode]
@@ -231,7 +230,7 @@ export const getModelForMode = (
     return {
       free: models.openrouter_claude_3_5_haiku,
       normal: models.openrouter_claude_3_5_haiku,
-      max: models.openrouter_claude_sonnet_5,
+      max: models.openrouter_claude_sonnet_4_6,
       experimental: models.openrouter_claude_sonnet_4,
       ask: models.openrouter_claude_3_5_haiku,
     }[costMode]
@@ -240,7 +239,7 @@ export const getModelForMode = (
     return {
       free: models.openrouter_claude_3_5_haiku,
       normal: models.openrouter_claude_sonnet_4,
-      max: models.openrouter_claude_sonnet_5,
+      max: models.openrouter_claude_sonnet_4_6,
       experimental: models.openrouter_claude_sonnet_4,
       ask: models.openrouter_claude_sonnet_4,
     }[costMode]
@@ -261,8 +260,8 @@ export const getModelForMode = (
  * fallback (e.g. we're already on an OpenAI model).
  *
  * Example ladders:
- *   sonnet-5 -> opus -> gpt-5.2
- *   fable-5  -> sonnet-5 -> opus -> gpt-5.2
+ *   sonnet-4.6 -> opus -> gpt-5.2
+ *   fable-5    -> sonnet-4.6 -> opus -> gpt-5.2
  */
 export function getOverloadFallbackModel(
   currentModel: Model,
@@ -287,18 +286,20 @@ export function getOverloadFallbackModel(
  * provider stream that finished "cleanly" — no content, no tool calls).
  *
  * Unlike a 529 (an Anthropic-wide capacity signal), an empty response is often
- * a per-model/per-request stream hiccup, so we first step *down* to a distinct,
- * slightly-older Sonnet (preserves coding quality while likely drawing from a
- * different capacity pool), then escalate to Opus, and finally cross-provider
- * to GPT-5 if the stream keeps dropping. This is intentionally SEPARATE from
- * getOverloadFallbackModel so changing empty-response recovery never alters 529
- * behavior.
+ * a per-model/per-request stream hiccup, so we escalate to a peer-strength
+ * sibling (Opus preserves coding quality while likely drawing from a different
+ * capacity pool), and finally cross-provider to GPT-5 if the stream keeps
+ * dropping. This is intentionally SEPARATE from getOverloadFallbackModel so
+ * changing empty-response recovery never alters 529 behavior.
+ *
+ * (Historically this stepped Sonnet -> a distinct older Sonnet first; that rung
+ * was removed when sonnet-5 was pulled and sonnet-4.6 became the base Sonnet.)
  *
  * Returns the next model to try, or `undefined` when there is no further
  * fallback (e.g. we're already on an OpenAI model).
  *
  * Example ladder:
- *   sonnet-5 -> sonnet-4.6 -> opus -> gpt-5.2
+ *   sonnet-4.6 -> opus -> gpt-5.2
  */
 export function getEmptyResponseFallbackModel(
   currentModel: Model,
@@ -306,9 +307,7 @@ export function getEmptyResponseFallbackModel(
   // Already off Anthropic — no further empty-response fallback needed.
   if (currentModel.startsWith('openai/')) return undefined
 
-  if (currentModel === CURRENT_SONNET_MODEL)
-    return CURRENT_SONNET_FALLBACK_MODEL
-  if (currentModel === CURRENT_SONNET_FALLBACK_MODEL) return CURRENT_OPUS_MODEL
+  if (currentModel === CURRENT_SONNET_MODEL) return CURRENT_OPUS_MODEL
   if (currentModel === CURRENT_FABLE_MODEL) return CURRENT_SONNET_MODEL
   if (currentModel === CURRENT_OPUS_MODEL) return CURRENT_GPT5_MODEL
   if (currentModel === CURRENT_HAIKU_MODEL) return CURRENT_GPT5_MODEL

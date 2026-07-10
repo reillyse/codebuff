@@ -8,9 +8,20 @@ export type StatusIndicatorState =
   | { kind: 'retrying' }
   | { kind: 'waiting' }
   | { kind: 'streaming' }
+  | { kind: 'stalled'; sinceMs: number }
   | { kind: 'searching-memory' }
   | { kind: 'reconnected' }
   | { kind: 'paused' }
+
+/**
+ * How long the stream may be silent (no chunk) while in the waiting/streaming
+ * phase before the UI surfaces a "stalled" indicator. This is purely a UX
+ * signal so the user knows the CLI is waiting on the provider, not frozen; the
+ * actual recovery is the SDK-side stream-stall timeout + retry ladder. Kept a
+ * bit below the SDK's mid-stream stall timeout so "stalled..." appears before a
+ * retry notice does.
+ */
+export const STALL_INDICATOR_THRESHOLD_MS = 20_000
 
 export type AuthStatus = 'ok' | 'retrying' | 'unreachable'
 
@@ -36,6 +47,15 @@ export type StatusIndicatorStateArgs = {
    * When true, shows "searching memory..." instead of "thinking...".
    */
   isSearchingMemory?: boolean
+  /**
+   * Timestamp (ms) of the last stream activity (chunk received or stream
+   * started). When the stream is in the waiting/streaming phase and this is
+   * older than {@link STALL_INDICATOR_THRESHOLD_MS}, a 'stalled' indicator is
+   * shown. `null`/undefined disables stall detection.
+   */
+  lastStreamActivityAt?: number | null
+  /** Injectable clock for testing; defaults to Date.now. */
+  now?: number
 }
 
 /**
@@ -62,6 +82,8 @@ export const getStatusIndicatorState = ({
   showReconnectionMessage = false,
   isAskUserActive = false,
   isSearchingMemory = false,
+  lastStreamActivityAt = null,
+  now = Date.now(),
 }: StatusIndicatorStateArgs): StatusIndicatorState => {
   if (nextCtrlCWillExit) {
     return { kind: 'ctrlC' }
@@ -97,6 +119,20 @@ export const getStatusIndicatorState = ({
 
   if (isSearchingMemory) {
     return { kind: 'searching-memory' }
+  }
+
+  // Stall detection: while waiting for / receiving a response, if we haven't
+  // seen any stream activity for a while, surface a 'stalled' indicator so the
+  // user knows the CLI is blocked on the provider (not frozen). Recovery is
+  // handled SDK-side; this is purely the UX signal.
+  const isActivePhase =
+    streamStatus === 'waiting' || streamStatus === 'streaming'
+  if (
+    isActivePhase &&
+    lastStreamActivityAt != null &&
+    now - lastStreamActivityAt >= STALL_INDICATOR_THRESHOLD_MS
+  ) {
+    return { kind: 'stalled', sinceMs: now - lastStreamActivityAt }
   }
 
   if (streamStatus === 'waiting') {

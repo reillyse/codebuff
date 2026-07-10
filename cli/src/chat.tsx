@@ -79,6 +79,7 @@ import {
   getStatusIndicatorState,
   type AuthStatus,
 } from './utils/status-indicator-state'
+import { getLastStreamActivityAt } from './utils/stream-activity'
 import { createPasteHandler } from './utils/strings'
 import { setTerminalTitle } from './utils/terminal-title'
 import { computeInputLayoutMetrics } from './utils/text-layout'
@@ -1285,6 +1286,19 @@ export const Chat = ({
   }, [inputValue, cursorPosition, inputWidth, terminalHeight])
   const isMultilineInput = inputLayoutMetrics.heightLines > 1
   const shouldCenterInputVertically = !hasSuggestionMenu && !isMultilineInput
+
+  // Tick every second while a response is active so the derived status
+  // (including the time-based "stalled" indicator) recomputes even when no new
+  // chunks arrive. Without this tick, a silent stream would never re-render to
+  // reveal the stalled state.
+  const isActivePhase = streamStatus === 'waiting' || streamStatus === 'streaming'
+  const [, setStatusTick] = useState(0)
+  useEffect(() => {
+    if (!isActivePhase) return
+    const interval = setInterval(() => setStatusTick((t) => t + 1), 1000)
+    return () => clearInterval(interval)
+  }, [isActivePhase])
+
   const statusIndicatorState = getStatusIndicatorState({
     statusMessage,
     streamStatus,
@@ -1295,6 +1309,7 @@ export const Chat = ({
     isRetrying,
     isAskUserActive: askUserState !== null,
     isSearchingMemory,
+    lastStreamActivityAt: getLastStreamActivityAt(),
   })
   const hasStatusIndicatorContent = statusIndicatorState.kind !== 'idle'
 

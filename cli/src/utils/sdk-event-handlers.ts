@@ -26,6 +26,7 @@ import {
   destinationFromChunkEvent,
   processTextChunk,
 } from './stream-chunk-processor'
+import { markStreamActivity } from './stream-activity'
 
 import type { AgentMode } from './constants'
 import type { MessageUpdater } from './message-updater'
@@ -111,6 +112,9 @@ const isHiddenToolName = (
   hiddenToolNames.has(toolName as ToolName | 'spawn_agent_inline')
 
 const ensureStreaming = (state: EventHandlerState) => {
+  // Heartbeat: any chunk counts as stream activity, which clears/defers the
+  // "stalled" UI indicator (see stream-activity.ts / status-indicator-state.ts).
+  markStreamActivity()
   if (!state.message.hasReceivedContentRef.current) {
     state.message.hasReceivedContentRef.current = true
     state.streaming.setStreamStatus('streaming')

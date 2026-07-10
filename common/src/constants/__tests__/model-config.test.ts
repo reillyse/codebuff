@@ -5,7 +5,6 @@ import {
   CURRENT_GPT5_MODEL,
   CURRENT_HAIKU_MODEL,
   CURRENT_OPUS_MODEL,
-  CURRENT_SONNET_FALLBACK_MODEL,
   CURRENT_SONNET_MODEL,
   getEmptyResponseFallbackModel,
   getOverloadFallbackModel,
@@ -78,14 +77,8 @@ describe('getOverloadFallbackModel', () => {
 })
 
 describe('getEmptyResponseFallbackModel', () => {
-  it('steps sonnet-5 down to a distinct, slightly-older Sonnet (sonnet-4.6)', () => {
+  it('steps sonnet down to a peer-strength sibling (opus)', () => {
     expect(getEmptyResponseFallbackModel(CURRENT_SONNET_MODEL)).toBe(
-      CURRENT_SONNET_FALLBACK_MODEL,
-    )
-  })
-
-  it('steps the older Sonnet up to opus if it also drops the stream', () => {
-    expect(getEmptyResponseFallbackModel(CURRENT_SONNET_FALLBACK_MODEL)).toBe(
       CURRENT_OPUS_MODEL,
     )
   })
@@ -112,7 +105,7 @@ describe('getEmptyResponseFallbackModel', () => {
     expect(getEmptyResponseFallbackModel(CURRENT_GPT5_MODEL)).toBeUndefined()
   })
 
-  it('produces a terminating step-down-then-escalate chain from sonnet-5', () => {
+  it('produces a terminating escalation chain from sonnet', () => {
     const chain: Model[] = []
     let current: Model | undefined = CURRENT_SONNET_MODEL
     // Guard against an accidental infinite loop in the ladder.
@@ -125,23 +118,24 @@ describe('getEmptyResponseFallbackModel', () => {
     expect(current).toBeUndefined()
     // It must leave Anthropic by ending on an OpenAI model.
     expect(chain[chain.length - 1].startsWith('openai/')).toBe(true)
-    // Concretely: sonnet-5 -> sonnet-4.6 -> opus -> gpt-5.
+    // Concretely: sonnet-4.6 -> opus -> gpt-5 (the intermediate older-Sonnet
+    // rung was removed when sonnet-5 was pulled).
     expect(chain).toEqual([
       CURRENT_SONNET_MODEL,
-      CURRENT_SONNET_FALLBACK_MODEL,
       CURRENT_OPUS_MODEL,
       CURRENT_GPT5_MODEL,
     ])
   })
 
-  it('does not alter the 529 ladder (empty ladder is separate)', () => {
-    // The 529 ladder steps sonnet-5 straight to opus; the empty ladder inserts
-    // the older Sonnet first. Confirm they stay independent.
+  it('coincides with the 529 ladder for sonnet now that the older-Sonnet rung is gone', () => {
+    // The intermediate older-Sonnet rung was removed when sonnet-5 was pulled,
+    // so both ladders now step sonnet straight to opus. They remain separate
+    // functions so they can diverge again later.
     expect(getOverloadFallbackModel(CURRENT_SONNET_MODEL)).toBe(
       CURRENT_OPUS_MODEL,
     )
     expect(getEmptyResponseFallbackModel(CURRENT_SONNET_MODEL)).toBe(
-      CURRENT_SONNET_FALLBACK_MODEL,
+      CURRENT_OPUS_MODEL,
     )
   })
 })

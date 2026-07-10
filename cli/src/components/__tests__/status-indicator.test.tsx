@@ -1,6 +1,9 @@
 import { describe, test, expect } from 'bun:test'
 
-import { getStatusIndicatorState } from '../../utils/status-indicator-state'
+import {
+  getStatusIndicatorState,
+  STALL_INDICATOR_THRESHOLD_MS,
+} from '../../utils/status-indicator-state'
 
 import type { StatusIndicatorStateArgs } from '../../utils/status-indicator-state'
 
@@ -114,6 +117,85 @@ describe('StatusIndicator state logic', () => {
       })
       // Empty string is falsy, should fall through to streaming state
       expect(state.kind).toBe('streaming')
+    })
+
+    describe('stalled state', () => {
+      const now = 1_000_000
+
+      test('returns stalled when active and last activity is past the threshold', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'streaming',
+          lastStreamActivityAt: now - STALL_INDICATOR_THRESHOLD_MS,
+          now,
+        })
+        expect(state.kind).toBe('stalled')
+        if (state.kind === 'stalled') {
+          expect(state.sinceMs).toBe(STALL_INDICATOR_THRESHOLD_MS)
+        }
+      })
+
+      test('returns stalled while waiting (before first chunk) too', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'waiting',
+          lastStreamActivityAt: now - (STALL_INDICATOR_THRESHOLD_MS + 5_000),
+          now,
+        })
+        expect(state.kind).toBe('stalled')
+      })
+
+      test('does NOT return stalled just below the threshold', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'streaming',
+          lastStreamActivityAt: now - (STALL_INDICATOR_THRESHOLD_MS - 1),
+          now,
+        })
+        expect(state.kind).toBe('streaming')
+      })
+
+      test('does NOT return stalled when lastStreamActivityAt is null (detection disabled)', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'streaming',
+          lastStreamActivityAt: null,
+          now,
+        })
+        expect(state.kind).toBe('streaming')
+      })
+
+      test('does NOT return stalled when not in an active phase (idle)', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'idle',
+          lastStreamActivityAt: now - STALL_INDICATOR_THRESHOLD_MS * 10,
+          now,
+        })
+        expect(state.kind).toBe('idle')
+      })
+
+      test('higher-priority states (retrying) beat stalled', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'streaming',
+          isRetrying: true,
+          lastStreamActivityAt: now - STALL_INDICATOR_THRESHOLD_MS * 2,
+          now,
+        })
+        expect(state.kind).toBe('retrying')
+      })
+
+      test('searching-memory beats stalled', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'streaming',
+          isSearchingMemory: true,
+          lastStreamActivityAt: now - STALL_INDICATOR_THRESHOLD_MS * 2,
+          now,
+        })
+        expect(state.kind).toBe('searching-memory')
+      })
     })
 
     describe('state priority order', () => {

@@ -2,7 +2,6 @@ import * as analytics from '@codebuff/common/analytics'
 import {
   CURRENT_GPT5_MODEL,
   CURRENT_OPUS_MODEL,
-  CURRENT_SONNET_FALLBACK_MODEL,
   CURRENT_SONNET_MODEL,
 } from '@codebuff/common/constants/model-config'
 import { TEST_USER_ID } from '@codebuff/common/old-constants'
@@ -872,6 +871,76 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(noProgressNotice).toBeDefined()
     })
 
+    it('should still fire when a programmatic step runs a pruning tool (includeToolCall: false) before each no-progress step', async () => {
+      // Reproduces base2's exact pattern: a handleSteps generator that runs the
+      // context-pruner's work (a set_messages tool with includeToolCall: false)
+      // before every STEP. That tool executes inside runProgrammaticStep and
+      // lands in ITS local toolResults — NOT in runAgentStep's toolResults — so
+      // it must NOT reset consecutiveNoProgressSteps. (set_messages is also in
+      // TOOLS_WHICH_WONT_FORCE_NEXT_STEP, matching the real pruner.) With the
+      // LLM producing think-only responses, the guard must still fire after 8
+      // steps.
+      //
+      // We yield the pruner's set_messages directly rather than spawning the
+      // pruner via spawn_agent_inline: both run the tool inside
+      // runProgrammaticStep with includeToolCall: false, so they're equivalent
+      // for the counter, and this avoids nested-agent spawn plumbing in the test
+      // harness.
+      const base2StyleTemplate = {
+        ...mockTemplate,
+        toolNames: ['read_files', 'write_file', 'set_messages', 'end_turn'],
+        handleSteps: function* ({ agentState }: any) {
+          while (true) {
+            // Stand-in for the per-step context-pruner: a programmatic tool
+            // (excluded from message history) that runs before each LLM step.
+            yield {
+              toolName: 'set_messages',
+              input: { messages: agentState.messageHistory },
+              includeToolCall: false,
+            }
+            const { stepsComplete } = yield 'STEP'
+            if (stepsComplete) break
+          }
+        },
+      } satisfies AgentTemplate as AgentTemplate
+
+      const localAgentTemplates = {
+        'test-agent': base2StyleTemplate,
+      }
+
+      mockAgentState.stepsRemaining = 100
+
+      const chunks: string[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* () {
+        promptCallCount++
+        // Think-only response: keeps the turn alive with no tool progress.
+        yield { type: 'text' as const, text: '<think>still thinking</think>' }
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
+      })
+
+      // Despite the pruner tool running before every step, the guard still fires
+      // after 8 consecutive no-progress LLM steps — the pruner's programmatic
+      // tool result does NOT reset the counter.
+      expect(promptCallCount).toBe(8)
+      expect(result.output.type).not.toBe('error')
+
+      const noProgressNotice = chunks.find((c) =>
+        c.includes('without calling a tool or finishing'),
+      )
+      expect(noProgressNotice).toBeDefined()
+    })
+
     it('should reset the no-progress counter when a step makes tool progress', async () => {
       // Interleave no-progress (think-only) steps with a real tool call. The
       // successful tool result resets the counter, so the guard should NOT fire
@@ -1287,9 +1356,9 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(result.output.type).not.toBe('error')
 
       // The empty response switched models down the empty-response ladder:
-      // attempt 1 on sonnet-5, attempt 2 on the distinct older Sonnet (4.6).
+      // attempt 1 on sonnet-4.6, attempt 2 on the peer-strength sibling (opus).
       expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
-      expect(modelsUsed[1]).toBe(CURRENT_SONNET_FALLBACK_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_OPUS_MODEL)
 
       // Should surface a retry notice explaining the empty response + switch.
       const retryNotice = chunks.find((c) => c.includes('retrying in'))
@@ -1297,14 +1366,14 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       expect(retryNotice).toContain('empty response')
       const switchNotice = chunks.find((c) => c.includes('switching to'))
       expect(switchNotice).toBeDefined()
-      expect(switchNotice).toContain(CURRENT_SONNET_FALLBACK_MODEL)
+      expect(switchNotice).toContain(CURRENT_OPUS_MODEL)
 
       // Should NOT surface the final "ending the turn" warning — we recovered.
       const giveUpNotice = chunks.find((c) => c.includes('Ending the turn'))
       expect(giveUpNotice).toBeUndefined()
     })
 
-    it('should escalate models across retries (sonnet-5 -> sonnet-4.6 -> opus) when empty responses persist', async () => {
+    it('should escalate models across retries (sonnet-4.6 -> opus -> gpt-5) when empty responses persist', async () => {
       const llmOnlyTemplate = {
         ...mockTemplate,
         model: CURRENT_SONNET_MODEL,
@@ -1335,11 +1404,11 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       })
 
       // 1 initial + MAX_STEP_RETRIES (2) = 3 attempts, stepping down the
-      // empty-response ladder: sonnet-5 -> sonnet-4.6 -> opus.
+      // empty-response ladder: sonnet-4.6 -> opus -> gpt-5.
       expect(promptCallCount).toBe(3)
       expect(modelsUsed[0]).toBe(CURRENT_SONNET_MODEL)
-      expect(modelsUsed[1]).toBe(CURRENT_SONNET_FALLBACK_MODEL)
-      expect(modelsUsed[2]).toBe(CURRENT_OPUS_MODEL)
+      expect(modelsUsed[1]).toBe(CURRENT_OPUS_MODEL)
+      expect(modelsUsed[2]).toBe(CURRENT_GPT5_MODEL)
       // The run still "completes" (ends the turn) rather than erroring.
       expect(result.output.type).not.toBe('error')
       // Guard against silent extra calls.
@@ -1347,8 +1416,8 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
     })
 
     it('should skip a cooled-down model on the NEXT turn within the same session', async () => {
-      // First turn: sonnet-5 returns an empty response, which puts it on a
-      // session-scoped cooldown. Then it recovers on sonnet-4.6.
+      // First turn: sonnet-4.6 returns an empty response, which puts it on a
+      // session-scoped cooldown. Then it recovers on opus.
       const llmOnlyTemplate = {
         ...mockTemplate,
         model: CURRENT_SONNET_MODEL,
@@ -1356,7 +1425,7 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       }
       const localAgentTemplates = { 'test-agent': llmOnlyTemplate }
 
-      // Turn 1: empty on first call (sonnet-5), success on second (sonnet-4.6).
+      // Turn 1: empty on first call (sonnet-4.6), success on second (opus).
       const turn1Models: (string | undefined)[] = []
       let turn1Count = 0
       loopAgentStepsBaseParams.promptAiSdkStream = async function* (
@@ -1379,8 +1448,8 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       })
       expect(turn1Models[0]).toBe(CURRENT_SONNET_MODEL)
 
-      // Turn 2 (same clientSessionId): sonnet-5 is now on cooldown, so the turn
-      // should START on sonnet-4.6 instead of sonnet-5.
+      // Turn 2 (same clientSessionId): sonnet-4.6 is now on cooldown, so the
+      // turn should START on opus instead of sonnet-4.6.
       const turn2Models: (string | undefined)[] = []
       loopAgentStepsBaseParams.promptAiSdkStream = async function* (
         params: any,
@@ -1397,8 +1466,8 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
         localAgentTemplates,
       })
 
-      // The second turn skipped the cooled sonnet-5 and started on sonnet-4.6.
-      expect(turn2Models[0]).toBe(CURRENT_SONNET_FALLBACK_MODEL)
+      // The second turn skipped the cooled sonnet-4.6 and started on opus.
+      expect(turn2Models[0]).toBe(CURRENT_OPUS_MODEL)
       expect(result.output.type).not.toBe('error')
     })
 

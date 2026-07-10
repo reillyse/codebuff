@@ -1,6 +1,6 @@
 import {
+  CURRENT_GPT5_MODEL,
   CURRENT_OPUS_MODEL,
-  CURRENT_SONNET_FALLBACK_MODEL,
   CURRENT_SONNET_MODEL,
   getEmptyResponseFallbackModel,
 } from '@codebuff/common/constants/model-config'
@@ -64,19 +64,19 @@ describe('empty-response cooldown', () => {
     recordEmptyResponseCooldown('s1', CURRENT_SONNET_MODEL)
     expect(
       pickStartModelSkippingCooldown('s1', CURRENT_SONNET_MODEL),
-    ).toBe(CURRENT_SONNET_FALLBACK_MODEL)
-  })
-
-  it('skips multiple cooled rungs (sonnet-5 + sonnet-4.6 cooled -> opus)', () => {
-    recordEmptyResponseCooldown('s1', CURRENT_SONNET_MODEL)
-    recordEmptyResponseCooldown('s1', CURRENT_SONNET_FALLBACK_MODEL)
-    expect(
-      pickStartModelSkippingCooldown('s1', CURRENT_SONNET_MODEL),
     ).toBe(CURRENT_OPUS_MODEL)
   })
 
+  it('skips multiple cooled rungs (sonnet + opus cooled -> gpt-5)', () => {
+    recordEmptyResponseCooldown('s1', CURRENT_SONNET_MODEL)
+    recordEmptyResponseCooldown('s1', CURRENT_OPUS_MODEL)
+    expect(
+      pickStartModelSkippingCooldown('s1', CURRENT_SONNET_MODEL),
+    ).toBe(CURRENT_GPT5_MODEL)
+  })
+
   it('falls back to the last candidate when the whole ladder is cooled', () => {
-    // Cool every rung of the sonnet-5 ladder.
+    // Cool every rung of the sonnet ladder.
     let model: string | undefined = CURRENT_SONNET_MODEL
     const laddered = new Set<string>()
     while (model && !laddered.has(model)) {
@@ -112,7 +112,7 @@ describe('empty-response cooldown', () => {
     recordEmptyResponseCooldown('s1', CURRENT_SONNET_MODEL)
     expect(
       pickStartModelSkippingCooldown('s1', CURRENT_SONNET_MODEL),
-    ).toBe(CURRENT_SONNET_FALLBACK_MODEL)
+    ).toBe(CURRENT_OPUS_MODEL)
 
     currentTime += EMPTY_RESPONSE_COOLDOWN_MS
     expect(

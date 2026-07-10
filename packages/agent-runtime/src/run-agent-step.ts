@@ -109,6 +109,22 @@ const STEP_RETRY_MAX_DELAY_MS = 30_000
  */
 const MAX_CONSECUTIVE_NO_PROGRESS_STEPS = 8
 
+/**
+ * When the local token estimate for the (post-prune) history meets or exceeds
+ * this many tokens, skip the remote token-count round-trip entirely and use the
+ * local estimate. At this size the exact count changes no decision (we're well
+ * past every threshold), and the remote call — a full-history JSON.stringify +
+ * upload — is a per-step latency/hang contributor we want to avoid.
+ */
+const TOKEN_COUNT_REMOTE_SKIP_THRESHOLD = 500_000
+
+/**
+ * Log a WARN when a single token-count round-trip takes at least this long, so
+ * slow per-step token counting (a hang contributor on bloated histories) is
+ * visible in the logs.
+ */
+const TOKEN_COUNT_SLOW_WARN_MS = 3_000
+
 async function additionalToolDefinitions(
   params: {
     agentTemplate: AgentTemplate
@@ -963,62 +979,6 @@ export async function loopAgentSteps(
 
       const startTime = new Date()
 
-      const stepPrompt = await getAgentPrompt({
-        ...params,
-        agentTemplate,
-        promptType: { type: 'stepPrompt' },
-        fileContext,
-        agentState: currentAgentState,
-        agentTemplates: localAgentTemplates,
-        logger,
-        additionalToolDefinitions: additionalToolDefinitionsWithCache,
-      })
-      const messagesWithStepPrompt = buildArray(
-        ...currentAgentState.messageHistory,
-        stepPrompt &&
-        userMessage({
-          content: stepPrompt,
-        }),
-      )
-
-      // Check context token count via Anthropic API
-      const tokenCountResult = await callTokenCountAPI({
-        messages: messagesWithStepPrompt,
-        system,
-        model: agentTemplate.model,
-        fetch,
-        logger,
-        env: { clientEnv, ciEnv },
-      })
-      if (tokenCountResult.inputTokens !== undefined) {
-        currentAgentState.contextTokenCount = tokenCountResult.inputTokens
-      } else if (tokenCountResult.error) {
-        // 'Missing Codebuff base URL or API key' is a BENIGN, expected condition
-        // (e.g. Claude OAuth without a Codebuff API key): we already fall back to
-        // a local token estimate below. Log it at debug so it doesn't spam the
-        // persistent log and bury real failures. All OTHER token-count errors
-        // (real API/network failures) stay at warn so genuine problems surface.
-        const isNotConfigured =
-          tokenCountResult.error === MISSING_CODEBUFF_CREDENTIALS_ERROR
-        if (isNotConfigured) {
-          logger.debug(
-            { error: tokenCountResult.error },
-            'Skipping remote token count (Codebuff base URL/API key not configured); using local estimate',
-          )
-        } else {
-          logger.warn(
-            { error: tokenCountResult.error },
-            'Failed to get token count from Anthropic API',
-          )
-        }
-        // Fall back to local estimate
-        const estimatedTokens =
-          countTokensJson(currentAgentState.messageHistory) +
-          countTokensJson(system) +
-          countTokensJson(toolDefinitions)
-        currentAgentState.contextTokenCount = estimatedTokens
-      }
-
       // 1. Run programmatic step first if it exists
       let n: number | undefined = undefined
 
@@ -1054,6 +1014,90 @@ export async function loopAgentSteps(
         totalSteps = stepNumber
 
         shouldEndTurn = endTurn
+      }
+
+      // Check context token count AFTER the programmatic step so the
+      // context-pruner (which runs in handleSteps) has already shrunk the
+      // history before we serialize + POST it. Running it beforehand meant a
+      // bloated session paid the full un-pruned history cost (huge
+      // JSON.stringify + upload) on EVERY step before the pruner could help.
+      //
+      // We also short-circuit the remote call entirely when the local estimate
+      // is very large: at that size the exact count doesn't change any decision
+      // (we're well past every threshold), and the round-trip is the expensive
+      // part we're trying to avoid.
+      // NOTE: this counts the post-prune message history WITHOUT the step
+      // prompt (which runAgentStep appends internally). The step-prompt delta is
+      // negligible for context-budget purposes, and counting the real history
+      // here is what lets us short-circuit the remote call on huge sessions.
+      const tokenCountStart = Date.now()
+      const localTokenEstimate =
+        countTokensJson(currentAgentState.messageHistory) +
+        countTokensJson(system) +
+        countTokensJson(toolDefinitions)
+      if (localTokenEstimate >= TOKEN_COUNT_REMOTE_SKIP_THRESHOLD) {
+        currentAgentState.contextTokenCount = localTokenEstimate
+        logger.warn(
+          {
+            agentType,
+            agentId: currentAgentState.agentId,
+            runId,
+            totalSteps,
+            localTokenEstimate,
+            threshold: TOKEN_COUNT_REMOTE_SKIP_THRESHOLD,
+          },
+          'Skipping remote token count: local estimate exceeds threshold (history is very large); using local estimate to avoid an expensive round-trip on a bloated history',
+        )
+      } else {
+        const tokenCountResult = await callTokenCountAPI({
+          messages: currentAgentState.messageHistory,
+          system,
+          model: agentTemplate.model,
+          fetch,
+          logger,
+          env: { clientEnv, ciEnv },
+        })
+        if (tokenCountResult.inputTokens !== undefined) {
+          currentAgentState.contextTokenCount = tokenCountResult.inputTokens
+        } else if (tokenCountResult.error) {
+          // 'Missing Codebuff base URL or API key' is a BENIGN, expected
+          // condition (e.g. Claude OAuth without a Codebuff API key): we fall
+          // back to the local estimate. Log it at debug so it doesn't spam the
+          // persistent log and bury real failures. All OTHER token-count errors
+          // (real API/network failures) stay at warn so genuine problems
+          // surface.
+          const isNotConfigured =
+            tokenCountResult.error === MISSING_CODEBUFF_CREDENTIALS_ERROR
+          if (isNotConfigured) {
+            logger.debug(
+              { error: tokenCountResult.error },
+              'Skipping remote token count (Codebuff base URL/API key not configured); using local estimate',
+            )
+          } else {
+            logger.warn(
+              { error: tokenCountResult.error },
+              'Failed to get token count from Anthropic API',
+            )
+          }
+          currentAgentState.contextTokenCount = localTokenEstimate
+        }
+      }
+      const tokenCountDurationMs = Date.now() - tokenCountStart
+      // Surface slow token-count round-trips: a multi-second count each step is
+      // a hang contributor on bloated histories, and this pinpoints it.
+      if (tokenCountDurationMs >= TOKEN_COUNT_SLOW_WARN_MS) {
+        logger.warn(
+          {
+            agentType,
+            agentId: currentAgentState.agentId,
+            runId,
+            totalSteps,
+            tokenCountDurationMs,
+            localTokenEstimate,
+            contextTokenCount: currentAgentState.contextTokenCount,
+          },
+          'Token count took a long time; large histories make this a per-step hang contributor',
+        )
       }
 
       // Check if output is required but missing
@@ -1114,7 +1158,7 @@ export async function loopAgentSteps(
       // Session-scoped empty-response cooldown: if the template's model dropped a
       // stream earlier in THIS session, it's on a 30-min cooldown, so we START
       // this turn on the next non-cooled rung of the empty-response ladder
-      // (e.g. sonnet-5 cooled -> start on sonnet-4.6) instead of hitting the same
+      // (e.g. sonnet-4.6 cooled -> start on opus) instead of hitting the same
       // bad model at the top of every turn.
       let currentModel: string = pickStartModelSkippingCooldown(
         clientSessionId,
@@ -1211,7 +1255,7 @@ export async function loopAgentSteps(
             recordEmptyResponseCooldown(clientSessionId, currentModel)
             // Switch models on empty (like the 529 ladder): retrying the SAME
             // model that just dropped the stream rarely recovers, so step down
-            // the empty-response ladder (sonnet-5 -> sonnet-4.6 -> opus -> gpt-5)
+            // the empty-response ladder (sonnet-4.6 -> opus -> gpt-5)
             // so the next attempt hits a different model/capacity pool.
             const fallbackModel = getEmptyResponseFallbackModel(currentModel)
             if (fallbackModel && fallbackModel !== currentModel) {

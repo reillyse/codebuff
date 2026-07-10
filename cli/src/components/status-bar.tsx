@@ -31,6 +31,7 @@ export const StatusBar = ({
   const shouldShowTimer =
     statusIndicatorState?.kind === 'waiting' ||
     statusIndicatorState?.kind === 'streaming' ||
+    statusIndicatorState?.kind === 'stalled' ||
     statusIndicatorState?.kind === 'searching-memory' ||
     statusIndicatorState?.kind === 'paused'
 
@@ -115,7 +116,18 @@ export const StatusBar = ({
             primaryColor={theme.secondary}
           />
         )
-      
+
+      case 'stalled': {
+        const stalledSeconds = Math.floor(statusIndicatorState.sinceMs / 1000)
+        return (
+          <ShimmerText
+            text={`waiting on provider (stalled ${stalledSeconds}s)...`}
+            interval={SHIMMER_INTERVAL_MS}
+            primaryColor={theme.warning}
+          />
+        )
+      }
+
       case 'paused':
         return null
       

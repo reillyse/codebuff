@@ -11,7 +11,7 @@ import {
 } from '@codebuff/common/sparrow/telemetry'
 import { buildArray } from '@codebuff/common/util/array'
 import { normalizeProviderRequestBodyForCacheDebug } from '@codebuff/common/util/cache-debug'
-import { getErrorObject, getTransientStatusCode, isNoOutputGeneratedError, promptAborted, promptSuccess } from '@codebuff/common/util/error'
+import { AbortError, getErrorObject, getTransientStatusCode, isNoOutputGeneratedError, isStreamStallError, promptAborted, promptSuccess, StreamStallError } from '@codebuff/common/util/error'
 import { convertCbToModelMessages } from '@codebuff/common/util/messages'
 import { isExplicitlyDefinedModel } from '@codebuff/common/util/model-utils'
 import { StopSequenceHandler } from '@codebuff/common/util/stop-sequence'
@@ -69,6 +69,76 @@ function calculateUsedCredits(params: { costDollars: number }): number {
   const { costDollars } = params
 
   return Math.round(costDollars * (1 + PROFIT_MARGIN) * 100)
+}
+
+// Stream-stall (inactivity) timeouts. These are NOT total-duration caps — the
+// timer resets on every chunk, so a healthy stream that keeps emitting never
+// trips them. They exist to catch a stream that goes silent without closing or
+// erroring (half-open socket / stalled upstream), which would otherwise hang
+// the `for await` loop forever with the spinner spinning.
+//
+// The first-chunk window is larger because time-to-first-token can be long for
+// big prompts / cold providers; once bytes are flowing, a long silence is
+// far more suspicious.
+const FIRST_CHUNK_STALL_TIMEOUT_MS = 120_000
+const MID_STREAM_STALL_TIMEOUT_MS = 60_000
+
+/**
+ * Awaits the next chunk from an async iterator, racing it against an inactivity
+ * timeout and an abort signal.
+ *
+ * - If a chunk resolves first, it is returned (never dropped — we only advance
+ *   the iterator by awaiting its own `.next()`).
+ * - If the timeout wins, throws {@link StreamStallError} (recognized as
+ *   transient by the retry ladder). We do NOT call `.next()` again after a
+ *   timeout; the caller closes the iterator in its `finally`.
+ * - If the abort signal fires, throws {@link AbortError} so upstream treats it
+ *   as a user cancel, not a retryable failure.
+ */
+function nextChunkWithStallTimeout<T>(
+  iterator: AsyncIterator<T>,
+  timeoutMs: number,
+  signal: AbortSignal,
+  phase: 'first-chunk' | 'mid-stream',
+): Promise<IteratorResult<T>> {
+  return new Promise<IteratorResult<T>>((resolve, reject) => {
+    let settled = false
+    const cleanup = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(new StreamStallError(timeoutMs, phase))
+    }, timeoutMs)
+    const onAbort = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(new AbortError())
+    }
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    iterator.next().then(
+      (result) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(result)
+      },
+      (error) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      },
+    )
+  })
 }
 
 function getProviderOptions(params: {
@@ -610,7 +680,41 @@ export async function* promptAiSdkStream(
   // Track if we've yielded any content - if so, we can't safely fall back
   let hasYieldedContent = false
 
-  for await (const chunkValue of response.fullStream) {
+  // Manually drive the stream iterator so we can race each `.next()` against an
+  // inactivity (stall) timeout + the abort signal. A chunk is only consumed
+  // when its `.next()` promise resolves, so racing never drops a chunk. On a
+  // stall we throw StreamStallError (transient) and close the iterator below,
+  // letting the retry ladder recover instead of hanging forever.
+  const streamIterator = response.fullStream[Symbol.asyncIterator]()
+  let receivedAnyChunk = false
+  // Diagnostic: track whether an error chunk arrived on the stream and (if so)
+  // its shape. On the direct-to-Anthropic OAuth path an error chunk that isn't
+  // a rate-limit/auth error falls through to the fatal throw below, but a
+  // content-filter / refusal / pause can end the stream with NO chunks at all
+  // and NO error — a silent empty. Capturing this lets the empty-stream log
+  // (below) distinguish "provider sent an error we swallowed" from "provider
+  // sent nothing at all".
+  let sawErrorChunk = false
+  let firstErrorChunkName: string | undefined
+  // Track whether the stream produced a tool call. `hasYieldedContent` only
+  // tracks TEXT output, but a tool-call-only step (very common for agents) is
+  // NOT empty — so the empty-stream diagnostic below must exclude it to avoid
+  // false positives. Mirrors run-agent-step.ts's own empty check (no content
+  // AND no tool calls).
+  let sawToolCall = false
+  try {
+  while (true) {
+    const stallResult = await nextChunkWithStallTimeout(
+      streamIterator,
+      receivedAnyChunk
+        ? MID_STREAM_STALL_TIMEOUT_MS
+        : FIRST_CHUNK_STALL_TIMEOUT_MS,
+      params.signal,
+      receivedAnyChunk ? 'mid-stream' : 'first-chunk',
+    )
+    if (stallResult.done) break
+    receivedAnyChunk = true
+    const chunkValue = stallResult.value
     if (chunkValue.type !== 'text-delta') {
       const flushed = stopSequenceHandler.flush()
       if (flushed) {
@@ -888,6 +992,14 @@ export async function* promptAiSdkStream(
         return fallbackResult
       }
 
+      sawErrorChunk = true
+      const errChunkName =
+        chunkValue.error instanceof Error
+          ? chunkValue.error.name
+          : typeof chunkValue.error === 'string'
+            ? chunkValue.error.slice(0, 64)
+            : 'stream_error'
+      firstErrorChunkName ??= errChunkName
       logger.error(
         {
           chunk: { ...chunkValue, error: undefined },
@@ -899,12 +1011,7 @@ export async function* promptAiSdkStream(
 
       // SPARROW: record the failed attempt + fatal error on the shared span
       // before throwing. end() is idempotent so the finally safety-net is OK.
-      const fatalErrName =
-        chunkValue.error instanceof Error
-          ? chunkValue.error.name
-          : typeof chunkValue.error === 'string'
-            ? chunkValue.error.slice(0, 64)
-            : 'stream_error'
+      const fatalErrName = errChunkName
       sparrowHandle.recordAttempt({
         attempt: sparrowAttempt,
         route: sparrowRoute,
@@ -957,7 +1064,20 @@ export async function* promptAiSdkStream(
       }
     }
     if (chunkValue.type === 'tool-call') {
+      sawToolCall = true
       yield chunkValue
+    }
+  }
+  } finally {
+    // Best-effort close of the underlying stream/socket on early exit (stall
+    // timeout, abort, or a throw from the loop body). Idempotent after normal
+    // completion; signals cancellation to the provider on a stall so we don't
+    // leak a half-open connection. Guarded so a failing return() can't mask the
+    // original error.
+    try {
+      await streamIterator.return?.()
+    } catch {
+      /* ignore */
     }
   }
   const flushed = stopSequenceHandler.flush()
@@ -974,6 +1094,42 @@ export async function* promptAiSdkStream(
 
 
   const usageResult = await response.usage
+
+  // Diagnostic: when the provider stream finished with no usable content
+  // (no chunk at all, or chunks but nothing yielded to the agent), dump the
+  // full stream shape. This is the local, direct-to-Anthropic view of the
+  // "empty response" symptom: outputTokens=0 with finishReason=stop points at
+  // a dropped/truncated stream, whereas finishReason=length (max_tokens),
+  // content-filter, or a swallowed error chunk each imply a different cause.
+  if (!hasYieldedContent && !sawToolCall) {
+    const emptyFinishReason = await response.finishReason.catch(() => undefined)
+    const emptyProviderMetadata = await response.providerMetadata.catch(
+      () => undefined,
+    )
+    const anthropicMeta = (emptyProviderMetadata as Record<string, unknown>)
+      ?.anthropic as Record<string, unknown> | undefined
+    logger.warn(
+      {
+        site: 'sdk/llm.promptAiSdkStream',
+        requestModel: requestedModel,
+        model: params.model,
+        responseModel: responseValue.modelId,
+        messageId,
+        finishReason: emptyFinishReason,
+        // Anthropic surfaces the raw stop_reason here (e.g. 'refusal',
+        // 'max_tokens', 'pause_turn') which the AI SDK's finishReason flattens.
+        anthropicStopReason: anthropicMeta?.stopReason,
+        inputTokens: usageResult.inputTokens,
+        // outputTokens === 0 is the smoking gun for a dropped/empty stream.
+        outputTokens: usageResult.outputTokens,
+        cachedInputTokens: usageResult.cachedInputTokens,
+        receivedAnyChunk,
+        sawErrorChunk,
+        firstErrorChunkName,
+      },
+      'LLM stream finished with no content yielded (empty response) — dumping finish reason + usage + error-chunk state to pinpoint the provider cause (overload vs refusal vs max_tokens vs dropped stream)',
+    )
+  }
   emitCacheDebugUsage({
     callback: params.onCacheDebugUsageReceived,
     usage: usageResult,
@@ -1041,6 +1197,36 @@ export async function* promptAiSdkStream(
 
   return promptSuccess(messageId)
   } catch (error) {
+    // Record a stream-stall as a failed attempt on the shared span so stalls
+    // are visible in attempt telemetry (the finally only ends the span). end()
+    // stays idempotent; we only record the attempt here, not end it.
+    if (isStreamStallError(error)) {
+      // sparrowRoute is scoped inside the try (it depends on model resolution),
+      // so it may not be available here. Reconstruct a best-effort route from
+      // the request's skip flags — matching classifyLlmRoute's inputs — so the
+      // failed attempt is still recorded with a plausible route.
+      const stallRoute: RouteValue = classifyLlmRoute({
+        viaCodebuffBackend:
+          Boolean(params.skipClaudeOAuth) && Boolean(params.skipChatGptOAuth),
+      })
+      sparrowHandle.recordAttempt({
+        attempt: sparrowAttempt,
+        route: stallRoute,
+        model: requestedModel,
+        succeeded: false,
+        error: 'stream_stall',
+      })
+      logger.warn(
+        {
+          site: 'sdk/llm.promptAiSdkStream',
+          stallMs: (error as StreamStallError).stallMs,
+          phase: (error as StreamStallError).phase,
+          requestModel: requestedModel,
+          model: params.model,
+        },
+        'LLM response stream stalled (no data within inactivity window); throwing StreamStallError so the retry ladder can recover',
+      )
+    }
     // Diagnostic: when the AI SDK reports no output was generated, dump the
     // full error (getErrorObject walks the cause chain to surface
     // statusCode/responseBody/url) plus the model, so we can confirm whether
