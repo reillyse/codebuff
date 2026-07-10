@@ -184,22 +184,9 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
 
   redirectToAuthorization(authorizationUrl: URL): void {
     const urlStr = authorizationUrl.toString()
-    if (this.onAuthorizationUrl) {
-      // Callback registered (e.g. TUI CLI): surface URL through the callback
-      // so it appears in the scrollable content area. Don't write to stderr
-      // as that would corrupt the TUI rendering.
-      this.onAuthorizationUrl(urlStr)
-    } else {
-      // No callback (cli-lite or auto-triggered MCP auth): write to stderr
-      // so the user can copy-paste the URL into their logged-in browser.
-      process.stderr.write(
-        `\nMCP OAuth: Opening browser for authorization.\n` +
-          `If a login loop occurs, paste this URL into the browser where you're logged in:\n` +
-          `${urlStr}\n\n`,
-      )
-    }
+    this.onAuthorizationUrl?.(urlStr)
     open(urlStr).catch(() => {
-      // URL already shown via callback or stderr above
+      // ignore — URL surfaced via callback or browser open
     })
   }
 
