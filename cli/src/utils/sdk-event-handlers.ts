@@ -26,9 +26,14 @@ import {
   destinationFromChunkEvent,
   processTextChunk,
 } from './stream-chunk-processor'
-import { markStreamActivity, resetStreamActivity } from './stream-activity'
+import {
+  clearRetryActivity,
+  markRetryActivity,
+  markStreamActivity,
+  resetStreamActivity,
+} from './stream-activity'
 
-import { RETRY_NOTICE_MARKER } from '@codebuff/common/constants/retry-notice'
+import { parseRetryNotice } from '@codebuff/common/constants/retry-notice'
 
 import type { AgentMode } from './constants'
 import type { MessageUpdater } from './message-updater'
@@ -478,19 +483,37 @@ export const createStreamChunkHandler =
     ensureStreaming(state)
 
     // A retry-notice chunk ("...retrying in Ns (attempt X/Y)...") marks the
-    // start of a NEW attempt, so the "stalled Ns" indicator should measure only
-    // the CURRENT attempt's silence, not climb across the whole run. Today
-    // ensureStreaming's markStreamActivity() already bumps the heartbeat for
-    // this chunk, so this reset is defensive: it's an explicit, self-documenting
-    // lock-in (keyed off the shared RETRY_NOTICE_MARKER) so the per-attempt
-    // reset survives a future refactor that routes notices off the per-chunk
-    // activity path. The accompanying test asserts this behavior directly.
-    if (
-      destination.type === 'root' &&
-      destination.textType === 'text' &&
-      text.includes(RETRY_NOTICE_MARKER)
-    ) {
+    // start of a NEW attempt. Two effects:
+    //   1. Re-arm the stream-activity heartbeat so the "stalled Ns" indicator
+    //      measures only the CURRENT attempt's silence, not climb across the
+    //      whole run. (ensureStreaming's markStreamActivity() above already
+    //      bumps it for this chunk; resetStreamActivity() is the explicit,
+    //      self-documenting lock-in so this survives a future refactor that
+    //      routes notices off the per-chunk activity path.)
+    //   2. Record the retry attempt + backoff window so the status bar can show
+    //      an honest "retrying (attempt N/M)" indicator DURING the backoff
+    //      sleep, instead of a misleading "stalled Ns".
+    // A non-notice ROOT-TEXT chunk means the recovering attempt actually
+    // produced output, so clear the retry state and let the normal streaming
+    // indicator take over. We deliberately scope the clear to root-text: a
+    // subagent or reasoning chunk can arrive concurrently while the PARENT is
+    // still in its backoff sleep, and clearing on those would prematurely wipe
+    // the honest "retrying (attempt N/M)" indicator.
+    const isRootText =
+      destination.type === 'root' && destination.textType === 'text'
+    const parsedRetryNotice = isRootText ? parseRetryNotice(text) : null
+    if (parsedRetryNotice) {
       resetStreamActivity()
+      markRetryActivity({
+        attempt: parsedRetryNotice.attempt,
+        total: parsedRetryNotice.total,
+        // Guard against a sub-second backoff rounding to delaySec === 0 (which
+        // would make `until` already-elapsed and skip the indicator): show the
+        // retry indicator for at least ~1s so a fast retry is still visible.
+        until: Date.now() + Math.max(parsedRetryNotice.delaySec, 1) * 1000,
+      })
+    } else if (isRootText) {
+      clearRetryActivity()
     }
 
     if (destination.type === 'root') {

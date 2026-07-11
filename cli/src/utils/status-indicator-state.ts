@@ -1,4 +1,5 @@
 import type { StreamStatus } from '../hooks/use-message-queue'
+import type { RetryActivity } from './stream-activity'
 
 export type StatusIndicatorState =
   | { kind: 'idle' }
@@ -8,6 +9,7 @@ export type StatusIndicatorState =
   | { kind: 'retrying' }
   | { kind: 'waiting' }
   | { kind: 'streaming' }
+  | { kind: 'retrying-attempt'; attempt: number; total: number }
   | { kind: 'stalled'; sinceMs: number }
   | { kind: 'searching-memory' }
   | { kind: 'reconnected' }
@@ -54,6 +56,13 @@ export type StatusIndicatorStateArgs = {
    * shown. `null`/undefined disables stall detection.
    */
   lastStreamActivityAt?: number | null
+  /**
+   * Active retry-attempt state while the SDK retry ladder is backing off before
+   * the next attempt. When set and the backoff window (`until`) hasn't elapsed,
+   * an honest "retrying (attempt N/M)" indicator is shown instead of a
+   * misleading "stalled Ns". `null`/undefined means no retry is in progress.
+   */
+  retryActivity?: RetryActivity | null
   /** Injectable clock for testing; defaults to Date.now. */
   now?: number
 }
@@ -83,6 +92,7 @@ export const getStatusIndicatorState = ({
   isAskUserActive = false,
   isSearchingMemory = false,
   lastStreamActivityAt = null,
+  retryActivity = null,
   now = Date.now(),
 }: StatusIndicatorStateArgs): StatusIndicatorState => {
   if (nextCtrlCWillExit) {
@@ -127,6 +137,24 @@ export const getStatusIndicatorState = ({
   // handled SDK-side; this is purely the UX signal.
   const isActivePhase =
     streamStatus === 'waiting' || streamStatus === 'streaming'
+
+  // Honest retry indicator: while the SDK retry ladder is backing off before
+  // the next attempt, show "retrying (attempt N/M)" instead of "stalled Ns".
+  // Gated on `now < until` (the backoff window) so that if the *next* attempt
+  // itself hangs, the indicator correctly falls through to 'stalled' rather
+  // than getting stuck on "retrying" forever. Takes precedence over stalled.
+  if (
+    isActivePhase &&
+    retryActivity != null &&
+    now < retryActivity.until
+  ) {
+    return {
+      kind: 'retrying-attempt',
+      attempt: retryActivity.attempt,
+      total: retryActivity.total,
+    }
+  }
+
   if (
     isActivePhase &&
     lastStreamActivityAt != null &&

@@ -31,6 +31,7 @@ export const StatusBar = ({
   const shouldShowTimer =
     statusIndicatorState?.kind === 'waiting' ||
     statusIndicatorState?.kind === 'streaming' ||
+    statusIndicatorState?.kind === 'retrying-attempt' ||
     statusIndicatorState?.kind === 'stalled' ||
     statusIndicatorState?.kind === 'searching-memory' ||
     statusIndicatorState?.kind === 'paused'
@@ -114,6 +115,15 @@ export const StatusBar = ({
             text="working..."
             interval={SHIMMER_INTERVAL_MS}
             primaryColor={theme.secondary}
+          />
+        )
+
+      case 'retrying-attempt':
+        return (
+          <ShimmerText
+            text={`retrying (attempt ${statusIndicatorState.attempt}/${statusIndicatorState.total})...`}
+            interval={SHIMMER_INTERVAL_MS}
+            primaryColor={theme.warning}
           />
         )
 

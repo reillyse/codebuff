@@ -198,6 +198,71 @@ describe('StatusIndicator state logic', () => {
       })
     })
 
+    describe('retrying-attempt state', () => {
+      const now = 1_000_000
+
+      test('shows retrying-attempt during the backoff window instead of stalled', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'waiting',
+          // Activity is stale enough to otherwise be 'stalled'...
+          lastStreamActivityAt: now - STALL_INDICATOR_THRESHOLD_MS * 2,
+          // ...but we're inside a retry backoff window.
+          retryActivity: { attempt: 2, total: 3, until: now + 3_000 },
+          now,
+        })
+        expect(state.kind).toBe('retrying-attempt')
+        if (state.kind === 'retrying-attempt') {
+          expect(state.attempt).toBe(2)
+          expect(state.total).toBe(3)
+        }
+      })
+
+      test('falls through to stalled once the backoff window has elapsed (next attempt hangs)', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'streaming',
+          lastStreamActivityAt: now - STALL_INDICATOR_THRESHOLD_MS * 2,
+          // Backoff window already ended: the next attempt itself is hanging.
+          retryActivity: { attempt: 2, total: 3, until: now - 1 },
+          now,
+        })
+        expect(state.kind).toBe('stalled')
+      })
+
+      test('does NOT show retrying-attempt when not in an active phase (idle)', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'idle',
+          retryActivity: { attempt: 2, total: 3, until: now + 3_000 },
+          now,
+        })
+        expect(state.kind).toBe('idle')
+      })
+
+      test('higher-priority retrying (auth/message-send) beats retrying-attempt', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'waiting',
+          isRetrying: true,
+          retryActivity: { attempt: 2, total: 3, until: now + 3_000 },
+          now,
+        })
+        expect(state.kind).toBe('retrying')
+      })
+
+      test('searching-memory beats retrying-attempt', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'streaming',
+          isSearchingMemory: true,
+          retryActivity: { attempt: 2, total: 3, until: now + 3_000 },
+          now,
+        })
+        expect(state.kind).toBe('searching-memory')
+      })
+    })
+
     describe('state priority order', () => {
       test('nextCtrlCWillExit beats clipboard', () => {
         const state = getStatusIndicatorState({

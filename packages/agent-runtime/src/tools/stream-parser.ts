@@ -91,6 +91,11 @@ export async function processStream(
   const toolCallsToAddToMessageHistory: (CodebuffToolCall | CustomToolCall)[] = []
   const assistantMessages: Message[] = []
   let hadToolCallError = false
+  // Whether the model produced any native reasoning tokens this step. Reasoning
+  // is streamed out (as reasoning_delta) but deliberately NOT added to
+  // fullResponse; runAgentStep uses this flag so a reasoning-only step isn't
+  // misclassified as an empty response.
+  let hadReasoning = false
   const errorMessages: Message[] = []
   const { promise: streamDonePromise, resolve: resolveStreamDonePromise } =
     Promise.withResolvers<void>()
@@ -276,6 +281,7 @@ export async function processStream(
       }
 
       if (chunk.type === 'reasoning') {
+        hadReasoning = true
         onResponseChunk({
           type: 'reasoning_delta',
           text: chunk.text,
@@ -359,6 +365,7 @@ export async function processStream(
     fullResponse: fullResponseChunks.join(''),
     fullResponseChunks,
     hadToolCallError,
+    hadReasoning,
     messageId,
     toolCalls,
     toolResults,

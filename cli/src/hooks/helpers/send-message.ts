@@ -19,7 +19,10 @@ import {
   type BatchedMessageUpdater,
 } from '../../utils/message-updater'
 import { createModeDividerMessage } from '../../utils/send-message-helpers'
-import { resetStreamActivity } from '../../utils/stream-activity'
+import {
+  clearRetryActivity,
+  resetStreamActivity,
+} from '../../utils/stream-activity'
 import { yieldToEventLoop } from '../../utils/yield-to-event-loop'
 import { invalidateActivityQuery } from '../use-activity-query'
 import { usageQueryKeys } from '../use-usage-query'
@@ -82,8 +85,11 @@ export const finalizeQueueState = (params: FinalizeQueueStateParams): void => {
 
   setStreamStatus('idle')
   // Disarm the stream-activity heartbeat so the status bar can't show a
-  // "stalled" indicator once the run is over (idle/aborted/errored).
+  // "stalled" indicator once the run is over (idle/aborted/errored). Also clear
+  // any lingering retry-attempt state so a stale "retrying (attempt N/M)"
+  // indicator can't survive past the run.
   resetStreamActivity(null)
+  clearRetryActivity()
   // Release lock here as part of normal completion flow.
   // Also released in finally block and .catch() as safety nets (idempotent).
   if (isProcessingQueueRef) {
@@ -241,8 +247,10 @@ export const setupStreamingContext = (params: {
   streamRefs.reset()
   // Arm the stream-activity heartbeat at run start: until the first chunk
   // arrives, "now" is the last activity, so a long silence before the first
-  // token correctly trips the "stalled" indicator.
+  // token correctly trips the "stalled" indicator. Clear any retry-attempt
+  // state from a prior run so it can't bleed into this one.
   resetStreamActivity()
+  clearRetryActivity()
   timerController.start(aiMessageId)
   const updater = createBatchedMessageUpdater(aiMessageId, setMessages)
   // Clear any previous UI-only error on this message when starting a new run

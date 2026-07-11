@@ -1,4 +1,4 @@
-import { RETRY_NOTICE_MARKER } from '@codebuff/common/constants/retry-notice'
+import { formatRetryNoticeCore } from '@codebuff/common/constants/retry-notice'
 import { describe, expect, test } from 'bun:test'
 
 import { createAgentBlock } from '../message-block-helpers'
@@ -8,7 +8,9 @@ import {
   createStreamChunkHandler,
 } from '../sdk-event-handlers'
 import {
+  clearRetryActivity,
   getLastStreamActivityAt,
+  getRetryActivity,
   resetStreamActivity,
 } from '../stream-activity'
 import { getStatusIndicatorState } from '../status-indicator-state'
@@ -195,7 +197,7 @@ describe('sdk-event-handlers', () => {
 
     // A retry notice arrives (marks the start of a NEW attempt).
     handleChunk(
-      `\n⚠️ The model returned an empty response, ${RETRY_NOTICE_MARKER} 4s (attempt 2/3)...\n\n`,
+      `\n⚠️ The model returned an empty response, ${formatRetryNoticeCore(4, 2, 3)}...\n\n`,
     )
 
     // The heartbeat should be re-armed to ~now, so the stall counter resets and
@@ -214,6 +216,48 @@ describe('sdk-event-handlers', () => {
 
     // Clean up module-singleton state for other tests.
     resetStreamActivity(null)
+    clearRetryActivity()
+  })
+
+  test('records retry-activity from a retry-notice chunk so the honest "retrying (attempt N/M)" indicator shows during backoff', () => {
+    const { ctx } = createTestContext()
+    const handleChunk = createStreamChunkHandler(ctx)
+
+    clearRetryActivity()
+    resetStreamActivity(Date.now())
+
+    // A retry notice with a 5s backoff for attempt 2/3.
+    handleChunk(
+      `\n⚠️ The model returned an empty response, ${formatRetryNoticeCore(5, 2, 3)}...\n\n`,
+    )
+
+    const retry = getRetryActivity()
+    expect(retry).not.toBeNull()
+    expect(retry?.attempt).toBe(2)
+    expect(retry?.total).toBe(3)
+    // until ≈ now + 5s (allow a little slack for execution time).
+    expect((retry as { until: number }).until - Date.now()).toBeGreaterThan(
+      3_000,
+    )
+
+    // The indicator should reflect the honest retry state, not stalled.
+    expect(
+      getStatusIndicatorState({
+        streamStatus: 'waiting',
+        nextCtrlCWillExit: false,
+        isConnected: true,
+        lastStreamActivityAt: getLastStreamActivityAt(),
+        retryActivity: getRetryActivity(),
+      }),
+    ).toMatchObject({ kind: 'retrying-attempt', attempt: 2, total: 3 })
+
+    // A subsequent ordinary content chunk clears the retry state (the attempt
+    // produced output), so the normal streaming indicator takes over.
+    handleChunk('The model is producing real output now.')
+    expect(getRetryActivity()).toBeNull()
+
+    resetStreamActivity(null)
+    clearRetryActivity()
   })
 
   test('extracts plan content from root stream', () => {

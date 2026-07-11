@@ -819,11 +819,12 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
   })
 
   describe('no-progress guard', () => {
-    it('should force the turn to end after too many consecutive no-progress steps', async () => {
-      // A degenerate loop: the model keeps producing a "think-only" response
-      // (only <think> tags, no tool call, no end_turn), which keeps the turn
-      // alive but makes NO tool progress. Without the guard this would grind
-      // until stepsRemaining hits 0; with the guard it ends early.
+    it('should NUDGE (not force-quit) after many consecutive no-progress steps', async () => {
+      // Reframe: a model producing text/reasoning every step IS working. We no
+      // longer hard-quit such a run at 8 steps. Instead, after
+      // NO_PROGRESS_NUDGE_STEP (30) consecutive no-tool-progress steps we inject
+      // ONE corrective nudge and keep going; the ultimate backstop is the
+      // stepsRemaining ceiling (not the old 8-step guard).
       const llmOnlyTemplate = {
         ...mockTemplate,
         // No task_completed tool, so shouldEndTurn is driven by tool results.
@@ -835,9 +836,9 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
         'test-agent': llmOnlyTemplate,
       }
 
-      // Give the loop plenty of headroom so the guard (not the step ceiling)
-      // is what ends the turn.
-      mockAgentState.stepsRemaining = 100
+      // Ceiling just past the nudge threshold so the run ends via the step
+      // ceiling shortly after the nudge fires (keeps the test fast).
+      mockAgentState.stepsRemaining = 35
 
       const chunks: string[] = []
 
@@ -859,27 +860,38 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
         },
       })
 
-      // The guard forces the turn to end after MAX_CONSECUTIVE_NO_PROGRESS_STEPS
-      // (8) no-progress steps — far fewer than the 100-step ceiling.
-      expect(promptCallCount).toBe(8)
+      // The run is NOT force-quit at 8; it continues (nudged once at 30) until
+      // the stepsRemaining ceiling ends it.
+      expect(promptCallCount).toBe(35)
       expect(result.output.type).not.toBe('error')
 
-      // Should surface the no-progress notice to the user.
-      const noProgressNotice = chunks.find((c) =>
-        c.includes('without calling a tool or finishing'),
+      // A single corrective nudge was injected into the message history so the
+      // model can course-correct rather than being killed.
+      const nudge = result.agentState.messageHistory.find(
+        (msg) =>
+          msg.role === 'user' &&
+          msg.content[0]?.type === 'text' &&
+          msg.content[0].text.includes('emit the actual tool call'),
       )
-      expect(noProgressNotice).toBeDefined()
+      expect(nudge).toBeDefined()
+
+      // A subtle user-visible signal was streamed so the user knows the agent
+      // was prodded (informational tone, not the alarming ⚠️ error prefix).
+      const nudgeNotice = chunks.find((c) =>
+        c.includes('nudging it to act or finish'),
+      )
+      expect(nudgeNotice).toBeDefined()
     })
 
-    it('should still fire when a programmatic step runs a pruning tool (includeToolCall: false) before each no-progress step', async () => {
+    it('should still count no-progress steps (and nudge) even when a programmatic pruning tool runs before each step', async () => {
       // Reproduces base2's exact pattern: a handleSteps generator that runs the
       // context-pruner's work (a set_messages tool with includeToolCall: false)
       // before every STEP. That tool executes inside runProgrammaticStep and
       // lands in ITS local toolResults — NOT in runAgentStep's toolResults — so
       // it must NOT reset consecutiveNoProgressSteps. (set_messages is also in
       // TOOLS_WHICH_WONT_FORCE_NEXT_STEP, matching the real pruner.) With the
-      // LLM producing think-only responses, the guard must still fire after 8
-      // steps.
+      // LLM producing think-only responses, the counter must still climb to the
+      // nudge threshold (30) despite the pruner running every step.
       //
       // We yield the pruner's set_messages directly rather than spawning the
       // pruner via spawn_agent_inline: both run the tool inside
@@ -908,7 +920,7 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
         'test-agent': base2StyleTemplate,
       }
 
-      mockAgentState.stepsRemaining = 100
+      mockAgentState.stepsRemaining = 35
 
       const chunks: string[] = []
 
@@ -929,16 +941,15 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
         },
       })
 
-      // Despite the pruner tool running before every step, the guard still fires
-      // after 8 consecutive no-progress LLM steps — the pruner's programmatic
-      // tool result does NOT reset the counter.
-      expect(promptCallCount).toBe(8)
+      // Despite the pruner tool running before every step, the run is NOT
+      // force-quit at 8 — the pruner's programmatic tool result does NOT reset
+      // the counter, so the run continues to the step ceiling (35 calls). We
+      // assert on promptCallCount rather than the injected nudge because this
+      // test's pruner replaces messageHistory every step (set_messages is a
+      // full replace by contract), which clobbers the appended nudge; the
+      // nudge-injection mechanism itself is already covered by the test above.
+      expect(promptCallCount).toBe(35)
       expect(result.output.type).not.toBe('error')
-
-      const noProgressNotice = chunks.find((c) =>
-        c.includes('without calling a tool or finishing'),
-      )
-      expect(noProgressNotice).toBeDefined()
     })
 
     it('should reset the no-progress counter when a step makes tool progress', async () => {
@@ -987,6 +998,128 @@ describe('loopAgentSteps - runAgentStep vs runProgrammaticStep behavior', () => 
       // cleanly rather than tripping the guard.
       expect(promptCallCount).toBe(7)
       expect(result.output.type).not.toBe('error')
+    })
+  })
+
+  describe('reasoning-only responses', () => {
+    it('should treat a reasoning-only step as working (not an empty response)', async () => {
+      // Native reasoning tokens are streamed but NOT included in fullResponse.
+      // Before the fix, a step that produced ONLY reasoning (no text, no tool
+      // call) looked "empty" and was funneled into the empty-response retry
+      // ladder (retry 3x, model-switch, give-up warning) — i.e. the agent's
+      // thinking was misclassified as the provider dropping the stream. With
+      // hadReasoning threaded through, such a step is NOT empty: for a normal
+      // (non-explicit-completion) agent it simply ends the turn in one step.
+      const llmOnlyTemplate = {
+        ...mockTemplate,
+        model: CURRENT_SONNET_MODEL,
+        toolNames: ['read_files', 'write_file', 'end_turn'],
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': llmOnlyTemplate,
+      }
+
+      const chunks: string[] = []
+      const modelsUsed: (string | undefined)[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
+        promptCallCount++
+        modelsUsed.push(params.model)
+        // Reasoning-only: no text content and no tool call.
+        yield { type: 'reasoning' as const, text: 'Let me think about this...' }
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
+      })
+
+      // Not treated as empty: no retry ladder, no model switch — the turn ends
+      // in a single step on the original model.
+      expect(promptCallCount).toBe(1)
+      expect(modelsUsed).toEqual([CURRENT_SONNET_MODEL])
+      expect(result.output.type).not.toBe('error')
+
+      // None of the empty-response signals should fire.
+      const retryNotice = chunks.find((c) => c.includes('retrying in'))
+      expect(retryNotice).toBeUndefined()
+      const switchNotice = chunks.find((c) => c.includes('switching to'))
+      expect(switchNotice).toBeUndefined()
+      const giveUpNotice = chunks.find((c) => c.includes('Ending the turn'))
+      expect(giveUpNotice).toBeUndefined()
+    })
+
+    it('should NOT funnel a reasoning-only step into the empty-response ladder for an explicit-completion agent', async () => {
+      // The `!hadReasoning` guard must apply regardless of agent type. An
+      // explicit-completion agent (has task_completed) that emits ONLY reasoning
+      // has shouldEndTurn = hasTaskCompleted = false, so it does NOT end the
+      // turn — but it's still WORKING (thinking), not empty. Before the fix, its
+      // reasoning-only steps looked empty and were funneled into the retry
+      // ladder (retry 3x, model-switch, give-up). After the fix they're treated
+      // as no-progress steps: the run keeps going (nudged) and ends via the step
+      // ceiling — with NONE of the empty-response signals firing.
+      const explicitCompletionTemplate = {
+        ...mockTemplate,
+        model: CURRENT_SONNET_MODEL,
+        // task_completed => requiresExplicitCompletion === true
+        toolNames: ['read_files', 'write_file', 'task_completed'],
+        handleSteps: undefined,
+      }
+
+      const localAgentTemplates = {
+        'test-agent': explicitCompletionTemplate,
+      }
+
+      // Small ceiling so the (never-completing) run ends quickly via the ceiling.
+      mockAgentState.stepsRemaining = 4
+
+      const chunks: string[] = []
+      const modelsUsed: (string | undefined)[] = []
+
+      let promptCallCount = 0
+      loopAgentStepsBaseParams.promptAiSdkStream = async function* (
+        params: any,
+      ) {
+        promptCallCount++
+        modelsUsed.push(params.model)
+        // Reasoning-only: no text content and no tool call.
+        yield { type: 'reasoning' as const, text: 'Let me think about this...' }
+        return promptSuccess('mock-message-id')
+      }
+
+      const result = await loopAgentSteps({
+        ...loopAgentStepsBaseParams,
+        agentType: 'test-agent',
+        localAgentTemplates,
+        onResponseChunk: (chunk) => {
+          if (typeof chunk === 'string') chunks.push(chunk)
+        },
+      })
+
+      // The run kept going (never treated as empty → no early give-up) and only
+      // stopped at the stepsRemaining ceiling; the model was NEVER switched by
+      // the empty-response ladder.
+      expect(promptCallCount).toBe(4)
+      expect(modelsUsed.every((m) => m === CURRENT_SONNET_MODEL)).toBe(true)
+      expect(result.output.type).not.toBe('error')
+
+      // None of the empty-response signals should fire.
+      const retryNotice = chunks.find((c) => c.includes('retrying in'))
+      expect(retryNotice).toBeUndefined()
+      const switchNotice = chunks.find((c) => c.includes('switching to'))
+      expect(switchNotice).toBeUndefined()
+      const giveUpNotice = chunks.find((c) => c.includes('Ending the turn'))
+      expect(giveUpNotice).toBeUndefined()
     })
   })
 

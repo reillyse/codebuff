@@ -79,7 +79,10 @@ import {
   getStatusIndicatorState,
   type AuthStatus,
 } from './utils/status-indicator-state'
-import { getLastStreamActivityAt } from './utils/stream-activity'
+import {
+  getLastStreamActivityAt,
+  getRetryActivity,
+} from './utils/stream-activity'
 import { createPasteHandler } from './utils/strings'
 import { setTerminalTitle } from './utils/terminal-title'
 import { computeInputLayoutMetrics } from './utils/text-layout'
@@ -1310,6 +1313,7 @@ export const Chat = ({
     isAskUserActive: askUserState !== null,
     isSearchingMemory,
     lastStreamActivityAt: getLastStreamActivityAt(),
+    retryActivity: getRetryActivity(),
   })
   const hasStatusIndicatorContent = statusIndicatorState.kind !== 'idle'
 

@@ -3,7 +3,7 @@ import {
   getEmptyResponseFallbackModel,
   getOverloadFallbackModel,
 } from '@codebuff/common/constants/model-config'
-import { RETRY_NOTICE_MARKER } from '@codebuff/common/constants/retry-notice'
+import { formatRetryNoticeCore } from '@codebuff/common/constants/retry-notice'
 import {
   pickStartModelSkippingCooldown,
   recordEmptyResponseCooldown,
@@ -94,21 +94,23 @@ const STEP_RETRY_BASE_DELAY_MS = 2000
 const STEP_RETRY_MAX_DELAY_MS = 30_000
 
 /**
- * No-progress guard: the maximum number of CONSECUTIVE steps a turn may take
- * that keep the loop alive without making any tool progress (no successful,
- * non-excluded tool result and no task_completed/end_turn) before we force the
- * turn to end.
+ * No-progress NUDGE threshold: after this many CONSECUTIVE steps that keep the
+ * loop alive without making any tool progress (no non-excluded tool result and
+ * no task_completed/end_turn), we inject ONE corrective nudge message — we do
+ * NOT force the turn to end.
  *
- * This catches degenerate loops where the model keeps producing steps that
- * re-enter the loop but never execute a tool or finish — e.g. repeated
- * malformed/partial tool calls (which set `hadToolCallError` and thus force a
- * next step) or repeated "think-only" responses. Without this guard such a turn
- * only stops when it burns through `stepsRemaining` (MAX_AGENT_STEPS_DEFAULT =
- * 100), by which point the message history can balloon to hundreds of MB and
- * the session appears hung. 8 is generous enough for legitimate multi-step
- * thinking/tool-repair sequences while bounding the pathological case.
+ * Rationale: a model producing text/reasoning every step IS the agent working;
+ * previously we misclassified that as "no progress" and hard-quit at 8 steps
+ * (the "8 responses in a row" symptom). Now we give it plenty of room and, if
+ * it keeps narrating without acting, prod it to emit an actual tool call or
+ * finish. The ultimate backstop against a runaway loop remains the
+ * `stepsRemaining` ceiling (MAX_AGENT_STEPS_DEFAULT = 100).
+ *
+ * Note: truly-empty steps (no text, no reasoning, no tool call) are a DIFFERENT
+ * case handled by the empty-response retry ladder below, which already retries
+ * with backoff and ends the turn on give-up.
  */
-const MAX_CONSECUTIVE_NO_PROGRESS_STEPS = 8
+const NO_PROGRESS_NUDGE_STEP = 30
 
 /**
  * When the local token estimate for the (post-prune) history meets or exceeds
@@ -515,6 +517,7 @@ export const runAgentStep = async (
     fullResponse: fullResponseAfterStream,
     fullResponseChunks,
     hadToolCallError,
+    hadReasoning,
     messageId,
     toolCalls,
     toolResults: newToolResults,
@@ -634,7 +637,12 @@ export const runAgentStep = async (
   const isEmptyResponse =
     !hasTaskCompleted &&
     hasNoToolResults &&
-    fullResponse.trim().length === 0
+    fullResponse.trim().length === 0 &&
+    // Native reasoning tokens are streamed but NOT captured into fullResponse,
+    // so a step that produced ONLY reasoning would otherwise look "empty". That
+    // step is the agent THINKING, not a dropped stream — don't funnel it into
+    // the empty-response retry ladder.
+    !hadReasoning
   if (isEmptyResponse) {
     logger.debug(
       {
@@ -974,11 +982,15 @@ export async function loopAgentSteps(
   let currentParams = spawnParams
   let totalSteps = 0
   let nResponses: string[] | undefined = undefined
-  // No-progress guard: count CONSECUTIVE steps that kept the loop alive without
+  // No-progress nudge: count CONSECUTIVE steps that kept the loop alive without
   // making any tool progress. Reset to 0 whenever a step makes progress (or ends
-  // the turn). When it reaches MAX_CONSECUTIVE_NO_PROGRESS_STEPS we force the
-  // turn to end so a degenerate loop can't grind to the 100-step ceiling.
+  // the turn). When it reaches NO_PROGRESS_NUDGE_STEP we inject ONE corrective
+  // nudge (not a force-quit) so the model course-corrects; the run is otherwise
+  // bounded by the stepsRemaining ceiling.
   let consecutiveNoProgressSteps = 0
+  // Whether we've already nudged during the CURRENT no-progress streak. Reset
+  // when a step makes progress so a later, separate streak can be nudged again.
+  let hasNudgedForNoProgress = false
 
   try {
     while (true) {
@@ -1219,14 +1231,21 @@ export async function loopAgentSteps(
             },
             'Retrying agent step after transient API error or empty response',
           )
-          // NOTE: the `RETRY_NOTICE_MARKER` ("retrying in") is a load-bearing
-          // substring: the CLI detects it to re-arm the stream-activity
-          // heartbeat so the "stalled Ns" indicator resets per retry attempt
-          // instead of climbing across the whole run. Keep it in this string.
+          // The retry-notice CORE ("retrying in Ns (attempt X/Y)") is built via
+          // the shared formatRetryNoticeCore so the CLI can parse it (see
+          // common/src/constants/retry-notice.ts). It's load-bearing: the CLI
+          // detects it to re-arm the stream-activity heartbeat AND to show an
+          // honest "retrying (attempt N/M)" indicator during the backoff sleep
+          // instead of a misleading "stalled Ns". Keep the core intact.
+          const retryNoticeCore = formatRetryNoticeCore(
+            delaySec,
+            retryAttempt + 1,
+            MAX_STEP_RETRIES + 1,
+          )
           onResponseChunk(
             modelSwitchNotice
-              ? `\n⚠️ ${reason} — ${modelSwitchNotice}, ${RETRY_NOTICE_MARKER} ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`
-              : `\n⚠️ ${reason}, ${RETRY_NOTICE_MARKER} ${delaySec}s (attempt ${retryAttempt + 1}/${MAX_STEP_RETRIES + 1})...\n\n`,
+              ? `\n⚠️ ${reason} — ${modelSwitchNotice}, ${retryNoticeCore}...\n\n`
+              : `\n⚠️ ${reason}, ${retryNoticeCore}...\n\n`,
           )
           // Only surface the switch notice once per switch.
           modelSwitchNotice = undefined
@@ -1407,15 +1426,21 @@ export async function loopAgentSteps(
       currentPrompt = undefined
       currentParams = undefined
 
-      // No-progress guard: if this step kept the loop alive (didn't end the
-      // turn) but made no tool progress, count it. A run of such steps is a
-      // degenerate loop (repeated malformed tool calls or think-only
-      // responses) that would otherwise only stop at the 100-step ceiling
-      // after ballooning the message history. Force the turn to end once we
-      // hit the threshold.
+      // No-progress nudge: if this step kept the loop alive (didn't end the
+      // turn) but made no tool progress, count it. Such a step is the agent
+      // producing text/reasoning without yet acting — it's WORKING, so instead
+      // of force-quitting (the old behavior at 8 steps) we give it plenty of
+      // room and, once it crosses NO_PROGRESS_NUDGE_STEP, inject ONE corrective
+      // nudge so it emits an actual tool call or finishes. The runaway backstop
+      // is the stepsRemaining ceiling. (Truly-empty steps are handled by the
+      // empty-response ladder above, not here.)
       if (!shouldEndTurn && !stepResult!.hadToolProgress) {
         consecutiveNoProgressSteps++
-        if (consecutiveNoProgressSteps >= MAX_CONSECUTIVE_NO_PROGRESS_STEPS) {
+        if (
+          !hasNudgedForNoProgress &&
+          consecutiveNoProgressSteps >= NO_PROGRESS_NUDGE_STEP
+        ) {
+          hasNudgedForNoProgress = true
           logger.warn(
             {
               agentType,
@@ -1424,17 +1449,33 @@ export async function loopAgentSteps(
               runId,
               totalSteps,
               consecutiveNoProgressSteps,
-              finishReason: 'no-progress',
+              finishReason: 'no-progress-nudge',
             },
-            'Agent made no tool progress for too many consecutive steps; ending the turn to break a degenerate loop',
+            'Agent produced many consecutive steps without tool progress; injecting a corrective nudge instead of ending the turn',
           )
+          // Subtle, user-visible signal that we prodded the agent. Uses an
+          // informational tone (not the alarming ⚠️ reserved for retries/
+          // give-ups) so the user knows the agent was nudged to act without it
+          // reading as an error. The turn is NOT ended — it keeps going.
           onResponseChunk(
-            `\n⚠️ The agent produced ${consecutiveNoProgressSteps} responses in a row without calling a tool or finishing. Ending the turn to avoid a loop — you can continue with \`codebuff --continue\` or by sending another message.\n\n`,
+            `\n💭 The agent has gone ${consecutiveNoProgressSteps} steps without using a tool — nudging it to act or finish.\n\n`,
           )
-          shouldEndTurn = true
+          // Inject the nudge into the message history (so it reaches the model
+          // on the very next step); the chunk above is only the user-facing
+          // signal and is not part of the model's context.
+          // NOTE: agents whose handleSteps run a context-pruner that calls
+          // set_messages (a full history REPLACE by contract) before every step
+          // will clobber this injected nudge before the model sees it. For such
+          // agents the user-visible chunk above is the only signal; the pruner
+          // is responsible for preserving important messages if desired.
+          currentAgentState.messageHistory = [
+            ...currentAgentState.messageHistory,
+            userMessage(withSystemTags(NO_PROGRESS_NUDGE_MESSAGE)),
+          ]
         }
       } else {
         consecutiveNoProgressSteps = 0
+        hasNudgedForNoProgress = false
       }
     }
 
@@ -1574,6 +1615,13 @@ export async function loopAgentSteps(
     },
   )
 }
+
+const NO_PROGRESS_NUDGE_MESSAGE = [
+  "You've produced several responses in a row without calling a tool or finishing.",
+  'If you intend to use a tool, emit the actual tool call now rather than describing it.',
+  'If the task is complete, end your turn using the appropriate completion tool.',
+  "If you're blocked, state exactly what you need in order to proceed.",
+].join(' ')
 
 const STEP_WARNING_MESSAGE = [
   "I've made quite a few responses in a row.",
