@@ -114,6 +114,14 @@ export function clearMcpOAuthCredentials(serverUrl?: string): void {
 export class McpOAuthProvider implements McpOAuthClientProvider {
   private readonly serverUrl: string
   private readonly onAuthorizationUrl?: (url: string) => void
+  /**
+   * Whether this provider may launch an interactive browser-based auth flow.
+   * Defaults to true (the `/connect:mcp` command + repl rely on that). When
+   * false (the agent-runtime tool path — parent AND subagents), a needed
+   * authorization throws instead of opening a browser, so headless subagents
+   * reuse already-obtained on-disk tokens and never trigger a browser flow.
+   */
+  private readonly interactive: boolean
   private callbackServer: http.Server | null = null
   private callbackPort: number | null = null
   private cachedState: string | null = null
@@ -125,10 +133,14 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
 
   constructor(
     serverUrl: string,
-    options?: { onAuthorizationUrl?: (url: string) => void },
+    options?: {
+      onAuthorizationUrl?: (url: string) => void
+      interactive?: boolean
+    },
   ) {
     this.serverUrl = serverUrl
     this.onAuthorizationUrl = options?.onAuthorizationUrl
+    this.interactive = options?.interactive ?? true
   }
 
   get redirectUrl(): string {
@@ -179,6 +191,15 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
   }
 
   redirectToAuthorization(authorizationUrl: URL): void {
+    // Non-interactive contexts (the agent-runtime tool path, incl. subagents)
+    // must never open a browser — there's no human to complete the flow, so it
+    // would hang or 401. Surface a clear, actionable error instead so the user
+    // authenticates once at the top level and all agents reuse the tokens.
+    if (!this.interactive) {
+      throw new Error(
+        `MCP server ${this.serverUrl} requires authorization. Run '/connect:mcp <name>' at the top level to authenticate, then retry.`,
+      )
+    }
     const urlStr = authorizationUrl.toString()
     this.onAuthorizationUrl?.(urlStr)
     open(urlStr).catch(() => {

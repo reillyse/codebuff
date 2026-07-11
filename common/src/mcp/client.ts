@@ -124,7 +124,17 @@ export function isMCPClientConnected(config: MCPConfig): boolean {
 
 export async function getMCPClient(
   config: MCPConfig,
-  oauthOptions?: { authProvider: McpOAuthClientProvider },
+  oauthOptions?: {
+    authProvider: McpOAuthClientProvider
+    /**
+     * Whether an interactive browser-based auth flow may run. Defaults to true.
+     * When false (the agent-runtime tool path, incl. subagents), we still
+     * attach the authProvider so stored on-disk tokens are sent as a Bearer
+     * token, but we skip the callback-server orchestration and let a needed
+     * authorization surface as an error instead of opening a browser.
+     */
+    interactive?: boolean
+  },
 ): Promise<string> {
   const key = hashConfig(config)
   if (key in runningClients) {
@@ -155,6 +165,7 @@ export async function getMCPClient(
   }
   const headers = substituteEnvInRecord(config.headers)
   const useOAuth = Boolean(config.oauth && oauthOptions)
+  const interactive = oauthOptions?.interactive ?? true
 
   // When using OAuth, wrap fetch to strip `null` scope values from JSON
   // responses before the MCP SDK's Zod schema validates them. Some servers
@@ -212,6 +223,19 @@ export async function getMCPClient(
     }
     config.type satisfies never
     throw new Error(`Internal error: invalid MCP config type ${config.type}`)
+  }
+
+  if (useOAuth && !interactive) {
+    // Non-interactive OAuth path (agent-runtime tool calls, incl. subagents).
+    // Attach the authProvider so any stored on-disk tokens are used, but do NOT
+    // run the callback-server / browser orchestration. If the server needs a
+    // fresh authorization, the provider's redirectToAuthorization throws a
+    // clear "run /connect:mcp" error (surfaced to the caller as a tool error)
+    // rather than hanging on a browser flow that no one can complete.
+    const transport = createHttpTransport()
+    await client.connect(transport)
+    runningClients[key] = client
+    return key
   }
 
   if (useOAuth) {

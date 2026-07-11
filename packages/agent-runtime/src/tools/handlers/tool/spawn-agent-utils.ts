@@ -256,10 +256,26 @@ export async function validateAndGetAgentTemplate(
     }
     throw new Error(`Agent type ${agentTypeStr} not found.`)
   }
+
+  // Subagents inherit the parent's MCP servers so they can reach the same MCP
+  // tools (e.g. an OAuth server the user authenticated at the top level). The
+  // child's own declarations win on key conflicts. This is safe because the
+  // agent-runtime tool path is non-interactive (getMcpOAuthOptions in the SDK):
+  // subagents reuse the parent's on-disk tokens and never launch a browser.
+  // We clone rather than mutate because getAgentTemplate may return a cached
+  // template shared across runs.
+  const mergedAgentTemplate: AgentTemplate = {
+    ...agentTemplate,
+    mcpServers: {
+      ...parentAgentTemplate.mcpServers,
+      ...agentTemplate.mcpServers,
+    },
+  }
+
   const BASE_AGENTS = ['base', 'base-free', 'base-max', 'base-experimental']
   // Base agent can spawn any agent
   if (BASE_AGENTS.includes(parentAgentTemplate.id)) {
-    return { agentTemplate, agentType: agentTypeStr }
+    return { agentTemplate: mergedAgentTemplate, agentType: agentTypeStr }
   }
 
   const agentType = getMatchingSpawn(
@@ -272,7 +288,7 @@ export async function validateAndGetAgentTemplate(
     )
   }
 
-  return { agentTemplate, agentType }
+  return { agentTemplate: mergedAgentTemplate, agentType }
 }
 
 /**

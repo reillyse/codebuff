@@ -413,6 +413,74 @@ describe('Spawn Agents Permissions', () => {
     })
   })
 
+  describe('MCP server inheritance', () => {
+    const createSpawnToolCall = (
+      agentType: string,
+      prompt = 'test prompt',
+    ): CodebuffToolCall<'spawn_agents'> => ({
+      toolName: 'spawn_agents' as const,
+      toolCallId: 'test-tool-call-id',
+      input: {
+        agents: [{ agent_type: agentType, prompt }],
+      },
+    })
+
+    const sparrowConfig = {
+      type: 'http' as const,
+      url: 'https://api.sparrow.io/mcp',
+      params: {},
+      headers: {},
+      oauth: true,
+    }
+
+    it('should merge the parent MCP servers into a child that declares none', async () => {
+      const parentAgent = createMockAgent('parent', ['thinker'])
+      parentAgent.mcpServers = { sparrow: sparrowConfig }
+      const childAgent = createMockAgent('thinker') // no mcpServers of its own
+      const sessionState = getInitialSessionState(mockFileContext)
+
+      await handleSpawnAgents({
+        ...handleSpawnAgentsBaseParams,
+        agentState: sessionState.mainAgentState,
+        agentTemplate: parentAgent,
+        localAgentTemplates: { thinker: childAgent },
+        toolCall: createSpawnToolCall('thinker'),
+      })
+
+      expect(mockLoopAgentSteps).toHaveBeenCalledTimes(1)
+      const passedTemplate = mockLoopAgentSteps.mock.calls[0][0].agentTemplate
+      expect(passedTemplate.mcpServers).toEqual({ sparrow: sparrowConfig })
+      // The cached child template must NOT be mutated.
+      expect(childAgent.mcpServers).toEqual({})
+    })
+
+    it("should let the child's own MCP server config win on key conflicts", async () => {
+      const parentAgent = createMockAgent('parent', ['thinker'])
+      parentAgent.mcpServers = { sparrow: sparrowConfig }
+      const childOwnConfig = {
+        type: 'http' as const,
+        url: 'https://child.example.com/mcp',
+        params: {},
+        headers: {},
+        oauth: true,
+      }
+      const childAgent = createMockAgent('thinker')
+      childAgent.mcpServers = { sparrow: childOwnConfig }
+      const sessionState = getInitialSessionState(mockFileContext)
+
+      await handleSpawnAgents({
+        ...handleSpawnAgentsBaseParams,
+        agentState: sessionState.mainAgentState,
+        agentTemplate: parentAgent,
+        localAgentTemplates: { thinker: childAgent },
+        toolCall: createSpawnToolCall('thinker'),
+      })
+
+      const passedTemplate = mockLoopAgentSteps.mock.calls[0][0].agentTemplate
+      expect(passedTemplate.mcpServers.sparrow).toEqual(childOwnConfig)
+    })
+  })
+
   describe('handleSpawnAgentInline permission validation', () => {
     const createInlineSpawnToolCall = (
       agentType: string,

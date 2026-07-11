@@ -67,9 +67,17 @@ import type { CodebuffSpawn } from '@codebuff/common/types/spawn'
  */
 function getMcpOAuthOptions(
   config: MCPConfig,
-): { authProvider: McpOAuthProvider } | undefined {
+): { authProvider: McpOAuthProvider; interactive: boolean } | undefined {
   if (config.type !== 'stdio' && config.oauth) {
-    return { authProvider: new McpOAuthProvider(config.url) }
+    // This path serves the agent-runtime tool calls (parent AND subagents), so
+    // it must be non-interactive: reuse stored on-disk tokens, but never open a
+    // browser. Interactive authentication happens separately via /connect:mcp
+    // at the top level. Subagents inherit the parent's mcpServers config and
+    // reuse the same on-disk tokens obtained there.
+    return {
+      authProvider: new McpOAuthProvider(config.url, { interactive: false }),
+      interactive: false,
+    }
   }
   return undefined
 }
