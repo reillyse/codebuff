@@ -1,6 +1,10 @@
 import { CHATGPT_OAUTH_ENABLED } from '@codebuff/common/constants/chatgpt-oauth'
 import { CLAUDE_OAUTH_ENABLED } from '@codebuff/common/constants/claude-oauth'
-import { getMCPClient, isMCPClientConnected } from '@codebuff/common/mcp/client'
+import {
+  clearMCPClient,
+  getMCPClient,
+  isMCPClientConnected,
+} from '@codebuff/common/mcp/client'
 import { loadMCPConfig, loadMCPConfigSync } from '@codebuff/sdk'
 import { clearMcpOAuthCredentials, getMcpOAuthStatus, McpOAuthProvider } from '@codebuff/sdk/mcp/oauth-provider'
 import open from 'open'
@@ -684,23 +688,31 @@ const ALL_COMMANDS: CommandDefinition[] = [
         return
       }
 
-      // Already connected — show status and skip the OAuth flow
+      // Already connected — but only short-circuit if the cached client is
+      // actually authenticated. The agent-runtime tool path connects
+      // non-interactively, and servers like Sparrow accept the MCP initialize
+      // handshake without auth, leaving a "zombie" client cached with no tokens.
+      // That zombie would make this command report success while tool listing
+      // silently fails (for the parent AND subagents that share the cache).
+      // When there are no tokens, clear the zombie and fall through to the real
+      // OAuth flow so we end up with a fully-authenticated shared client.
       if (isMCPClientConnected(serverConfig)) {
         const oauthStatus = getMcpOAuthStatus()
         const serverStatus = oauthStatus.find(
           (s) => s.serverUrl === serverConfig.url,
         )
-        const tokenInfo = serverStatus?.hasTokens
-          ? 'OAuth tokens are valid.'
-          : 'No stored tokens (using implicit auth or tokens not yet saved).'
-        params.setMessages((prev) => [
-          ...prev,
-          getUserMessage(inputText),
-          getSystemMessage(
-            `✓ Already connected to ${serverName} (${serverConfig.url}).\n${tokenInfo}\n\nUse /disconnect:mcp ${serverName} to clear credentials and reconnect.`,
-          ),
-        ])
-        return
+        if (serverStatus?.hasTokens) {
+          params.setMessages((prev) => [
+            ...prev,
+            getUserMessage(inputText),
+            getSystemMessage(
+              `✓ Already connected to ${serverName} (${serverConfig.url}).\nOAuth tokens are valid.\n\nUse /disconnect:mcp ${serverName} to clear credentials and reconnect.`,
+            ),
+          ])
+          return
+        }
+        // Zombie client with no tokens — drop it and re-authenticate below.
+        clearMCPClient(serverConfig)
       }
 
       // Show connecting message before opening browser

@@ -122,6 +122,32 @@ export function isMCPClientConnected(config: MCPConfig): boolean {
   return hashConfig(config) in runningClients
 }
 
+/**
+ * Removes a cached MCP client (and its tool-list cache) for the given config.
+ *
+ * This is needed to recover from a "zombie" client: the agent-runtime tool path
+ * connects with `interactive: false`, and servers like Sparrow accept the MCP
+ * `initialize` handshake WITHOUT auth — so `connect()` succeeds and the client
+ * is cached even though it has no tokens and can't list/call tools. That zombie
+ * makes {@link isMCPClientConnected} report "connected", which would cause
+ * `/connect:mcp` to skip the OAuth flow. Clearing it here lets the interactive
+ * flow run and replace it with a fully-authenticated client that both the
+ * parent agent AND its subagents (which share this module-level cache) reuse.
+ */
+export function clearMCPClient(config: MCPConfig): void {
+  const key = hashConfig(config)
+  const client = runningClients[key]
+  if (client) {
+    try {
+      client.close()
+    } catch {
+      // Best-effort: a failed close shouldn't block clearing the cache.
+    }
+    delete runningClients[key]
+  }
+  delete listToolsCache[key]
+}
+
 export async function getMCPClient(
   config: MCPConfig,
   oauthOptions?: {
@@ -326,7 +352,18 @@ export function listMCPTools(
     throw new Error(`listTools: client not found with id: ${clientId}`)
   }
   if (!listToolsCache[clientId]) {
-    listToolsCache[clientId] = client.listTools(...args)
+    const promise = client.listTools(...args)
+    // Don't cache rejected promises. A failed listTools (e.g. a not-yet-
+    // authenticated OAuth server) must be retryable: otherwise every future
+    // call — including subagents sharing this cache — would get the same stale
+    // rejection even after `/connect:mcp` re-authenticates and replaces the
+    // client. Drop the entry on rejection so the next call tries fresh.
+    promise.catch(() => {
+      if (listToolsCache[clientId] === promise) {
+        delete listToolsCache[clientId]
+      }
+    })
+    listToolsCache[clientId] = promise
   }
   return listToolsCache[clientId]
 }
