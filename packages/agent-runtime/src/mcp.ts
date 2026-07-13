@@ -1,3 +1,4 @@
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { convertJsonSchemaToZod } from 'zod-from-json-schema'
 
 import { MCP_TOOL_SEPARATOR } from './mcp-constants'
@@ -22,10 +23,18 @@ export async function getMCPToolData(
     },
     'writeTo'
   >,
-): Promise<CustomToolDefinitions> {
+): Promise<{
+  customToolDefinitions: CustomToolDefinitions
+  mcpLoadErrors: string[]
+}> {
   const withDefaults = { writeTo: {}, ...params }
   const { toolNames, mcpServers, writeTo, requestMcpToolData, logger } =
     withDefaults
+
+  // Human-readable reasons for each MCP server that failed to load its tools.
+  // These are surfaced to the model (see run-agent-step.ts) so subagents can
+  // explain WHY certain tools are missing instead of silently omitting them.
+  const mcpLoadErrors: string[] = []
 
   // User-facing toolNames use '/' as separator (e.g., 'supabase/list_tables')
   // but internally we use MCP_TOOL_SEPARATOR ('__') for LLM API compatibility
@@ -44,7 +53,9 @@ export async function getMCPToolData(
   }
 
   const promises: Promise<any>[] = []
-  for (const [mcpName, mcpConfig] of Object.entries(mcpServers)) {
+  // `mcpServers` is typed as non-optional, but some runtime templates can have
+  // it undefined; guard so tool-def loading never crashes.
+  for (const [mcpName, mcpConfig] of Object.entries(mcpServers ?? {})) {
     promises.push(
       (async () => {
         try {
@@ -68,6 +79,19 @@ export async function getMCPToolData(
           // model simply won't see them, and any explicit call surfaces the
           // real error. This keeps subagents (which now inherit the parent's
           // mcpServers) resilient to a not-yet-connected server.
+          //
+          // Rather than failing silently, record a human-readable reason so the
+          // caller can surface it to the model (and, through it, the user).
+          const isAuthError =
+            error instanceof UnauthorizedError ||
+            (error instanceof Error &&
+              /401|unauthorized/i.test(error.message))
+          const errorMessage = isAuthError
+            ? `not authenticated — run /connect:mcp ${mcpName} to authorize access`
+            : error instanceof Error
+              ? error.message
+              : String(error)
+          mcpLoadErrors.push(`'${mcpName}': ${errorMessage}`)
           logger.warn(
             {
               mcpServer: mcpName,
@@ -81,5 +105,5 @@ export async function getMCPToolData(
   }
   await Promise.all(promises)
 
-  return writeTo
+  return { customToolDefinitions: writeTo, mcpLoadErrors }
 }

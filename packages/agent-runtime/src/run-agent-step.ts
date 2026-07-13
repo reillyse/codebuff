@@ -136,7 +136,10 @@ async function additionalToolDefinitions(
     typeof getMCPToolData,
     'toolNames' | 'mcpServers' | 'writeTo'
   >,
-): Promise<CustomToolDefinitions> {
+): Promise<{
+  customToolDefinitions: CustomToolDefinitions
+  mcpLoadErrors: string[]
+}> {
   const { agentTemplate, fileContext } = params
 
   const defs = cloneDeep(
@@ -840,6 +843,21 @@ export async function loopAgentSteps(
   initialAgentState.runId = runId
 
   let cachedAdditionalToolDefinitions: CustomToolDefinitions | undefined
+  // Reasons any inherited/configured MCP servers failed to load their tools.
+  // Populated lazily by getAdditionalToolDefs and surfaced to the model via a
+  // system notice below so it can explain missing MCP tools to the user.
+  let cachedMcpLoadErrors: string[] = []
+  const getAdditionalToolDefs = async () => {
+    if (!cachedAdditionalToolDefinitions) {
+      const result = await additionalToolDefinitions({
+        ...params,
+        agentTemplate,
+      })
+      cachedAdditionalToolDefinitions = result.customToolDefinitions
+      cachedMcpLoadErrors = result.mcpLoadErrors
+    }
+    return cachedAdditionalToolDefinitions
+  }
   // Use parent's tools for prompt caching when inheritParentSystemPrompt is true
   const useParentTools =
     agentTemplate.inheritParentSystemPrompt && parentTools !== undefined
@@ -851,15 +869,7 @@ export async function loopAgentSteps(
     promptType: { type: 'instructionsPrompt' },
     agentTemplates: localAgentTemplates,
     useParentTools,
-    additionalToolDefinitions: async () => {
-      if (!cachedAdditionalToolDefinitions) {
-        cachedAdditionalToolDefinitions = await additionalToolDefinitions({
-          ...params,
-          agentTemplate,
-        })
-      }
-      return cachedAdditionalToolDefinitions
-    },
+    additionalToolDefinitions: getAdditionalToolDefs,
   })
 
   // Build the initial message history with user prompt and instructions
@@ -873,17 +883,24 @@ export async function loopAgentSteps(
       agentTemplate,
       promptType: { type: 'systemPrompt' },
       agentTemplates: localAgentTemplates,
-      additionalToolDefinitions: async () => {
-        if (!cachedAdditionalToolDefinitions) {
-          cachedAdditionalToolDefinitions = await additionalToolDefinitions({
-            ...params,
-            agentTemplate,
-          })
-        }
-        return cachedAdditionalToolDefinitions
-      },
+      additionalToolDefinitions: getAdditionalToolDefs,
     })
     system = systemPrompt ?? ''
+  }
+
+  // Eagerly compute tool defs so any MCP load errors are available for the
+  // system notice. When an MCP server (often an OAuth server inherited from the
+  // parent) fails to load its tools, surface the reason to the model instead of
+  // silently omitting the tools — this lets subagents explain to the user why
+  // the tools are unavailable and how to fix it.
+  await getAdditionalToolDefs()
+  if (cachedMcpLoadErrors.length > 0) {
+    const mcpErrorNotice = withSystemInstructionTags(
+      `⚠️ The following MCP servers failed to load their tools and are UNAVAILABLE in this session:\n` +
+        cachedMcpLoadErrors.map((e) => `- ${e}`).join('\n') +
+        `\nIf the user asks about tools from these servers, inform them that authentication is required. They can run /connect:mcp to authenticate.`,
+    )
+    system = system + (system ? '\n\n' : '') + mcpErrorNotice
   }
 
   // Build agent tools (agents as direct tool calls) for non-inherited tools
@@ -899,15 +916,7 @@ export async function loopAgentSteps(
     ? parentTools
     : await getToolSet({
       toolNames: agentTemplate.toolNames,
-      additionalToolDefinitions: async () => {
-        if (!cachedAdditionalToolDefinitions) {
-          cachedAdditionalToolDefinitions = await additionalToolDefinitions({
-            ...params,
-            agentTemplate,
-          })
-        }
-        return cachedAdditionalToolDefinitions
-      },
+      additionalToolDefinitions: getAdditionalToolDefs,
       agentTools,
       skills: fileContext.skills ?? {},
     })
@@ -960,15 +969,7 @@ export async function loopAgentSteps(
     inputSchema: tool.inputSchema as {},
   }))
 
-  const additionalToolDefinitionsWithCache = async () => {
-    if (!cachedAdditionalToolDefinitions) {
-      cachedAdditionalToolDefinitions = await additionalToolDefinitions({
-        ...params,
-        agentTemplate,
-      })
-    }
-    return cachedAdditionalToolDefinitions
-  }
+  const additionalToolDefinitionsWithCache = getAdditionalToolDefs
 
   let currentAgentState: AgentState = {
     ...initialAgentState,

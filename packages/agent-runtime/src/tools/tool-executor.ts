@@ -500,12 +500,14 @@ export async function executeCustomToolCall(
     userInputId,
   } = params
   const toolCall: CustomToolCall | ToolCallError = parseRawCustomToolCall({
-    customToolDefs: await getMCPToolData({
-      ...params,
-      toolNames: agentTemplate.toolNames,
-      mcpServers: agentTemplate.mcpServers,
-      writeTo: cloneDeep(fileContext.customToolDefinitions),
-    }),
+    customToolDefs: (
+      await getMCPToolData({
+        ...params,
+        toolNames: agentTemplate.toolNames,
+        mcpServers: agentTemplate.mcpServers,
+        writeTo: cloneDeep(fileContext.customToolDefinitions),
+      })
+    ).customToolDefinitions,
     rawToolCall: {
       toolName,
       toolCallId: toolCallId ?? generateCompactId(),
@@ -522,7 +524,8 @@ export async function executeCustomToolCall(
     !fromHandleSteps &&
     !(
       toolCall.toolName.includes(MCP_TOOL_SEPARATOR) &&
-      toolCall.toolName.split(MCP_TOOL_SEPARATOR)[0] in agentTemplate.mcpServers
+      toolCall.toolName.split(MCP_TOOL_SEPARATOR)[0] in
+        (agentTemplate.mcpServers ?? {})
     )
   ) {
     // Emit an error event instead of tool call/result pair
@@ -585,7 +588,9 @@ export async function executeCustomToolCall(
         toolName,
         input: toolCall.input,
         mcpConfig: toolCall.toolName.includes(MCP_TOOL_SEPARATOR)
-          ? agentTemplate.mcpServers[toolCall.toolName.split(MCP_TOOL_SEPARATOR)[0]]
+          ? (agentTemplate.mcpServers ?? {})[
+              toolCall.toolName.split(MCP_TOOL_SEPARATOR)[0]
+            ]
           : undefined,
       })
       return clientToolResult.output satisfies ToolResultOutput[]
