@@ -17,6 +17,7 @@ import { routeUserPrompt, addBashMessageToHistory } from './commands/router'
 import { AdBanner } from './components/ad-banner'
 import { BottomStatusLine } from './components/bottom-status-line'
 import { ChatInputBar } from './components/chat-input-bar'
+import { InFlightToolsBox } from './components/in-flight-tools-box'
 import { LoadPreviousButton } from './components/load-previous-button'
 import { ReviewScreen } from './components/review-screen'
 import { MessageWithAgents } from './components/message-with-agents'
@@ -80,8 +81,10 @@ import {
   type AuthStatus,
 } from './utils/status-indicator-state'
 import {
+  getInFlightTools,
   getLastStreamActivityAt,
   getRetryActivity,
+  hasInFlightToolCalls,
 } from './utils/stream-activity'
 import { createPasteHandler } from './utils/strings'
 import { setTerminalTitle } from './utils/terminal-title'
@@ -1295,7 +1298,7 @@ export const Chat = ({
   // chunks arrive. Without this tick, a silent stream would never re-render to
   // reveal the stalled state.
   const isActivePhase = streamStatus === 'waiting' || streamStatus === 'streaming'
-  const [, setStatusTick] = useState(0)
+  const [statusTick, setStatusTick] = useState(0)
   useEffect(() => {
     if (!isActivePhase) return
     const interval = setInterval(() => setStatusTick((t) => t + 1), 1000)
@@ -1314,8 +1317,20 @@ export const Chat = ({
     isSearchingMemory,
     lastStreamActivityAt: getLastStreamActivityAt(),
     retryActivity: getRetryActivity(),
+    hasInFlightTools: hasInFlightToolCalls(),
   })
   const hasStatusIndicatorContent = statusIndicatorState.kind !== 'idle'
+
+  // Snapshot of currently-executing tools, read on the same 1s status tick so
+  // the expandable "tools running" box (shown once a tool passes the ~30s
+  // threshold) updates its elapsed times every second while active. Memoized on
+  // the tick + active phase so unrelated chat re-renders (input changes, etc.)
+  // don't re-snapshot.
+  const inFlightTools = useMemo(
+    () => getInFlightTools(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- statusTick drives refresh
+    [statusTick, isActivePhase],
+  )
 
   const isClaudeOAuthActive = getClaudeOAuthStatus().connected
 
@@ -1522,6 +1537,8 @@ export const Chat = ({
           backgroundColor: 'transparent',
         }}
       >
+        <InFlightToolsBox tools={inFlightTools} isActive={isActivePhase} />
+
         {shouldShowStatusLine && (
           <StatusBar
             timerStartTime={timerStartTime}

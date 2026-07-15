@@ -264,12 +264,28 @@ export async function validateAndGetAgentTemplate(
   // subagents reuse the parent's on-disk tokens and never launch a browser.
   // We clone rather than mutate because getAgentTemplate may return a cached
   // template shared across runs.
+  // Note: `mcpServers` is typed as non-optional, but some runtime templates
+  // (e.g. base2) can have it undefined, so guard with `?? {}` on both sides.
+  //
+  // Subagents also inherit the parent's spawnableAgents (deduped union, child's
+  // own entries preserved) so a multi-agent workflow where one custom agent
+  // delegates to another works: if the parent can spawn a custom agent, so can
+  // its children. This mirrors the mcpServers inheritance above. Note this only
+  // propagates agents literally listed in a parent's spawnableAgents — the
+  // BASE_AGENTS "can spawn anything" bypass below is deliberately NOT inherited,
+  // so there is no privilege escalation.
   const mergedAgentTemplate: AgentTemplate = {
     ...agentTemplate,
     mcpServers: {
-      ...parentAgentTemplate.mcpServers,
-      ...agentTemplate.mcpServers,
+      ...(parentAgentTemplate.mcpServers ?? {}),
+      ...(agentTemplate.mcpServers ?? {}),
     },
+    spawnableAgents: [
+      ...new Set([
+        ...(parentAgentTemplate.spawnableAgents ?? []),
+        ...(agentTemplate.spawnableAgents ?? []),
+      ]),
+    ],
   }
 
   const BASE_AGENTS = ['base', 'base-free', 'base-max', 'base-experimental']

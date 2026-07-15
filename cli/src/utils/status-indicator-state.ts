@@ -63,6 +63,14 @@ export type StatusIndicatorStateArgs = {
    * misleading "stalled Ns". `null`/undefined means no retry is in progress.
    */
   retryActivity?: RetryActivity | null
+  /**
+   * Whether a local tool call is currently executing (e.g. a terminal command
+   * running tests). While true, the 'stalled' indicator is suppressed because a
+   * running local tool is not a provider stall — the stream is legitimately
+   * silent while the CLI does local work. `undefined`/false means no tool is
+   * in flight.
+   */
+  hasInFlightTools?: boolean
   /** Injectable clock for testing; defaults to Date.now. */
   now?: number
 }
@@ -93,6 +101,7 @@ export const getStatusIndicatorState = ({
   isSearchingMemory = false,
   lastStreamActivityAt = null,
   retryActivity = null,
+  hasInFlightTools = false,
   now = Date.now(),
 }: StatusIndicatorStateArgs): StatusIndicatorState => {
   if (nextCtrlCWillExit) {
@@ -155,8 +164,12 @@ export const getStatusIndicatorState = ({
     }
   }
 
+  // A running local tool (e.g. tests) legitimately produces no stream chunks,
+  // so don't count that silence as a provider stall. While a tool is in flight
+  // this falls through to 'streaming' ("working...") instead of 'stalled'.
   if (
     isActivePhase &&
+    !hasInFlightTools &&
     lastStreamActivityAt != null &&
     now - lastStreamActivityAt >= STALL_INDICATOR_THRESHOLD_MS
   ) {

@@ -46,6 +46,10 @@ export const customToolDefinitionsSchema = z
       // (from SDK custom tools that have been serialized). The agent-runtime
       // converts JSON schemas to Zod using ensureZodSchema() before use.
       inputSchema: z.custom<z.ZodType | Record<string, unknown>>(),
+      // rawInputSchema holds the original JSON Schema (from MCP tools) so we can
+      // coerce string-encoded tool call values back to their declared types
+      // before dispatching to the MCP server.
+      rawInputSchema: z.record(z.string(), z.unknown()).optional(),
       endsAgentStep: z.boolean().optional().default(false),
       description: z.string().optional(),
       exampleInputs: z.record(z.string(), z.any()).array().optional(),

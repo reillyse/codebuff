@@ -35,6 +35,37 @@ export type RetryActivity = {
 
 let retryActivity: RetryActivity | null = null
 
+/**
+ * Details of a tool call that is currently executing (between its `tool_call`
+ * and `tool_result` events).
+ */
+export type InFlightToolInfo = {
+  toolCallId: string
+  toolName: string
+  /** Wall-clock ms when the tool started executing. */
+  startedAt: number
+}
+
+/**
+ * Tool calls that are currently executing (between their `tool_call` and
+ * `tool_result` events). A local tool (e.g. a terminal command running tests)
+ * produces no stream chunks while it runs, so without this the chunk-based
+ * heartbeat would go silent and the status bar would wrongly show
+ * "waiting on provider (stalled Ns)" — even though the CLI is legitimately busy
+ * running a local tool, not waiting on the provider. While any tool is in
+ * flight, the 'stalled' indicator is suppressed (see status-indicator-state.ts).
+ *
+ * We also surface these (name + start time) so the UI can show an expandable
+ * "tools running" box detailing long-running tools (see in-flight-tools-box.tsx).
+ *
+ * Keyed by toolCallId (not a counter) so it's idempotent and balances naturally
+ * for spawn_agents (one tool_call id + one tool_result with the same id). The
+ * map is cleared on every run boundary via {@link resetStreamActivity}, so a
+ * result-less control tool (e.g. end_turn) can never permanently suppress the
+ * indicator beyond the current run.
+ */
+const inFlightToolCalls = new Map<string, InFlightToolInfo>()
+
 /** Record that stream activity just occurred (a chunk arrived). */
 export const markStreamActivity = (now: number = Date.now()): void => {
   lastStreamActivityAt = now
@@ -46,6 +77,9 @@ export const markStreamActivity = (now: number = Date.now()): void => {
  */
 export const resetStreamActivity = (value: number | null = Date.now()): void => {
   lastStreamActivityAt = value
+  // In-flight tools never outlive a run boundary (start/end/abort), so a
+  // result-less tool_call can't permanently suppress the 'stalled' indicator.
+  inFlightToolCalls.clear()
 }
 
 /** The timestamp (ms) of the last recorded stream activity, or null. */
@@ -69,3 +103,33 @@ export const clearRetryActivity = (): void => {
 
 /** The current retry-attempt state, or null when not retrying. */
 export const getRetryActivity = (): RetryActivity | null => retryActivity
+
+/**
+ * Record that a local tool call started executing (chunk-less work begins).
+ * Also re-arms the heartbeat so the moment isn't already "stale".
+ */
+export const markToolCallStarted = (
+  toolCallId: string,
+  toolName: string,
+  now: number = Date.now(),
+): void => {
+  inFlightToolCalls.set(toolCallId, { toolCallId, toolName, startedAt: now })
+  markStreamActivity(now)
+}
+
+/**
+ * Record that a local tool call finished. Re-arms the heartbeat so the
+ * subsequent provider-wait window starts fresh from ~now instead of counting
+ * the tool's execution time toward a "stall".
+ */
+export const markToolCallFinished = (toolCallId: string): void => {
+  inFlightToolCalls.delete(toolCallId)
+  markStreamActivity()
+}
+
+/** Whether any local tool call is currently executing. */
+export const hasInFlightToolCalls = (): boolean => inFlightToolCalls.size > 0
+
+/** Snapshot of the currently-executing tool calls (insertion order). */
+export const getInFlightTools = (): InFlightToolInfo[] =>
+  Array.from(inFlightToolCalls.values())

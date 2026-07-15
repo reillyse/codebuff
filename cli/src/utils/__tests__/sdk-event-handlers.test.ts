@@ -9,8 +9,10 @@ import {
 } from '../sdk-event-handlers'
 import {
   clearRetryActivity,
+  getInFlightTools,
   getLastStreamActivityAt,
   getRetryActivity,
+  hasInFlightToolCalls,
   resetStreamActivity,
 } from '../stream-activity'
 import { getStatusIndicatorState } from '../status-indicator-state'
@@ -50,6 +52,15 @@ interface ToolResultEvent {
       value: string
     }>
   }>
+}
+
+interface ToolCallEvent {
+  type: 'tool_call'
+  toolCallId: string
+  toolName: string
+  input: Record<string, unknown>
+  agentId?: string
+  parentAgentId?: string
 }
 
 const createStreamRefs = (): {
@@ -302,6 +313,78 @@ describe('sdk-event-handlers', () => {
     expect(agentBlock.agentId).toBe('agent-real')
     expect(getStreamingAgents().has('agent-real')).toBe(true)
     expect(getStreamingAgents().has('tool-1-0')).toBe(false)
+  })
+
+  test('marks a tool in-flight on tool_call and clears + re-arms the heartbeat on tool_result', () => {
+    const { ctx } = createTestContext()
+    const handleEvent = createEventHandler(ctx)
+
+    // Arm the heartbeat far in the past so, absent the in-flight guard, the
+    // indicator would read 'stalled' while the tool runs.
+    resetStreamActivity(Date.now() - 200_000)
+    expect(hasInFlightToolCalls()).toBe(false)
+
+    const toolCallEvent: ToolCallEvent = {
+      type: 'tool_call',
+      toolCallId: 'tool-run-tests',
+      toolName: 'run_terminal_command',
+      input: { command: 'bun test' },
+    }
+    handleEvent(toolCallEvent)
+
+    // The tool is now executing locally: flag set + heartbeat re-armed to ~now.
+    expect(hasInFlightToolCalls()).toBe(true)
+    // The tool name + start time are recorded for the "tools running" box.
+    const inFlight = getInFlightTools()
+    expect(inFlight).toHaveLength(1)
+    expect(inFlight[0].toolName).toBe('run_terminal_command')
+    expect(Date.now() - inFlight[0].startedAt).toBeLessThan(1_000)
+    const armedAt = getLastStreamActivityAt()
+    expect(armedAt).not.toBeNull()
+    expect(Date.now() - (armedAt as number)).toBeLessThan(1_000)
+
+    // While in flight, the indicator must not be 'stalled' even if silent.
+    expect(
+      getStatusIndicatorState({
+        streamStatus: 'streaming',
+        nextCtrlCWillExit: false,
+        isConnected: true,
+        lastStreamActivityAt: (armedAt as number) - 200_000,
+        hasInFlightTools: hasInFlightToolCalls(),
+      }),
+    ).not.toMatchObject({ kind: 'stalled' })
+
+    const toolResultEvent: ToolResultEvent = {
+      type: 'tool_result',
+      toolCallId: 'tool-run-tests',
+      toolName: 'run_terminal_command',
+      output: [{ type: 'json', value: [] }],
+    }
+    handleEvent(toolResultEvent)
+
+    // Tool finished: flag cleared and heartbeat re-armed for the provider wait.
+    expect(hasInFlightToolCalls()).toBe(false)
+    const finishedAt = getLastStreamActivityAt()
+    expect(Date.now() - (finishedAt as number)).toBeLessThan(1_000)
+
+    resetStreamActivity(null)
+  })
+
+  test('resetStreamActivity clears in-flight tool calls (no stuck suppression across runs)', () => {
+    const { ctx } = createTestContext()
+    const handleEvent = createEventHandler(ctx)
+
+    handleEvent({
+      type: 'tool_call',
+      toolCallId: 'tool-orphan',
+      toolName: 'run_terminal_command',
+      input: {},
+    } as ToolCallEvent)
+    expect(hasInFlightToolCalls()).toBe(true)
+
+    // A run boundary (start/end/abort) must clear any leaked in-flight tool.
+    resetStreamActivity(null)
+    expect(hasInFlightToolCalls()).toBe(false)
   })
 
   test('handles spawn_agents tool results and clears streaming agents', () => {

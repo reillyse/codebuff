@@ -30,6 +30,8 @@ import {
   clearRetryActivity,
   markRetryActivity,
   markStreamActivity,
+  markToolCallFinished,
+  markToolCallStarted,
   resetStreamActivity,
 } from './stream-activity'
 
@@ -338,6 +340,13 @@ const handleRegularToolCall = (
 }
 
 const handleToolCall = (state: EventHandlerState, event: PrintModeToolCall) => {
+  // A tool is now executing locally (no stream chunks until it finishes), so
+  // mark it in-flight to suppress the "stalled" provider indicator while it
+  // runs. Done first, before any branching/early-return, so it covers
+  // spawn_agents, hidden tools, and subagent tools uniformly. The tool name is
+  // recorded so the UI can detail long-running tools.
+  markToolCallStarted(event.toolCallId, event.toolName)
+
   // Close any open native reasoning blocks when a tool call happens
   // (agent may go directly from thinking to tool calls without emitting text)
   // This must happen BEFORE any early returns (spawn_agents, hidden tools)
@@ -426,6 +435,11 @@ const handleToolResult = (
   state: EventHandlerState,
   event: PrintModeToolResult,
 ) => {
+  // The tool finished executing; clear its in-flight marker and re-arm the
+  // heartbeat so the subsequent provider-wait window starts fresh. Done first,
+  // before any branching, to mirror handleToolCall.
+  markToolCallFinished(event.toolCallId)
+
   const askUserResult = (event.output?.[0] as any)?.value
   state.message.updater.updateAiMessageBlocks((blocks) =>
     transformAskUserBlocks(blocks, {

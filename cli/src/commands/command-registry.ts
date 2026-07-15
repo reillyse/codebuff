@@ -760,14 +760,24 @@ const ALL_COMMANDS: CommandDefinition[] = [
       clearInput(params)
 
       if (serverNameOrUrl) {
-        // Accept either a server name (from mcp.json) or a direct URL
+        // Accept either a server name (from mcp.json) or a direct URL.
+        // Also resolve the full MCPConfig so we can clear the in-memory client.
         let serverUrl = serverNameOrUrl
+        let resolvedConfig: ReturnType<typeof loadMCPConfigSync>['mcpServers'][string] | undefined
         if (!serverNameOrUrl.startsWith('http')) {
           const mcpConfig = loadMCPConfigSync({ verbose: false })
           const config = mcpConfig.mcpServers[serverNameOrUrl]
           if (config && config.type !== 'stdio') {
             serverUrl = config.url
+            resolvedConfig = config
           }
+        } else {
+          // When a bare URL is passed, find the matching config by URL so we
+          // can also clear the in-memory cached client (not just on-disk creds).
+          const mcpConfig = loadMCPConfigSync({ verbose: false })
+          resolvedConfig = Object.values(mcpConfig.mcpServers).find(
+            (config) => config.type !== 'stdio' && config.url === serverNameOrUrl,
+          )
         }
 
         const connections = getMcpOAuthStatus()
@@ -782,7 +792,12 @@ const ALL_COMMANDS: CommandDefinition[] = [
           ])
           return
         }
+        // Clear on-disk OAuth credentials AND the in-memory cached client so
+        // the next connection attempt starts completely fresh (no zombie client).
         clearMcpOAuthCredentials(serverUrl)
+        if (resolvedConfig) {
+          clearMCPClient(resolvedConfig)
+        }
         params.setMessages((prev) => [
           ...prev,
           getUserMessage(inputText),
@@ -800,7 +815,14 @@ const ALL_COMMANDS: CommandDefinition[] = [
           ])
           return
         }
+        // Clear all on-disk credentials and all in-memory clients.
         clearMcpOAuthCredentials()
+        const mcpConfig = loadMCPConfigSync({ verbose: false })
+        for (const config of Object.values(mcpConfig.mcpServers)) {
+          if (config.type !== 'stdio') {
+            clearMCPClient(config)
+          }
+        }
         params.setMessages((prev) => [
           ...prev,
           getUserMessage(inputText),

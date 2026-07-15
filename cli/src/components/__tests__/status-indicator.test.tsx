@@ -196,6 +196,31 @@ describe('StatusIndicator state logic', () => {
         })
         expect(state.kind).toBe('searching-memory')
       })
+
+      test('does NOT return stalled while a local tool is in flight (e.g. running tests)', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'streaming',
+          // Silent long enough to otherwise be 'stalled'...
+          lastStreamActivityAt: now - STALL_INDICATOR_THRESHOLD_MS * 5,
+          // ...but a local tool is actively running (no chunks expected).
+          hasInFlightTools: true,
+          now,
+        })
+        // Falls through to 'streaming' ("working...") instead of 'stalled'.
+        expect(state.kind).toBe('streaming')
+      })
+
+      test('still returns stalled when no tool is in flight (regression guard)', () => {
+        const state = getStatusIndicatorState({
+          ...baseArgs,
+          streamStatus: 'streaming',
+          lastStreamActivityAt: now - STALL_INDICATOR_THRESHOLD_MS * 5,
+          hasInFlightTools: false,
+          now,
+        })
+        expect(state.kind).toBe('stalled')
+      })
     })
 
     describe('retrying-attempt state', () => {

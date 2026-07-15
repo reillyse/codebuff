@@ -5,6 +5,7 @@ import { getToolCallString } from '@codebuff/common/tools/utils'
 import { buildArray } from '@codebuff/common/util/array'
 import { formatAvailableSkillsXml } from '@codebuff/common/util/skills'
 import { pluralize } from '@codebuff/common/util/string'
+import { jsonSchema } from 'ai'
 import { cloneDeep } from 'lodash'
 import z from 'zod/v4'
 import { convertJsonSchemaToZod } from 'zod-from-json-schema'
@@ -74,8 +75,53 @@ function hasMeaningfulJsonSchema(jsonSchema: Record<string, unknown>): boolean {
   return false
 }
 
-function paramsSection(params: { schema: z.ZodType; endsAgentStep: boolean }) {
-  const { schema, endsAgentStep } = params
+/**
+ * Builds the JSON-Schema view of a tool's params for the system prompt, adding
+ * the `endsAgentStep` flag when required. When `rawInputSchema` (the original
+ * JSON Schema from an MCP tool) is provided we use it directly rather than
+ * round-tripping through Zod — the round-trip can silently drop property
+ * descriptions/`$defs`/`format` keywords, leaving the model with an empty
+ * schema and no idea what the real parameter names are (it then guesses wrong
+ * names from its training knowledge).
+ */
+function buildParamsJsonSchema(params: {
+  schema: z.ZodType
+  endsAgentStep: boolean
+  rawInputSchema?: Record<string, unknown>
+}): Record<string, unknown> {
+  const { schema, endsAgentStep, rawInputSchema } = params
+
+  if (rawInputSchema && typeof rawInputSchema === 'object') {
+    // Use the original JSON Schema directly. Strip $schema meta key (adds
+    // noise); strip description (shown separately in the tool header).
+    const {
+      $schema: _$schema,
+      description: _description,
+      ...rest
+    } = rawInputSchema
+    const resultSchema: Record<string, unknown> = { ...rest }
+
+    if (endsAgentStep) {
+      const properties = {
+        ...((resultSchema.properties as Record<string, unknown> | undefined) ?? {}),
+      }
+      properties[endsAgentStepParam] = {
+        type: 'boolean',
+        const: endsAgentStep,
+        description: 'Easp flag must be set to true',
+      }
+      resultSchema.properties = properties
+      const required = Array.isArray(resultSchema.required)
+        ? [...(resultSchema.required as unknown[])]
+        : []
+      if (!required.includes(endsAgentStepParam)) {
+        required.push(endsAgentStepParam)
+      }
+      resultSchema.required = required
+    }
+    return resultSchema
+  }
+
   const safeSchema = ensureJsonSchemaCompatible(schema)
   const schemaWithEndsAgentStepParam = endsAgentStep
     ? safeSchema.and(
@@ -86,11 +132,21 @@ function paramsSection(params: { schema: z.ZodType; endsAgentStep: boolean }) {
       }),
     )
     : safeSchema
-  const jsonSchema = toJsonSchemaSafe(schemaWithEndsAgentStepParam)
-  delete jsonSchema.description
-  delete jsonSchema['$schema']
-  const paramsDescription = hasMeaningfulJsonSchema(jsonSchema)
-    ? JSON.stringify(jsonSchema, null, 2)
+  const resultSchema = toJsonSchemaSafe(schemaWithEndsAgentStepParam)
+  delete resultSchema.description
+  delete resultSchema['$schema']
+  return resultSchema
+}
+
+function paramsSection(params: {
+  schema: z.ZodType
+  endsAgentStep: boolean
+  rawInputSchema?: Record<string, unknown>
+}) {
+  const resultSchema = buildParamsJsonSchema(params)
+  const jsonSchema = resultSchema
+  const paramsDescription = hasMeaningfulJsonSchema(resultSchema)
+    ? JSON.stringify(resultSchema, null, 2)
     : 'None'
 
   let paramsSection = ''
@@ -109,6 +165,7 @@ export function buildToolDescription(params: {
   description?: string
   endsAgentStep: boolean
   exampleInputs?: any[]
+  rawInputSchema?: Record<string, unknown>
 }): string {
   const {
     toolName,
@@ -116,6 +173,7 @@ export function buildToolDescription(params: {
     description = '',
     endsAgentStep,
     exampleInputs = [],
+    rawInputSchema,
   } = params
   const descriptionWithExamples = buildArray(
     description,
@@ -129,7 +187,7 @@ export function buildToolDescription(params: {
   return buildArray([
     `### ${toolName}`,
     schema.description || '',
-    paramsSection({ schema, endsAgentStep }),
+    paramsSection({ schema, endsAgentStep, rawInputSchema }),
     descriptionWithExamples,
   ]).join('\n\n')
 }
@@ -150,9 +208,10 @@ function buildShortToolDescription(params: {
   toolName: string
   schema: z.ZodType
   endsAgentStep: boolean
+  rawInputSchema?: Record<string, unknown>
 }): string {
-  const { toolName, schema, endsAgentStep } = params
-  return `${toolName}:\n${paramsSection({ schema, endsAgentStep })}`
+  const { toolName, schema, endsAgentStep, rawInputSchema } = params
+  return `${toolName}:\n${paramsSection({ schema, endsAgentStep, rawInputSchema })}`
 }
 
 export const getToolsInstructions = (
@@ -282,6 +341,9 @@ export const fullToolList = (
         description: toolDef.description,
         endsAgentStep: toolDef.endsAgentStep ?? true,
         exampleInputs: toolDef.exampleInputs,
+        rawInputSchema: toolDef.rawInputSchema as
+          | Record<string, unknown>
+          | undefined,
       })
     }),]
 
@@ -317,11 +379,15 @@ export const getShortToolInstructions = (
       })
     }),
     ...Object.keys(additionalToolDefinitions).map((name) => {
-      const { inputSchema, endsAgentStep } = additionalToolDefinitions[name]
+      const { inputSchema, endsAgentStep, rawInputSchema } =
+        additionalToolDefinitions[name]
       return buildShortToolDescription({
         toolName: name,
         schema: ensureZodSchema(inputSchema),
         endsAgentStep: endsAgentStep ?? true,
+        rawInputSchema: rawInputSchema as
+          | Record<string, unknown>
+          | undefined,
       })
     }),
   ]
@@ -392,14 +458,38 @@ export async function getToolSet(params: {
   const toolDefinitions = await additionalToolDefinitions()
   for (const [toolName, toolDefinition] of Object.entries(toolDefinitions)) {
     const clonedDef = cloneDeep(toolDefinition)
-    // Custom tool inputSchema may be JSON Schema (from SDK) or Zod (from MCP)
-    // Ensure it's a Zod schema for the AI SDK
-    const zodSchema = ensureZodSchema(clonedDef.inputSchema)
-    const safeSchema = ensureJsonSchemaCompatible(zodSchema)
-    toolSet[toolName] = {
-      ...clonedDef,
-      inputSchema: safeSchema,
-    } as (typeof toolSet)[string]
+    if (
+      clonedDef.rawInputSchema &&
+      typeof clonedDef.rawInputSchema === 'object'
+    ) {
+      // MCP tools: register the ORIGINAL JSON Schema directly via the AI SDK's
+      // jsonSchema() wrapper instead of round-tripping through Zod. The
+      // round-trip can silently drop property descriptions/$defs/format
+      // keywords, collapsing the tool to an empty passthrough object — which
+      // leaves native-tool-calling models (e.g. the top-level agent) guessing
+      // wrong parameter names from prior knowledge. Strip meta keys that add
+      // noise ($schema) or interfere with strict validation
+      // (additionalProperties). Downstream Zod validation still runs in
+      // parseRawCustomToolCall, so the non-validating jsonSchema() here is fine.
+      const {
+        $schema: _$schema,
+        additionalProperties: _additionalProperties,
+        ...rawSchema
+      } = clonedDef.rawInputSchema as Record<string, unknown>
+      toolSet[toolName] = {
+        ...clonedDef,
+        inputSchema: jsonSchema(rawSchema as Parameters<typeof jsonSchema>[0]),
+      } as (typeof toolSet)[string]
+    } else {
+      // Custom tool inputSchema may be JSON Schema (from SDK) or Zod (from MCP)
+      // Ensure it's a Zod schema for the AI SDK
+      const zodSchema = ensureZodSchema(clonedDef.inputSchema)
+      const safeSchema = ensureJsonSchemaCompatible(zodSchema)
+      toolSet[toolName] = {
+        ...clonedDef,
+        inputSchema: safeSchema,
+      } as (typeof toolSet)[string]
+    }
   }
 
   // Add agent tools (agents as direct tool calls)

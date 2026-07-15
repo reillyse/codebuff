@@ -1,6 +1,6 @@
 import { createInterface } from 'readline'
 
-import { getMCPClient, isMCPClientConnected } from '@codebuff/common/mcp/client'
+import { clearMCPClient, getMCPClient, isMCPClientConnected } from '@codebuff/common/mcp/client'
 import { CodebuffClient, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, loadMCPConfig, loadMCPConfigSync, setClaudeOAuthFallbackEnabled } from '@codebuff/sdk'
 import { clearMcpOAuthCredentials, getMcpOAuthStatus, McpOAuthProvider } from '@codebuff/sdk/mcp/oauth-provider'
 
@@ -1057,12 +1057,21 @@ async function handleConnectMcp(serverName: string): Promise<void> {
 function handleDisconnectMcp(serverNameOrUrl: string): void {
   if (serverNameOrUrl) {
     let serverUrl = serverNameOrUrl
+    let resolvedConfig: ReturnType<typeof loadMCPConfigSync>['mcpServers'][string] | undefined
     if (!serverNameOrUrl.startsWith('http')) {
       const mcpConfig = loadMCPConfigSync({ verbose: false })
       const config = mcpConfig.mcpServers[serverNameOrUrl]
       if (config && config.type !== 'stdio') {
         serverUrl = config.url
+        resolvedConfig = config
       }
+    } else {
+      // When a bare URL is passed, find the matching config by URL so we can
+      // also clear the in-memory cached client (not just on-disk OAuth creds).
+      const mcpConfig = loadMCPConfigSync({ verbose: false })
+      resolvedConfig = Object.values(mcpConfig.mcpServers).find(
+        (config) => config.type !== 'stdio' && config.url === serverNameOrUrl,
+      )
     }
 
     const connections = getMcpOAuthStatus()
@@ -1072,6 +1081,9 @@ function handleDisconnectMcp(serverNameOrUrl: string): void {
       return
     }
     clearMcpOAuthCredentials(serverUrl)
+    if (resolvedConfig) {
+      clearMCPClient(resolvedConfig)
+    }
     writeErr(
       `Cleared MCP OAuth credentials for ${serverNameOrUrl}. You will be prompted to re-authenticate next time this server is used.\n\n`,
     )
@@ -1081,7 +1093,14 @@ function handleDisconnectMcp(serverNameOrUrl: string): void {
       writeErr('No MCP OAuth credentials to clear.\n\n')
       return
     }
+    // Clear all on-disk credentials and all in-memory clients.
     clearMcpOAuthCredentials()
+    const mcpConfig = loadMCPConfigSync({ verbose: false })
+    for (const config of Object.values(mcpConfig.mcpServers)) {
+      if (config.type !== 'stdio') {
+        clearMCPClient(config)
+      }
+    }
     writeErr(
       `Cleared OAuth credentials for ${connections.length} MCP server${connections.length === 1 ? '' : 's'}. You will be prompted to re-authenticate next time these servers are used.\n\n`,
     )

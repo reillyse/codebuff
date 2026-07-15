@@ -67,6 +67,10 @@ export async function getMCPToolData(
           for (const { name, description, inputSchema } of mcpData) {
             writeTo[mcpName + MCP_TOOL_SEPARATOR + name] = {
               inputSchema: convertJsonSchemaToZod(inputSchema as any) as any,
+              // Preserve the original JSON Schema so tool-call inputs can be
+              // coerced back to their declared types (numbers, booleans,
+              // arrays) before being sent to the MCP server.
+              rawInputSchema: inputSchema as Record<string, unknown>,
               endsAgentStep: true,
               description,
             }
