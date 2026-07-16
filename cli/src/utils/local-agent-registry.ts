@@ -4,6 +4,7 @@ import path from 'path'
 
 import { pluralize } from '@codebuff/common/util/string'
 import { loadLocalAgents as sdkLoadLocalAgents, loadMCPConfigSync } from '@codebuff/sdk'
+import type { AgentLoadError } from '@codebuff/sdk'
 
 import type { MCPConfig } from '@codebuff/common/types/mcp'
 
@@ -27,11 +28,7 @@ export interface LocalAgentInfo {
   isBundled?: boolean
 }
 
-/** An agent file that failed to load (e.g. a syntax error in the file). */
-export interface AgentLoadError {
-  filePath: string
-  message: string
-}
+export type { AgentLoadError }
 
 // ============================================================================
 // User agents cache (loaded via SDK at startup)

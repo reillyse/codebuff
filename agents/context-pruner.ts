@@ -50,6 +50,9 @@ const definition: AgentDefinition = {
     /** Agent IDs whose output should be excluded from spawn_agents results */
     const SPAWN_AGENTS_OUTPUT_BLACKLIST = [
       'file-picker',
+      'code-searcher',
+      'directory-lister',
+      'glob-matcher',
       'researcher-web',
       'researcher-docs',
       'commander',
@@ -428,9 +431,18 @@ const definition: AgentDefinition = {
     // 2. Walk backwards through summarized parts to apply token budgets
     // 3. Older summarized parts beyond the budgets are dropped
 
-    const assistantToolBudget: number =
-      params?.assistantToolBudget ?? ASSISTANT_TOOL_BUDGET
-    const userBudget: number = params?.userBudget ?? USER_BUDGET
+    // Clamp each budget to a safe fraction of the context window so the
+    // generated summary stays bounded on small-window models. The clamp
+    // overrides explicitly-passed params: no caller can request a budget
+    // larger than 10 % (assistant) / 25 % (user) of maxContextLength.
+    const assistantToolBudget: number = Math.min(
+      params?.assistantToolBudget ?? ASSISTANT_TOOL_BUDGET,
+      Math.floor(maxContextLength * 0.1),
+    )
+    const userBudget: number = Math.min(
+      params?.userBudget ?? USER_BUDGET,
+      Math.floor(maxContextLength * 0.25),
+    )
 
     function shouldExcludeMessage(message: Message): boolean {
       if (message.tags?.includes('INSTRUCTIONS_PROMPT')) return true
@@ -613,7 +625,7 @@ const definition: AgentDefinition = {
         if (parts.length > 0) {
           summarizedEntries.push({
             role: 'assistant_tool',
-            parts,
+            parts: [parts.join('\n\n')],
           })
         }
       } else if (message.role === 'tool') {

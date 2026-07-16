@@ -1313,6 +1313,59 @@ First assistant response
     expect(errorChunk).toContain('Command failed with exit code: 1')
   })
 
+  test('keeps assistant progress note and tool calls in same --- chunk after re-compaction', () => {
+    const simulateCompaction = (inputMessages: Message[]): Message => {
+      const result = runHandleSteps(inputMessages, 250000, 200000)
+      return result[0].input.messages[0]
+    }
+
+    // Assistant message with both text AND a tool call (exercises the parts.join fix)
+    const cycle1Messages: Message[] = [
+      createMessage('user', 'Read a file for me'),
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Let me read that for you' },
+          {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'read_files',
+            input: { paths: ['src/index.ts'] },
+          },
+        ],
+      } as Message,
+    ]
+
+    // Cycle 1: compact
+    const summary1 = simulateCompaction(cycle1Messages)
+    const summary1Text = (summary1.content[0] as { type: 'text'; text: string }).text
+    expect(summary1Text).toContain('Let me read that for you')
+    expect(summary1Text).toContain('inspected files: src/index.ts')
+
+    // Cycle 2: re-compact — without the fix, parts would be split into separate --- chunks
+    // and parseSummaryIntoEntries would treat them as independent entries on the next cycle
+    const cycle2Messages: Message[] = [
+      summary1,
+      createMessage('user', 'Great, thanks!'),
+      createMessage('assistant', 'You are welcome'),
+    ]
+    const summary2 = simulateCompaction(cycle2Messages)
+    const summary2Text = (summary2.content[0] as { type: 'text'; text: string }).text
+
+    expect(summary2Text).toContain('Let me read that for you')
+    expect(summary2Text).toContain('inspected files: src/index.ts')
+
+    // Both parts must be within the same --- delimited chunk, not split apart
+    const separator = '\n\n---\n\n'
+    const chunks = summary2Text
+      .replace(/<conversation_summary>[\s\S]*?\n\n/, '')
+      .replace(/<\/conversation_summary>[\s\S]*/, '')
+      .split(separator)
+    const assistantChunk = chunks.find((c) => c.includes('Let me read that for you'))
+    expect(assistantChunk).toBeDefined()
+    expect(assistantChunk).toContain('inspected files: src/index.ts')
+  })
+
   test('handles 3+ compaction cycles without nested PREVIOUS SUMMARY markers', () => {
     // Helper to simulate running the context pruner and getting the output
     const simulateCompaction = (inputMessages: Message[]): Message => {
@@ -2359,9 +2412,38 @@ describe('context-pruner dual-budget behavior', () => {
     expect(content).toContain('New request about feature B')
     expect(content).toContain('Working on feature B')
   })
+
+  test('clamps explicitly-passed budgets to fractions of maxContextLength', () => {
+    // With maxContextLength=10000, clamped budgets are:
+    //   assistantToolBudget = min(999999, 10% of 10000) = 1000 tokens = 3000 chars
+    //   userBudget          = min(999999, 25% of 10000) = 2500 tokens = 7500 chars
+    const longContent = 'LONG_RESPONSE_MARKER_' + 'x'.repeat(3080)
+    // longContent is ~3101 chars ≈ 1034 tokens — exceeds the clamped 1000-token assistant budget
+
+    const messages: Message[] = [
+      createMessage('user', 'Request A'),
+      createMessage('assistant', longContent),
+      createMessage('user', 'Request B'),
+      createMessage('assistant', 'Short response'),
+    ]
+
+    const results = runHandleSteps(messages, 250000, 10000, {
+      assistantToolBudget: 999999, // clamped to 1000 tokens
+      userBudget: 999999,          // clamped to 2500 tokens
+    })
+
+    const content = results[0].input.messages[0].content[0].text
+    // Newest assistant entry always survives (forced)
+    expect(content).toContain('Short response')
+    // User entries are small and both fit within the clamped user budget
+    expect(content).toContain('Request A')
+    expect(content).toContain('Request B')
+    // The large old assistant entry exceeds the clamped assistant budget → dropped
+    expect(content).not.toContain('LONG_RESPONSE_MARKER_')
+  })
 })
 
-describe('context-pruner hippo memory integration', () => {
+describe('context-pruner no-prune passthrough', () => {
   let mockAgentState: AgentState
 
   beforeEach(() => {

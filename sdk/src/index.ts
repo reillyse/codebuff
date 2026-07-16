@@ -46,6 +46,7 @@ export type {
   LoadedAgentDefinition,
   LoadLocalAgentsResult,
   AgentValidationError,
+  AgentLoadError,
 } from './agents/load-agents'
 export type {
   MCPFileConfig,
