@@ -492,7 +492,7 @@ export const getHippoContext = async (
 
     const trimmedResult = stdout.trim()
 
-    if (!trimmedResult || trimmedResult.toUpperCase() === 'NONE' || trimmedResult.length < 20) {
+    if (!trimmedResult || trimmedResult.toUpperCase() === 'NONE' || trimmedResult.length < 20 || trimmedResult.toLowerCase().startsWith('no relevant context')) {
       logger.debug({}, 'Hippo context-search found nothing relevant')
       return { context: '', connectionOk: true, lastError: null }
     }
@@ -844,7 +844,7 @@ export const getSubagentHippoContext = async (
     }
 
     const trimmedResult = stdout.trim()
-    if (!trimmedResult || trimmedResult.toUpperCase() === 'NONE' || trimmedResult.length < 20) {
+    if (!trimmedResult || trimmedResult.toUpperCase() === 'NONE' || trimmedResult.length < 20 || trimmedResult.toLowerCase().startsWith('no relevant context')) {
       logger.debug({ agentType }, 'Hippo subagent context-search found nothing relevant')
       recordSubagentHippoSuccess()
       return { context: '', connectionOk: true, lastError: null }
