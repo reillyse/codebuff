@@ -38,6 +38,8 @@ let lastStoredSummaryHash: string | null = null
  */
 export const resetHippoSessionState = (): void => {
   lastStoredSummaryHash = null
+  consecutiveSubagentHippoFailures = 0
+  hippoSubagentCircuitOpenUntil = 0
 }
 
 // Tool names that indicate file changes
@@ -248,6 +250,41 @@ let cachedHippoEnabled: boolean | null = null
  */
 export const resetHippoEnabledCache = (): void => {
   cachedHippoEnabled = null
+}
+
+// ---------------------------------------------------------------------------
+// Subagent hippo circuit breaker
+//
+// When hippo is unresponsive, each subagent spawn triggers a 3-second timeout
+// before falling through. After THRESHOLD consecutive failures we open the
+// circuit for DURATION_MS so we stop hammering a down hippo and the agent
+// receives an explicit "hippo unavailable" note (telling it to use direct APIs
+// instead of retrying hippo commands in a loop).
+// ---------------------------------------------------------------------------
+
+let consecutiveSubagentHippoFailures = 0
+const HIPPO_SUBAGENT_CIRCUIT_BREAK_THRESHOLD = 3
+const HIPPO_SUBAGENT_CIRCUIT_BREAK_DURATION_MS = 2 * 60 * 1000 // 2 minutes
+let hippoSubagentCircuitOpenUntil = 0
+
+const isHippoSubagentCircuitOpen = (): boolean => Date.now() < hippoSubagentCircuitOpenUntil
+
+const recordSubagentHippoFailure = (): void => {
+  consecutiveSubagentHippoFailures++
+  if (consecutiveSubagentHippoFailures >= HIPPO_SUBAGENT_CIRCUIT_BREAK_THRESHOLD) {
+    hippoSubagentCircuitOpenUntil = Date.now() + HIPPO_SUBAGENT_CIRCUIT_BREAK_DURATION_MS
+    logger.debug(
+      { consecutiveSubagentHippoFailures },
+      'Hippo subagent circuit breaker opened — skipping hippo for 2 min',
+    )
+  }
+}
+
+const recordSubagentHippoSuccess = (): void => {
+  if (consecutiveSubagentHippoFailures > 0) {
+    consecutiveSubagentHippoFailures = 0
+    hippoSubagentCircuitOpenUntil = 0
+  }
 }
 
 /**
@@ -802,12 +839,14 @@ export const getSubagentHippoContext = async (
 
     if (stdout === null) {
       logHippoPrompt('response', '(subagent command failed)', { 'Error': error ?? 'Unknown error' })
+      recordSubagentHippoFailure()
       return { context: '', connectionOk: false, lastError: error ?? 'Unknown error' }
     }
 
     const trimmedResult = stdout.trim()
     if (!trimmedResult || trimmedResult.toUpperCase() === 'NONE' || trimmedResult.length < 20) {
       logger.debug({ agentType }, 'Hippo subagent context-search found nothing relevant')
+      recordSubagentHippoSuccess()
       return { context: '', connectionOk: true, lastError: null }
     }
 
@@ -820,6 +859,7 @@ export const getSubagentHippoContext = async (
       'Type': `subagent:${agentType}`,
       'Content length': cappedResult.length,
     })
+    recordSubagentHippoSuccess()
     return { context: cappedResult, connectionOk: true, lastError: null }
   } catch (error) {
     logger.debug(
@@ -952,10 +992,22 @@ export const buildHippoSubagentHooks = (getSessionId: () => string) => {
     onBeforeSubagentPrompt: async ({ agentType, prompt }: { agentType: string; prompt: string }) => {
       const shortId = getShortAgentId(agentType)
       if (!HIPPO_ENRICHED_AGENTS.includes(shortId)) return undefined
+      // Circuit open: inject an explicit "unavailable" note so the agent stops
+      // retrying hippo commands and falls back to direct APIs instead.
+      if (isHippoSubagentCircuitOpen()) {
+        return {
+          enrichedPrompt: `> **Note:** hippo memory is temporarily unavailable — use direct APIs or tools instead of retrying hippo commands.\n\n${prompt}`,
+        }
+      }
       if (!isHippoAvailable()) return undefined
       const result = await getSubagentHippoContext(shortId, prompt, getSessionId())
       if (!result.context) return undefined
-      return { enrichedPrompt: `## Relevant Context from Past Sessions\n${result.context}\n\n${prompt}` }
+      const runRetrievalNote = [
+        '> If this context references past runs (e.g. `run_abc123`), retrieve a specific',
+        '> run\'s output with: `hippo run get <run_id>`',
+        '> Only do this if the run appears directly relevant to your current task.',
+      ].join('\n')
+      return { enrichedPrompt: `## Relevant Context from Past Sessions\n${runRetrievalNote}\n\n${result.context}\n\n${prompt}` }
     },
     onAfterSubagentComplete: async ({ agentType, prompt, output, elapsedMs }: { agentType: string; prompt: string; output: unknown; elapsedMs: number }) => {
       const shortId = getShortAgentId(agentType)
