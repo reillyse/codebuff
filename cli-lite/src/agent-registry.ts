@@ -51,9 +51,19 @@ try {
 export async function initializeAgentRegistry(): Promise<void> {
   if (initialized) return
 
-  // Load user agents from .agents directories
+  // Load user agents from .agents directories. `onError` fires for every agent
+  // file that fails to load (e.g. a syntax error) and is always surfaced to
+  // stderr (not gated behind CODEBUFF_DEBUG) so a broken agent file isn't
+  // silently skipped.
   try {
-    userAgentsCache = await sdkLoadLocalAgents({ verbose: false })
+    userAgentsCache = await sdkLoadLocalAgents({
+      verbose: false,
+      onError: (error) => {
+        process.stderr.write(
+          `[agent-registry] Failed to load agent file ${error.filePath}: ${error.message}\n`,
+        )
+      },
+    })
     debug(`Loaded ${Object.keys(userAgentsCache).length} user agents`)
   } catch (error) {
     debug('Failed to load user agents:', error)

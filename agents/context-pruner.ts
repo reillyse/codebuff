@@ -14,7 +14,7 @@ const definition: AgentDefinition = {
   id: 'context-pruner',
   publisher,
   displayName: 'Context Pruner',
-  model: 'openai/gpt-5-mini',
+  model: 'anthropic/claude-sonnet-4.6',
 
   spawnerPrompt: `Spawn this agent between steps to prune context, summarizing the conversation into a condensed format when context exceeds the limit.`,
 
@@ -31,6 +31,9 @@ const definition: AgentDefinition = {
         userBudget: {
           type: 'number',
         },
+        cacheExpiryMs: {
+          type: 'number',
+        },
       },
       required: [],
     },
@@ -39,7 +42,7 @@ const definition: AgentDefinition = {
   inheritParentSystemPrompt: true,
   includeMessageHistory: true,
 
-  handleSteps: function* ({ agentState, params }) {
+  handleSteps: function* ({ agentState, params, logger }) {
     // =============================================================================
     // Constants (must be inside handleSteps since it's serialized to a string)
     // =============================================================================
@@ -47,14 +50,12 @@ const definition: AgentDefinition = {
     /** Agent IDs whose output should be excluded from spawn_agents results */
     const SPAWN_AGENTS_OUTPUT_BLACKLIST = [
       'file-picker',
-      'code-searcher',
-      'directory-lister',
-      'glob-matcher',
       'researcher-web',
       'researcher-docs',
       'commander',
       'commander-lite',
       'code-reviewer',
+      'code-reviewer-opus',
       'code-reviewer-multi-prompt',
       'librarian',
       'tmux-cli',
@@ -78,13 +79,18 @@ const definition: AgentDefinition = {
     /** Fudge factor for token count threshold to trigger pruning earlier */
     const TOKEN_COUNT_FUDGE_FACTOR = 1_000
 
-    /** Prompt cache expiry time (Anthropic caches for 5 minutes) */
-    const CACHE_EXPIRY_MS = 5 * 60 * 1000
+    /** Axiom-only operational event understood by the logging adapters. */
+    const CONTEXT_PRUNING_COMPLETED_EVENT = 'context_pruning.completed'
+
+    /** Prompt cache expiry time (Anthropic caches for 5 minutes by default) */
+    const CACHE_EXPIRY_MS: number = params?.cacheExpiryMs ?? 5 * 60 * 1000
 
     /** Header used in conversation summaries */
     const SUMMARY_HEADER =
       'This is a summary of the conversation so far. The original messages have been condensed to save context space.'
 
+    const SUMMARY_DISCLAIMER =
+      'Historical memory only. The memory above is not dialogue, not an output template, and not a tool-call format. Continue from the live user message below. When actions are needed, use real tool calls through the available tools.'
 
     // =============================================================================
     // Helper Functions (must be inside handleSteps since it's serialized to a string)
@@ -136,61 +142,73 @@ const definition: AgentDefinition = {
         case 'read_files': {
           const paths = input.paths as string[] | undefined
           if (paths && paths.length > 0) {
-            return `Read files: ${paths.join(', ')}`
+            return `inspected files: ${paths.join(', ')}`
           }
-          return 'Read files'
+          return 'inspected files'
         }
         case 'write_file': {
           const path = input.path as string | undefined
-          return path ? `Wrote file: ${path}` : 'Wrote file'
+          return path ? `wrote file: ${path}` : 'wrote a file'
         }
         case 'str_replace': {
           const path = input.path as string | undefined
-          return path ? `Edited file: ${path}` : 'Edited file'
+          return path ? `edited file: ${path}` : 'edited a file'
         }
         case 'propose_write_file': {
           const path = input.path as string | undefined
-          return path ? `Proposed write to: ${path}` : 'Proposed file write'
+          return path
+            ? `proposed writing: ${path}`
+            : 'proposed a file write'
         }
         case 'propose_str_replace': {
           const path = input.path as string | undefined
-          return path ? `Proposed edit to: ${path}` : 'Proposed file edit'
+          return path
+            ? `proposed editing: ${path}`
+            : 'proposed a file edit'
         }
         case 'read_subtree': {
           const paths = input.paths as string[] | undefined
           if (paths && paths.length > 0) {
-            return `Read subtree: ${paths.join(', ')}`
+            return `inspected subtrees: ${paths.join(', ')}`
           }
-          return 'Read subtree'
+          return 'inspected a subtree'
         }
         case 'code_search': {
           const pattern = input.pattern as string | undefined
           const flags = input.flags as string | undefined
           if (pattern && flags) {
-            return `Code search: "${pattern}" (${flags})`
+            return `code search for "${pattern}" (${flags})`
           }
-          return pattern ? `Code search: "${pattern}"` : 'Code search'
+          return pattern
+            ? `code search for "${pattern}"`
+            : 'code search'
         }
         case 'glob': {
           const pattern = input.pattern as string | undefined
-          return pattern ? `Glob: ${pattern}` : 'Glob search'
+          return pattern
+            ? `glob search for ${pattern}`
+            : 'glob search'
         }
         case 'list_directory': {
           const path = input.path as string | undefined
-          return path ? `Listed dir: ${path}` : 'Listed directory'
+          return path
+            ? `listed directory: ${path}`
+            : 'listed a directory'
         }
         case 'find_files': {
-          const pattern = input.pattern as string | undefined
-          return pattern ? `Find files: "${pattern}"` : 'Find files'
+          const prompt = input.prompt as string | undefined
+          return prompt
+            ? `file-finding request: "${prompt}"`
+            : 'file-finding request'
         }
         case 'run_terminal_command': {
           const command = input.command as string | undefined
           if (command) {
             const shortCmd =
               command.length > 50 ? command.slice(0, 50) + '...' : command
-            return `Ran command: ${shortCmd}`
+            return `ran command: ${shortCmd}`
           }
-          return 'Ran terminal command'
+          return 'ran a terminal command'
         }
         case 'spawn_agents':
         case 'spawn_agent_inline': {
@@ -231,7 +249,7 @@ const definition: AgentDefinition = {
               }
               return detail
             })
-            return `Spawned agents:\n${agentDetails.map((d) => `- ${d}`).join('\n')}`
+            return `delegated agents:\n${agentDetails.map((d) => `- ${d}`).join('\n')}`
           }
           if (agentType) {
             const extras: string[] = []
@@ -249,11 +267,11 @@ const definition: AgentDefinition = {
               extras.push(`params: ${truncatedParams}`)
             }
             if (extras.length > 0) {
-              return `Spawned agent: ${agentType} (${extras.join(', ')})`
+              return `delegated agent ${agentType} (${extras.join(', ')})`
             }
-            return `Spawned agent: ${agentType}`
+            return `delegated agent ${agentType}`
           }
-          return 'Spawned agent(s)'
+          return 'delegated agent work'
         }
         case 'write_todos': {
           const todos = input.todos as
@@ -290,18 +308,30 @@ const definition: AgentDefinition = {
           return 'Suggested followups'
         case 'web_search': {
           const query = input.query as string | undefined
-          return query ? `Web search: "${query}"` : 'Web search'
+          return query
+            ? `web search for "${query}"`
+            : 'web search'
+        }
+        case 'read_url': {
+          const url = input.url as string | undefined
+          return url ? `read URL: ${url}` : 'read a URL'
         }
         case 'read_docs': {
-          const query = input.query as string | undefined
-          return query ? `Read docs: "${query}"` : 'Read docs'
+          const libraryTitle = input.libraryTitle as string | undefined
+          const topic = input.topic as string | undefined
+          if (libraryTitle && topic) {
+            return `consulted docs: ${libraryTitle} - ${topic}`
+          }
+          return libraryTitle
+            ? `consulted docs: ${libraryTitle}`
+            : 'consulted docs'
         }
         case 'set_output':
-          return 'Set output'
+          return 'set structured output'
         case 'set_messages':
-          return 'Set messages'
+          return 'updated message history'
         default:
-          return `Used tool: ${toolName}`
+          return `used tool ${toolName}`
       }
     }
 
@@ -328,10 +358,22 @@ const definition: AgentDefinition = {
       currentMessages.splice(lastSubagentSpawnIndex, 1)
     }
 
+    // Also remove the params USER_PROMPT if params were provided to this agent
+    // (this is the message like <user_message>{"cacheExpiryMs": 600000}</user_message>)
+    if (params && Object.keys(params).length > 0) {
+      const lastUserPromptIndex = currentMessages.findLastIndex((message) =>
+        message.tags?.includes('USER_PROMPT'),
+      )
+      if (lastUserPromptIndex !== -1) {
+        currentMessages.splice(lastUserPromptIndex, 1)
+      }
+    }
+
     // Check for prompt cache miss (>5 min gap before the USER_PROMPT message)
     // The USER_PROMPT is the actual user message; INSTRUCTIONS_PROMPT comes after it
     // We need to find the USER_PROMPT and check the gap between it and the last assistant message
     let cacheWillMiss = false
+    let cacheGapMs: number | null = null
     const userPromptIndex = currentMessages.findLastIndex((message) =>
       message.tags?.includes('USER_PROMPT'),
     )
@@ -347,15 +389,19 @@ const definition: AgentDefinition = {
       }
       if (userPromptMsg.sentAt && lastAssistantMsg?.sentAt) {
         const gap = userPromptMsg.sentAt - lastAssistantMsg.sentAt
+        cacheGapMs = gap
         cacheWillMiss = gap > CACHE_EXPIRY_MS
       }
     }
+
+    const contextLimitExceeded =
+      agentState.contextTokenCount + TOKEN_COUNT_FUDGE_FACTOR > maxContextLength
 
     // Check if we need to prune at all:
     // - Prune when context exceeds max, OR
     // - Prune when prompt cache will miss (>5 min gap) to take advantage of fresh context
     // If not, return messages with just the subagent-specific tags removed
-    if (agentState.contextTokenCount + TOKEN_COUNT_FUDGE_FACTOR <= maxContextLength && !cacheWillMiss) {
+    if (!contextLimitExceeded && !cacheWillMiss) {
       yield {
         toolName: 'set_messages',
         input: { messages: currentMessages },
@@ -382,7 +428,8 @@ const definition: AgentDefinition = {
     // 2. Walk backwards through summarized parts to apply token budgets
     // 3. Older summarized parts beyond the budgets are dropped
 
-    const assistantToolBudget: number = params?.assistantToolBudget ?? ASSISTANT_TOOL_BUDGET
+    const assistantToolBudget: number =
+      params?.assistantToolBudget ?? ASSISTANT_TOOL_BUDGET
     const userBudget: number = params?.userBudget ?? USER_BUDGET
 
     function shouldExcludeMessage(message: Message): boolean {
@@ -407,6 +454,12 @@ const definition: AgentDefinition = {
       if (content.startsWith(SUMMARY_HEADER)) {
         content = content.slice(SUMMARY_HEADER.length).trim()
       }
+      const memoryMatch = content.match(
+        /<historical_memory>([\s\S]*?)<\/historical_memory>/,
+      )
+      if (memoryMatch) {
+        content = memoryMatch[1].trim()
+      }
       return content
     }
 
@@ -426,8 +479,10 @@ const definition: AgentDefinition = {
       return chunks.map((chunk) => {
         const trimmed = chunk.trim()
         const isUser =
-          trimmed.startsWith('[USER]\n') ||
-          trimmed.startsWith('[USER] [with image')
+          trimmed.startsWith('[USER]') ||
+          trimmed.startsWith('User request') ||
+          trimmed.startsWith('User message') ||
+          trimmed.startsWith('Current unresolved user request')
         return {
           role: isUser ? ('user' as const) : ('assistant_tool' as const),
           parts: [trimmed],
@@ -443,10 +498,37 @@ const definition: AgentDefinition = {
       }
     }
 
-    // Filter out excluded and conversation summary messages for summarization
-    const messagesToSummarize = currentMessages.filter(
-      (message) => !shouldExcludeMessage(message) && !isConversationSummary(message),
+    // If pruning happens before the assistant has started responding to the
+    // current user prompt, preserve that prompt as a real message after the
+    // memory artifact. If pruning happens mid-turn, keep the prompt in the
+    // historical memory with the assistant/tool progress that followed it and
+    // append a synthetic continuation prompt instead.
+    const latestLiveUserPromptIndex = currentMessages.findLastIndex((message) =>
+      message.tags?.includes('USER_PROMPT'),
     )
+    const latestLiveUserPromptMessage =
+      latestLiveUserPromptIndex !== -1
+        ? currentMessages[latestLiveUserPromptIndex]
+        : null
+    const isMidTurnPrune =
+      latestLiveUserPromptIndex !== -1 &&
+      currentMessages
+        .slice(latestLiveUserPromptIndex + 1)
+        .some(
+          (message) =>
+            !shouldExcludeMessage(message) && !isConversationSummary(message),
+        )
+
+    // Filter out excluded, conversation summary, and live-prompt messages for summarization
+    const messagesToSummarize = currentMessages
+      .filter(
+        (_message, index) =>
+          isMidTurnPrune || index !== latestLiveUserPromptIndex,
+      )
+      .filter(
+        (message) =>
+          !shouldExcludeMessage(message) && !isConversationSummary(message),
+      )
 
     // Find the last user message with images to preserve in the final output
     let lastUserImageParts: Array<Record<string, unknown>> = []
@@ -465,7 +547,12 @@ const definition: AgentDefinition = {
     }
 
     // Phase 1: Summarize ALL messages into tagged entries
-    const summarizedEntries: Array<{ role: 'user' | 'assistant_tool'; parts: string[] }> = []
+    type SummaryEntry = {
+      role: 'user' | 'assistant_tool'
+      parts: string[]
+    }
+    const summarizedEntries: SummaryEntry[] = []
+    let liveUserPromptEntry: SummaryEntry | undefined
 
     for (const message of messagesToSummarize) {
       if (message.role === 'user') {
@@ -479,11 +566,15 @@ const definition: AgentDefinition = {
                 part.type === 'image' || part.type === 'media',
             )
           }
-          const imageNote = hasImages ? ' [with image(s)]' : ''
-          summarizedEntries.push({
+          const imageNote = hasImages ? ' [image(s) were attached]' : ''
+          const entry: SummaryEntry = {
             role: 'user',
             parts: [`[USER]${imageNote}\n${text}`],
-          })
+          }
+          if (message === latestLiveUserPromptMessage) {
+            liveUserPromptEntry = entry
+          }
+          summarizedEntries.push(entry)
         }
       } else if (message.role === 'assistant') {
         const textParts: string[] = []
@@ -509,17 +600,20 @@ const definition: AgentDefinition = {
         const parts: string[] = []
         if (textParts.length > 0) {
           let combinedText = textParts.join('\n')
-          combinedText = truncateLongText(combinedText, ASSISTANT_MESSAGE_LIMIT * CHARS_PER_TOKEN)
-          parts.push(combinedText)
+          combinedText = truncateLongText(
+            combinedText,
+            ASSISTANT_MESSAGE_LIMIT * CHARS_PER_TOKEN,
+          )
+          parts.push(`Progress note:\n${combinedText}`)
         }
         if (toolSummaries.length > 0) {
-          parts.push(`Tools: ${toolSummaries.join('; ')}`)
+          parts.push(toolSummaries.join('\n'))
         }
 
         if (parts.length > 0) {
           summarizedEntries.push({
             role: 'assistant_tool',
-            parts: [`[ASSISTANT]\n${parts.join('\n')}`],
+            parts,
           })
         }
       } else if (message.role === 'tool') {
@@ -537,7 +631,7 @@ const definition: AgentDefinition = {
                   errorText = errorText.slice(0, 100) + '...'
                 }
                 entryParts.push(
-                  `[TOOL ERROR: ${toolMessage.toolName}] ${errorText}`,
+                  `Tool error from ${toolMessage.toolName}: ${errorText}`,
                 )
               }
 
@@ -547,13 +641,13 @@ const definition: AgentDefinition = {
               ) {
                 const exitCode = value.exitCode as number
                 if (exitCode !== 0) {
-                  entryParts.push(`[COMMAND FAILED] Exit code: ${exitCode}`)
+                  entryParts.push(`Command failed with exit code: ${exitCode}`)
                 }
               }
 
               if (toolMessage.toolName === 'ask_user') {
                 if (value.skipped) {
-                  entryParts.push('[USER SKIPPED QUESTION]')
+                  entryParts.push('User skipped question')
                 } else if ('answers' in value) {
                   const answers = value.answers as
                     | Array<{
@@ -576,7 +670,7 @@ const definition: AgentDefinition = {
                       answerTexts.length > 10_000
                         ? answerTexts.slice(0, 10_000) + '...'
                         : answerTexts
-                    entryParts.push(`[USER ANSWERED] ${truncated}`)
+                    entryParts.push(`User answered: ${truncated}`)
                   }
                 }
               }
@@ -593,7 +687,7 @@ const definition: AgentDefinition = {
                     ? resultStr.slice(0, 2000) + '...'
                     : resultStr
                 entryParts.push(
-                  `[EDIT RESULT: ${toolMessage.toolName}]\n${truncatedResult}`,
+                  `Edit result from ${toolMessage.toolName}:\n${truncatedResult}`,
                 )
               }
             }
@@ -631,16 +725,20 @@ const definition: AgentDefinition = {
                     outputStr = outputStr
                       .replace(/<think>[\s\S]*?<\/think>/g, '')
                       .trim()
-                    if (outputStr.length > ASSISTANT_MESSAGE_LIMIT * CHARS_PER_TOKEN) {
+                    if (
+                      outputStr.length >
+                      ASSISTANT_MESSAGE_LIMIT * CHARS_PER_TOKEN
+                    ) {
                       outputStr =
-                        outputStr.slice(0, ASSISTANT_MESSAGE_LIMIT * CHARS_PER_TOKEN) + '...'
+                        outputStr.slice(
+                          0,
+                          ASSISTANT_MESSAGE_LIMIT * CHARS_PER_TOKEN,
+                        ) + '...'
                     }
                   }
                   return `- ${r.agentType}: ${outputStr || '(no output)'}`
                 })
-                entryParts.push(
-                  `[AGENT RESULTS]\n${resultSummaries.join('\n')}`,
-                )
+                entryParts.push(`Agent results:\n${resultSummaries.join('\n')}`)
               }
             }
           }
@@ -660,15 +758,23 @@ const definition: AgentDefinition = {
     }
 
     // Parse previous summary into role-tagged entries and combine with new entries
-    const allEntries = [
-      ...parseSummaryIntoEntries(previousSummaryContent),
+    const previousSummaryEntries = parseSummaryIntoEntries(
+      previousSummaryContent,
+    )
+    const allEntries: SummaryEntry[] = [
+      ...previousSummaryEntries,
       ...summarizedEntries,
     ]
 
-    // Phase 2: Walk backwards through all entries to apply token budgets
+    // Phase 2: Walk backwards through all entries to apply token budgets.
+    // Exhausting one role's budget must not evict entries from the other role:
+    // user prompts are protected by the user budget independently of how much
+    // assistant/tool history the conversation accumulated, and vice versa.
     let assistantToolTokens = 0
     let userTokens = 0
-    let cutoffIndex = 0
+    let assistantToolBudgetExhausted = false
+    let userBudgetExhausted = false
+    const includedEntries: typeof allEntries = []
 
     for (let i = allEntries.length - 1; i >= 0; i--) {
       const entry = allEntries[i]
@@ -676,30 +782,41 @@ const definition: AgentDefinition = {
       const entryTokens = Math.ceil(entryText.length / CHARS_PER_TOKEN)
 
       if (entry.role === 'user') {
+        if (userBudgetExhausted) continue
         if (userTokens + entryTokens > userBudget) {
-          cutoffIndex = i + 1
-          break
+          userBudgetExhausted = true
+          continue
         }
         userTokens += entryTokens
       } else {
+        if (assistantToolBudgetExhausted) continue
         if (assistantToolTokens + entryTokens > assistantToolBudget) {
-          cutoffIndex = i + 1
-          break
+          assistantToolBudgetExhausted = true
+          continue
         }
         assistantToolTokens += entryTokens
       }
+
+      includedEntries.push(entry)
+    }
+
+    // Preserve the pre-existing guarantee that the newest entry always
+    // survives, even when it alone exceeds its role's budget. With independent
+    // role selection, entries from the other role may still fit, so the old
+    // "summary is empty" fallback is no longer sufficient.
+    const newestEntry = allEntries[allEntries.length - 1]
+    let newestEntryForced = false
+    if (newestEntry && !includedEntries.includes(newestEntry)) {
+      // includedEntries is reverse-chronological until Phase 3.
+      includedEntries.unshift(newestEntry)
+      newestEntryForced = true
     }
 
     // Phase 3: Build final summary from included entries
     const summaryParts: string[] = []
 
-    for (let i = cutoffIndex; i < allEntries.length; i++) {
-      summaryParts.push(...allEntries[i].parts)
-    }
-
-    // Fallback: if nothing fit within budgets, always include at least the newest entry
-    if (summaryParts.length === 0 && allEntries.length > 0) {
-      summaryParts.push(...allEntries[allEntries.length - 1].parts)
+    for (let i = includedEntries.length - 1; i >= 0; i--) {
+      summaryParts.push(...includedEntries[i].parts)
     }
 
     const summaryText = summaryParts.join('\n\n---\n\n')
@@ -710,14 +827,14 @@ const definition: AgentDefinition = {
     const textPart: TextPart = {
       type: 'text',
       text: `<conversation_summary>
-This is a summary of the conversation so far. The original messages have been condensed to save context space.
+${SUMMARY_HEADER}
 
+<historical_memory>
 ${summaryText}
+</historical_memory>
 </conversation_summary>
 
-Please continue the conversation from here. In particular, try to address the user's latest request detailed in the summary above. You may need to re-gather context (e.g. read some files) to get up to speed and then tackle the user's request.
-
-Earlier pruned context from this session will be automatically surfaced by the system via hippo context-search. If a "## Relevant Context from Past Sessions" section is present in the user's message, it may contain details from before this pruning event.`,
+${SUMMARY_DISCLAIMER}`,
     }
     // Build content array with text and any preserved images
     const summaryContentParts: (TextPart | ImagePart | FilePart)[] = [textPart]
@@ -731,11 +848,88 @@ Earlier pruned context from this session will be automatically surfaced by the s
       sentAt: now,
     }
 
-    // Build final messages array: summary first, then INSTRUCTIONS_PROMPT if it exists
+    const continuationMessage: UserMessage = {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'Continue the existing assistant turn from the historical memory above. The original user request and completed assistant/tool work are recorded there. Do not restart completed work; resume with the next necessary real tool call or final response.',
+        },
+      ],
+      sentAt: now,
+    }
+
+    // Build final messages array: summary first, then INSTRUCTIONS_PROMPT if it
+    // exists, then either the live user prompt or a mid-turn continuation prompt.
+    // Keeping a real user message last makes the next model step continue from
+    // normal user input instead of the condensed memory format.
     const finalMessages: Message[] = [summarizedMessage]
     if (instructionsPromptMessage) {
       // Update sentAt to current time so future cache miss checks use fresh timestamps
       finalMessages.push({ ...instructionsPromptMessage, sentAt: now })
+    }
+    if (isMidTurnPrune) {
+      finalMessages.push(continuationMessage)
+    } else if (latestLiveUserPromptMessage) {
+      finalMessages.push({ ...latestLiveUserPromptMessage, sentAt: now })
+    }
+
+    const userEntryCount = allEntries.filter(
+      (entry) => entry.role === 'user',
+    ).length
+    const assistantToolEntryCount = allEntries.length - userEntryCount
+    const liveUserPromptHasText = latestLiveUserPromptMessage
+      ? getTextContent(latestLiveUserPromptMessage).trim().length > 0
+      : false
+    const liveUserPromptTextPreserved = latestLiveUserPromptMessage
+      ? !isMidTurnPrune ||
+        !liveUserPromptHasText ||
+        (liveUserPromptEntry !== undefined &&
+          includedEntries.includes(liveUserPromptEntry))
+      : false
+    const includedUserEntryCount = includedEntries.filter(
+      (entry) => entry.role === 'user',
+    ).length
+    const includedAssistantToolEntryCount =
+      includedEntries.length - includedUserEntryCount
+    const triggerReason = contextLimitExceeded
+      ? cacheWillMiss
+        ? 'context_limit_and_cache_expiry'
+        : 'context_limit'
+      : 'cache_expiry'
+
+    // Telemetry is best-effort and must never block the actual pruning update.
+    try {
+      logger.info(
+        {
+          axiomEvent: CONTEXT_PRUNING_COMPLETED_EVENT,
+          agent_run_id: agentState.runId,
+          parent_agent_run_id: agentState.parentId,
+          trigger_reason: triggerReason,
+          context_token_count: agentState.contextTokenCount,
+          max_context_length: maxContextLength,
+          ...(cacheGapMs === null ? {} : { cache_gap_ms: cacheGapMs }),
+          cache_expiry_ms: CACHE_EXPIRY_MS,
+          previous_summary_entry_count: previousSummaryEntries.length,
+          user_budget: userBudget,
+          user_entry_count: userEntryCount,
+          dropped_user_entry_count: userEntryCount - includedUserEntryCount,
+          assistant_tool_budget: assistantToolBudget,
+          assistant_tool_entry_count: assistantToolEntryCount,
+          dropped_assistant_tool_entry_count:
+            assistantToolEntryCount - includedAssistantToolEntryCount,
+          mid_turn: isMidTurnPrune,
+          live_user_prompt_found: latestLiveUserPromptMessage !== null,
+          live_user_prompt_text_preserved: liveUserPromptTextPreserved,
+          newest_entry_forced: newestEntryForced,
+          summary_estimated_tokens: Math.ceil(
+            summaryText.length / CHARS_PER_TOKEN,
+          ),
+        },
+        'Context pruning completed',
+      )
+    } catch {
+      // Ignore logging failures; set_messages below is the critical operation.
     }
 
     yield {

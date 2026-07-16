@@ -93,6 +93,19 @@ export type AgentValidationError = {
 }
 
 /**
+ * Error encountered while loading an agent file (parse/import failure, missing
+ * required attributes, or unresolved MCP env references). Surfaced via the
+ * `onError` callback so callers can report the failure instead of silently
+ * skipping the file.
+ */
+export type AgentLoadError = {
+  /** The source file path that failed to load */
+  filePath: string
+  /** A human-readable error message */
+  message: string
+}
+
+/**
  * Result returned by loadLocalAgents when validate: true.
  * Contains both the valid agents and any validation errors.
  */
@@ -188,6 +201,7 @@ export async function loadLocalAgents(options: {
   agentsPath?: string
   verbose?: boolean
   validate: true
+  onError?: (error: AgentLoadError) => void
 }): Promise<LoadLocalAgentsResult>
 
 // Overload: validate: false or omitted returns just agents (backward compatible)
@@ -195,6 +209,7 @@ export async function loadLocalAgents(options: {
   agentsPath?: string
   verbose?: boolean
   validate?: false
+  onError?: (error: AgentLoadError) => void
 }): Promise<LoadedAgents>
 
 // Implementation
@@ -202,10 +217,18 @@ export async function loadLocalAgents({
   agentsPath,
   verbose = false,
   validate = false,
+  onError,
 }: {
   agentsPath?: string
   verbose?: boolean
   validate?: boolean
+  /**
+   * Called for every agent file that fails to load (parse/import error, missing
+   * required attributes, or unresolved MCP env references). Fires regardless of
+   * `verbose` so callers can surface the failure to the user rather than
+   * silently skipping the file.
+   */
+  onError?: (error: AgentLoadError) => void
 }): Promise<LoadedAgents | LoadLocalAgentsResult> {
   const agents: LoadedAgents = {}
 
@@ -225,10 +248,10 @@ export async function loadLocalAgents({
       const agentDefinition = agentModule.default ?? agentModule
 
       if (!agentDefinition?.id || !agentDefinition?.model) {
+        const message = `Agent definition missing required attributes (id, model)`
+        onError?.({ filePath: fullPath, message })
         if (verbose) {
-          console.error(
-            `Agent definition missing required attributes (id, model): ${fullPath}`,
-          )
+          console.error(`${message}: ${fullPath}`)
         }
         continue
       }
@@ -246,19 +269,20 @@ export async function loadLocalAgents({
       try {
         resolveAgentMcpEnv(processedAgentDefinition)
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        onError?.({ filePath: fullPath, message })
         if (verbose) {
-          console.error(error instanceof Error ? error.message : String(error))
+          console.error(message)
         }
         continue
       }
 
       agents[processedAgentDefinition.id] = processedAgentDefinition
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      onError?.({ filePath: fullPath, message })
       if (verbose) {
-        console.error(
-          `Error loading agent from file ${fullPath}:`,
-          error instanceof Error ? error.message : error,
-        )
+        console.error(`Error loading agent from file ${fullPath}:`, message)
       }
     }
   }

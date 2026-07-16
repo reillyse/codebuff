@@ -27,6 +27,12 @@ export interface LocalAgentInfo {
   isBundled?: boolean
 }
 
+/** An agent file that failed to load (e.g. a syntax error in the file). */
+export interface AgentLoadError {
+  filePath: string
+  message: string
+}
+
 // ============================================================================
 // User agents cache (loaded via SDK at startup)
 // ============================================================================
@@ -36,6 +42,9 @@ let userAgentsCache: Record<string, AgentDefinition> = {}
 let userAgentFilePaths: Map<string, string> = new Map()
 // Cache for MCP servers loaded from mcp.json in .agents directories
 let mcpServersCache: Record<string, MCPConfig> = {}
+// Agent files that failed to load (parse/import errors etc.), captured at
+// startup so we can surface them to the user instead of silently skipping.
+let agentLoadErrors: AgentLoadError[] = []
 
 /**
  * Initialize the agent registry by loading user agents via the SDK.
@@ -49,9 +58,21 @@ let mcpServersCache: Record<string, MCPConfig> = {}
  * Later directories take precedence, so project agents override global ones.
  */
 export async function initializeAgentRegistry(): Promise<void> {
+  agentLoadErrors = []
   try {
-    // Let SDK load from all default directories (cwd, parent, home)
-    userAgentsCache = await sdkLoadLocalAgents({ verbose: false })
+    // Let SDK load from all default directories (cwd, parent, home).
+    // `onError` fires for every agent file that fails to load (e.g. a syntax
+    // error), so we can report it rather than silently skipping the file.
+    userAgentsCache = await sdkLoadLocalAgents({
+      verbose: false,
+      onError: (error) => {
+        agentLoadErrors.push(error)
+        logger.warn(
+          { filePath: error.filePath, message: error.message },
+          '[agents] Failed to load agent file',
+        )
+      },
+    })
     // Build ID-to-filepath map by scanning all agent directories
     userAgentFilePaths = buildAgentFilePathMap(getDefaultAgentDirs())
   } catch (error) {
@@ -404,24 +425,40 @@ export const getLoadedAgentsMessage = (): string | null => {
   const agents = loadLocalAgents()
   const agentsDir = findAgentsDirectory()
 
-  if (!agentsDir || !agents.length) {
-    return null
+  const sections: string[] = []
+
+  if (agentsDir && agents.length) {
+    const header = `Loaded ${pluralize(agents.length, 'local agent')} from ${agentsDir}`
+    const agentList = agents
+      .map((agent) => {
+        const identifier =
+          agent.displayName && agent.displayName !== agent.id
+            ? `${agent.displayName} (${agent.id})`
+            : agent.displayName || agent.id
+        return `  - ${identifier}`
+      })
+      .join('\n')
+    sections.push(`${header}\n${agentList}`)
   }
 
-  const agentCount = agents.length
-  const header = `Loaded ${pluralize(agentCount, 'local agent')} from ${agentsDir}`
-  const agentList = agents
-    .map((agent) => {
-      const identifier =
-        agent.displayName && agent.displayName !== agent.id
-          ? `${agent.displayName} (${agent.id})`
-          : agent.displayName || agent.id
-      return `  - ${identifier}`
-    })
-    .join('\n')
+  // Always surface agent files that failed to load, even if no valid user
+  // agents were found, so a broken agent file isn't silently ignored.
+  if (agentLoadErrors.length) {
+    const errHeader = `\u26a0\ufe0f  Failed to load ${pluralize(agentLoadErrors.length, 'agent file')} (fix and restart):`
+    const errList = agentLoadErrors
+      .map((e) => `  - ${e.filePath}\n      ${e.message}`)
+      .join('\n')
+    sections.push(`${errHeader}\n${errList}`)
+  }
 
-  return `${header}\n${agentList}`
+  return sections.length ? sections.join('\n\n') : null
 }
+
+/**
+ * Agent files that failed to load at startup (parse/import errors etc.).
+ * Empty when all agent files loaded successfully.
+ */
+export const getAgentLoadErrors = (): AgentLoadError[] => [...agentLoadErrors]
 
 export const getLoadedAgentsData = (): {
   agents: LocalAgentInfo[]
@@ -451,6 +488,7 @@ export const __resetLocalAgentRegistryForTests = (): void => {
   userAgentsCache = {}
   userAgentFilePaths = new Map()
   mcpServersCache = {}
+  agentLoadErrors = []
 }
 
 /**
