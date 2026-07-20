@@ -25,6 +25,7 @@ import { getLogoBlockColor, getLogoAccentColor } from './utils/theme-system'
 
 import type { MultilineInputHandle } from './components/multiline-input'
 import type { AgentMode } from './utils/constants'
+import type { AgentLoadError } from './utils/local-agent-registry'
 import type { AuthStatus } from './utils/status-indicator-state'
 import type { FileTreeNode } from '@codebuff/common/util/file'
 
@@ -40,6 +41,8 @@ interface AppProps {
   showProjectPicker: boolean
   onProjectChange: (projectPath: string) => void
   claudeOAuthExpired: boolean
+  /** Agent files that failed to load at startup (parse/import errors etc.) */
+  agentLoadErrors?: AgentLoadError[]
 }
 
 export const App = ({
@@ -54,6 +57,7 @@ export const App = ({
   showProjectPicker,
   onProjectChange,
   claudeOAuthExpired,
+  agentLoadErrors,
 }: AppProps) => {
   const { contentMaxWidth, terminalWidth } = useTerminalDimensions()
   const theme = useTheme()
@@ -178,6 +182,17 @@ export const App = ({
     setActiveTopBanner,
     showGitRootBanner,
   ])
+
+  // Show a loud banner on startup when any .agents file failed to load, so a
+  // broken agent isn't silently unavailable. Runs once on mount (agentLoadErrors
+  // is a stable startup snapshot); if the user closes it, it won't re-appear.
+  // Declared last so it takes precedence over the gitRoot / claudeOAuth banners
+  // on initial mount — broken agents are the most urgent thing to surface.
+  useEffect(() => {
+    if (agentLoadErrors && agentLoadErrors.length > 0) {
+      setActiveTopBanner('agentLoadError')
+    }
+  }, [agentLoadErrors, setActiveTopBanner])
 
   const handleSwitchToGitRoot = useCallback(() => {
     if (gitRoot) {

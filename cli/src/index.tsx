@@ -29,7 +29,10 @@ import { getAuthToken, getAuthTokenDetails } from './utils/auth'
 import { resetCodebuffClient } from './utils/codebuff-client'
 import { setApiClientAuthToken } from './utils/codebuff-api'
 import { getCliEnv } from './utils/env'
-import { initializeAgentRegistry } from './utils/local-agent-registry'
+import {
+  getAgentLoadErrors,
+  initializeAgentRegistry,
+} from './utils/local-agent-registry'
 import { clearLogFile, logger } from './utils/logger'
 import { shouldShowProjectPicker } from './utils/project-picker'
 import { saveRecentProject } from './utils/recent-projects'
@@ -46,6 +49,7 @@ import { detectTerminalTheme } from './utils/terminal-color-detection'
 import { setOscDetectedTheme } from './utils/theme-system'
 
 import type { AgentMode } from './utils/constants'
+import type { AgentLoadError } from './utils/local-agent-registry'
 import type { FileTreeNode } from '@codebuff/common/util/file'
 
 const require = createRequire(import.meta.url)
@@ -266,8 +270,12 @@ async function main(): Promise<void> {
 
   // Initialize agent registry (loads user agents via SDK).
   // When --agent is provided, skip local .agents to avoid overrides.
+  // Capture any agent files that failed to load so we can surface a loud
+  // banner at startup (fires on both fresh start and --continue).
+  let agentLoadErrors: AgentLoadError[] = []
   if (isPublishCommand || !hasAgentOverride) {
     await initializeAgentRegistry()
+    agentLoadErrors = getAgentLoadErrors()
   }
 
   // Initialize skill registry (loads skills from .agents/skills)
@@ -388,6 +396,7 @@ async function main(): Promise<void> {
         showProjectPicker={showProjectPickerScreen}
         onProjectChange={handleProjectChange}
         claudeOAuthExpired={claudeOAuthExpired}
+        agentLoadErrors={agentLoadErrors}
       />
     )
   }

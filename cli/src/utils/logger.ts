@@ -16,7 +16,7 @@ import {
   setAnalyticsErrorLogger,
   trackEvent,
 } from './analytics'
-import { getCurrentChatDir, getProjectRoot } from '../project-files'
+import { getProjectRoot } from '../project-files'
 
 export interface LoggerContext {
   userId?: string
@@ -39,11 +39,38 @@ let pinoLogger: any = undefined
 const GLOBAL_LOG_MAX_SIZE = 5 * 1024 * 1024 // 5MB
 const GLOBAL_LOG_TRUNCATE_TO = 2.5 * 1024 * 1024 // Keep last ~2.5MB after truncation
 
+// Per-project debug log — captures all levels for the directory where codebuff runs.
+// Capped at 50MB so the full per-project debug directory stays well under 400MB
+// when combined with hippo-interactions.log (~20MB), hippo-prompts.log (~20MB),
+// prompt-log.txt (~5MB), and per-session chat logs.
+const PROJECT_LOG_MAX_SIZE = 50 * 1024 * 1024 // 50MB
+const PROJECT_LOG_TRUNCATE_TO = 25 * 1024 * 1024 // Keep last 25MB after rotation
+
 function getGlobalLogPath(): string | null {
   try {
     return path.join(os.homedir(), '.codebuff', 'logs', 'cli.jsonl')
   } catch {
     return null
+  }
+}
+
+/**
+ * Rotate a log file in-place when it exceeds maxSize, keeping the last
+ * truncateTo bytes snapped to a newline boundary (so we never leave a partial
+ * JSON line at the top). Best-effort: never throws.
+ */
+function rotateFileIfTooLarge(filePath: string, maxSize: number, truncateTo: number): void {
+  try {
+    if (!existsSync(filePath)) return
+    const stat = statSync(filePath)
+    if (stat.size <= maxSize) return
+    const content = readFileSync(filePath)
+    const kept = content.slice(content.length - truncateTo)
+    const firstNewline = kept.indexOf(10) // 0x0A = '\n'
+    const clean = firstNewline >= 0 ? kept.slice(firstNewline + 1) : kept
+    writeFileSync(filePath, clean)
+  } catch {
+    // Best-effort — never block the caller
   }
 }
 
@@ -58,18 +85,7 @@ function appendToGlobalLog(entry: string): void {
 
   try {
     mkdirSync(dirname(filePath), { recursive: true })
-    // Truncate when over the size cap, keeping the last chunk snapped to a
-    // newline boundary so we never leave a partial JSON line at the top.
-    if (existsSync(filePath)) {
-      const stat = statSync(filePath)
-      if (stat.size > GLOBAL_LOG_MAX_SIZE) {
-        const content = readFileSync(filePath)
-        const kept = content.slice(content.length - GLOBAL_LOG_TRUNCATE_TO)
-        const firstNewline = kept.indexOf(10) // 0x0A = '\n'
-        const clean = firstNewline >= 0 ? kept.slice(firstNewline + 1) : kept
-        writeFileSync(filePath, clean)
-      }
-    }
+    rotateFileIfTooLarge(filePath, GLOBAL_LOG_MAX_SIZE, GLOBAL_LOG_TRUNCATE_TO)
     appendFileSync(filePath, entry)
   } catch {
     // Best-effort logging — the logger must never throw.
@@ -114,6 +130,9 @@ function setLogPath(p: string): void {
 
   logPath = p
   mkdirSync(dirname(p), { recursive: true })
+
+  // Rotate the log file before opening it if it exceeds the size cap.
+  rotateFileIfTooLarge(p, PROJECT_LOG_MAX_SIZE, PROJECT_LOG_TRUNCATE_TO)
 
   // ──────────────────────────────────────────────────────────────
   //  pino.destination(..) → SonicBoom stream, no worker thread
@@ -174,10 +193,10 @@ function sendAnalyticsAndLog(
       projectRoot = undefined
     }
     if (projectRoot) {
-      const logTarget =
-        IS_DEV
-          ? path.join(projectRoot, 'debug', 'cli.jsonl')
-          : path.join(getCurrentChatDir(), 'log.jsonl')
+      // All CLI debug logs consolidate into a single per-project file so the
+      // trail is easy to find (previously prod scattered logs across
+      // debug/chats/{chatId}/log.jsonl).
+      const logTarget = path.join(projectRoot, 'debug', 'cli.jsonl')
 
       setLogPath(logTarget)
     }
@@ -247,17 +266,20 @@ function sendAnalyticsAndLog(
     pinoLogger[level](obj, normalizedMsg as any, ...args)
   }
 
-  // Always mirror WARN/ERROR/FATAL to the persistent global log so the next
-  // "random stop" leaves a findable trail (no-op in dev/test/ci).
-  if (level === 'warn' || level === 'error' || level === 'fatal') {
-    const globalEntry = safeStringify({
+  // Build a single serialized entry reused for both sink calls below.
+  const sinkEntry =
+    safeStringify({
       level: level.toUpperCase(),
       timestamp: new Date().toISOString(),
       ...loggerContext,
       ...(includeData ? { data: normalizedData } : {}),
       msg: stringFormat(normalizedMsg ?? '', ...args),
-    })
-    appendToGlobalLog(globalEntry + '\n')
+    }) + '\n'
+
+  // Always mirror WARN/ERROR/FATAL to the persistent global log so the next
+  // "random stop" leaves a findable trail (no-op in dev/test/ci).
+  if (level === 'warn' || level === 'error' || level === 'fatal') {
+    appendToGlobalLog(sinkEntry)
   }
 }
 

@@ -207,8 +207,12 @@ describe('Schema handling error recovery', () => {
         },
       }
 
+      // Use a non-empty toolNames so additionalToolDefinitions is called.
+      // toolNames: [] now means "no tools at all" (skips MCP/custom tools too)
+      // which is the correct behavior for agents like context-pruner that want
+      // zero tool overhead.
       const toolSet = await getToolSet({
-        toolNames: [],
+        toolNames: ['set_output'],
         additionalToolDefinitions: async () => customToolDefs,
         agentTools: {},
         skills: {},

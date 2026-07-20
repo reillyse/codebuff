@@ -41,6 +41,11 @@ const definition: AgentDefinition = {
 
   inheritParentSystemPrompt: true,
   includeMessageHistory: true,
+  // context-pruner is a pure handleSteps generator — it never calls MCP tools
+  // via an LLM. Explicitly restrict to no tools so it doesn't inherit the
+  // parent's full MCP tool set (~82k tokens for 400+ Sparrow tools), which
+  // inflates token counts and pushes the sub-agent's own context over budget.
+  toolNames: [],
 
   handleSteps: function* ({ agentState, params, logger }) {
     // =============================================================================
@@ -50,13 +55,9 @@ const definition: AgentDefinition = {
     /** Agent IDs whose output should be excluded from spawn_agents results */
     const SPAWN_AGENTS_OUTPUT_BLACKLIST = [
       'file-picker',
-      'code-searcher',
-      'directory-lister',
-      'glob-matcher',
       'researcher-web',
       'researcher-docs',
-      'commander',
-      'commander-lite',
+      'basher',
       'code-reviewer',
       'code-reviewer-opus',
       'code-reviewer-multi-prompt',
@@ -319,6 +320,16 @@ const definition: AgentDefinition = {
           const url = input.url as string | undefined
           return url ? `read URL: ${url}` : 'read a URL'
         }
+        case 'gravity_index': {
+          const query = input.query as string | undefined
+          const action = input.action as string | undefined
+          if (query) {
+            return `Gravity Index ${action ?? 'search'} for "${query}"`
+          }
+          return action
+            ? `Gravity Index ${action}`
+            : 'Gravity Index use'
+        }
         case 'read_docs': {
           const libraryTitle = input.libraryTitle as string | undefined
           const topic = input.topic as string | undefined
@@ -431,18 +442,9 @@ const definition: AgentDefinition = {
     // 2. Walk backwards through summarized parts to apply token budgets
     // 3. Older summarized parts beyond the budgets are dropped
 
-    // Clamp each budget to a safe fraction of the context window so the
-    // generated summary stays bounded on small-window models. The clamp
-    // overrides explicitly-passed params: no caller can request a budget
-    // larger than 10 % (assistant) / 25 % (user) of maxContextLength.
-    const assistantToolBudget: number = Math.min(
-      params?.assistantToolBudget ?? ASSISTANT_TOOL_BUDGET,
-      Math.floor(maxContextLength * 0.1),
-    )
-    const userBudget: number = Math.min(
-      params?.userBudget ?? USER_BUDGET,
-      Math.floor(maxContextLength * 0.25),
-    )
+    let assistantToolBudget: number =
+      params?.assistantToolBudget ?? ASSISTANT_TOOL_BUDGET
+    let userBudget: number = params?.userBudget ?? USER_BUDGET
 
     function shouldExcludeMessage(message: Message): boolean {
       if (message.tags?.includes('INSTRUCTIONS_PROMPT')) return true
@@ -508,6 +510,108 @@ const definition: AgentDefinition = {
       if (isConversationSummary(message)) {
         previousSummaryContent = extractSummaryContent(message)
       }
+    }
+
+    // Headroom guard: ensure the pruned context will actually fit below the
+    // threshold. The "floor" is estimated as everything the runtime sends
+    // *other than* the previous summary (system prompt, tool schemas, MCP
+    // definitions, live messages, etc.).
+    //
+    // NOTE: This is a conservative overestimate on non-steady-state prunes
+    // (contextTokenCount includes raw messages that will be summarised away),
+    // but in the steady-state loop case it is accurate:
+    //   floor ≈ contextTokenCount − prevSummaryTokens.
+    //
+    // Example from prod: floor ≈ 161k, budgets = 70k → summary stays at 43k
+    // → total 204k > 200k → pruner fires every step → infinite loop.
+    // Fix: available = 200k − 161k − 15k headroom = 24k → scale budgets to 24k.
+    const currentSummaryEstimatedTokens = previousSummaryContent
+      ? Math.ceil(previousSummaryContent.length / CHARS_PER_TOKEN)
+      : 0
+    const nonPrunableFloor = Math.max(
+      0,
+      agentState.contextTokenCount - currentSummaryEstimatedTokens,
+    )
+    // Leave 15k tokens of headroom so the next agent step doesn't immediately
+    // trigger pruning again (each step adds ~2–10k tokens of new content).
+    const SUMMARY_HEADROOM_TOKENS = 15_000
+    const rawAvailable = maxContextLength - nonPrunableFloor - SUMMARY_HEADROOM_TOKENS
+    const availableForSummary = Math.max(5_000, rawAvailable)
+    // Warn when the floor itself nearly fills the context window — this means
+    // the system prompt / MCP tool schemas are too large and pruning cannot
+    // meaningfully help. The session will continue to re-trigger pruning every
+    // step; the real fix is reducing the number of loaded MCP tools.
+    if (rawAvailable <= 5_000) {
+      try {
+        logger.warn(
+          {
+            non_prunable_floor_tokens: nonPrunableFloor,
+            max_context_length: maxContextLength,
+            raw_available: rawAvailable,
+          },
+          'Context floor nearly fills the context window — pruning cannot prevent re-triggering. Reduce MCP tool schemas or system prompt size.',
+        )
+      } catch {
+        // Best-effort
+      }
+    }
+
+    // HARD-STOP: when the non-prunable floor alone meets or exceeds the safe
+    // budget (rawAvailable <= 0), pruning is mathematically impossible — any
+    // summary we produce pushes the total back over the limit, the model
+    // returns an empty response, and the session loops forever (prune →
+    // overflow → empty → prune …). Instead of summarizing, REPLACE the
+    // history with a single high-priority instruction telling the agent to
+    // end its turn immediately. This both minimizes context (one tiny
+    // message instead of a 5k summary) and breaks the loop.
+    if (rawAvailable <= 0) {
+      try {
+        logger.error(
+          {
+            non_prunable_floor_tokens: nonPrunableFloor,
+            max_context_length: maxContextLength,
+            raw_available: rawAvailable,
+            context_token_count: agentState.contextTokenCount,
+          },
+          'CONTEXT OVERFLOW: non-prunable floor exceeds the safe budget — pruning cannot help. Replacing history with a forced end-turn instruction to break the overflow loop.',
+        )
+      } catch {
+        // Best-effort
+      }
+      const overflowInstruction: UserMessage = {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: [
+              '🚨 CONTEXT WINDOW COMPLETELY FULL — EMERGENCY STOP.',
+              '',
+              'Your context window is completely full: the system prompt and tool schemas alone exceed the safe input budget, so conversation history could not be preserved and has been removed.',
+              '',
+              'You MUST end your turn RIGHT NOW:',
+              '- Do NOT make any more tool calls.',
+              '- Output a brief final summary of what you were doing and any next steps for the user.',
+              '- Then stop (end your turn / call your completion tool if you have one).',
+              '',
+              'Recommend that the user start a new session (e.g. /new) to continue.',
+            ].join('\n'),
+          },
+        ],
+        sentAt: Date.now(),
+        keepDuringTruncation: true,
+      }
+      yield {
+        toolName: 'set_messages',
+        input: { messages: [overflowInstruction] },
+        includeToolCall: false,
+      } satisfies ToolCall<'set_messages'>
+      return
+    }
+    const rawBudgetTotal = assistantToolBudget + userBudget
+    if (rawBudgetTotal > 0 && availableForSummary < rawBudgetTotal) {
+      const scaleFactor = availableForSummary / rawBudgetTotal
+      assistantToolBudget = Math.floor(assistantToolBudget * scaleFactor)
+      userBudget = Math.floor(userBudget * scaleFactor)
     }
 
     // If pruning happens before the assistant has started responding to the
@@ -625,7 +729,7 @@ const definition: AgentDefinition = {
         if (parts.length > 0) {
           summarizedEntries.push({
             role: 'assistant_tool',
-            parts: [parts.join('\n\n')],
+            parts,
           })
         }
       } else if (message.role === 'tool') {
@@ -923,6 +1027,8 @@ ${SUMMARY_DISCLAIMER}`,
           ...(cacheGapMs === null ? {} : { cache_gap_ms: cacheGapMs }),
           cache_expiry_ms: CACHE_EXPIRY_MS,
           previous_summary_entry_count: previousSummaryEntries.length,
+          non_prunable_floor_tokens: nonPrunableFloor,
+          available_for_summary_tokens: availableForSummary,
           user_budget: userBudget,
           user_entry_count: userEntryCount,
           dropped_user_entry_count: userEntryCount - includedUserEntryCount,

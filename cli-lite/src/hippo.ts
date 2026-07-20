@@ -88,6 +88,10 @@ export const HIPPO_BINARY = resolveHippoBinary()
 const HIPPO_SEARCH_TIMEOUT_MS = 5000
 const HIPPO_CONTEXT_SEARCH_TIMEOUT_MS = 15000
 const HIPPO_QUERY_MAX_LENGTH = 500
+// Hard cap on how many characters of hippo context are injected into the main
+// agent prompt. Cross-session summaries can be arbitrarily large; 3000 chars
+// (~750 tokens) gives enough signal without bloating the context window.
+const HIPPO_CONTEXT_MAX_CHARS = 3000
 
 // ---------------------------------------------------------------------------
 // Subagent hippo circuit breaker
@@ -427,6 +431,40 @@ const isRetryableHippoError = (error: string | null): boolean => {
 }
 
 // ---------------------------------------------------------------------------
+// Semantically sparse query detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Low-signal phrases that carry no real semantic content for hippo search.
+ * When the user types one of these as their entire prompt (e.g. after typing
+ * "continue" on a new session), hippo would fall back to a cross-session
+ * similarity search using the --context string, injecting large blobs of past
+ * session summaries that bloat the context and trigger the read-loop.
+ *
+ * Phrases are stored normalised (lowercase, single-spaced, trimmed).
+ */
+const LOW_SIGNAL_QUERIES = new Set([
+  'continue', 'continue please', 'please continue',
+  'yes', 'yep', 'yeah', 'y',
+  'no', 'n', 'nope',
+  'ok', 'okay', 'k',
+  'sure', 'alright', 'sounds good',
+  'go', 'go ahead', 'proceed',
+  'next', 'done', 'finish', 'resume', 'carry on',
+  'do it', 'keep going',
+])
+
+/**
+ * Returns true when the query is so short / generic that hippo context-search
+ * would produce no useful signal — only cross-session noise. Skipping the call
+ * in these cases prevents the "continue" context-bloat loop.
+ */
+const isSemanticallySparseQuery = (query: string): boolean => {
+  const normalised = query.toLowerCase().replace(/\s+/g, ' ').trim()
+  return LOW_SIGNAL_QUERIES.has(normalised)
+}
+
+// ---------------------------------------------------------------------------
 // getHippoContext
 // ---------------------------------------------------------------------------
 
@@ -446,6 +484,13 @@ export const getHippoContext = async (
 
     const trimmedQuery = query.trim()
     if (!trimmedQuery) return { context: '', connectionOk: null, lastError: null }
+
+    // Skip hippo for semantically empty prompts (e.g. "continue", "yes", "ok").
+    // These produce no useful search signal and cause cross-session context bloat.
+    if (isSemanticallySparseQuery(trimmedQuery)) {
+      debug('Skipping hippo context-search for low-signal query:', trimmedQuery)
+      return { context: '', connectionOk: null, lastError: null }
+    }
 
     const truncatedQuery = trimmedQuery.length > HIPPO_QUERY_MAX_LENGTH
       ? trimmedQuery.substring(0, HIPPO_QUERY_MAX_LENGTH)
@@ -481,8 +526,11 @@ export const getHippoContext = async (
       return { context: '', connectionOk: true, lastError: null }
     }
 
-    debug('Hippo context extracted, length:', trimmedResult.length)
-    return { context: trimmedResult, connectionOk: true, lastError: null }
+    const cappedResult = trimmedResult.length > HIPPO_CONTEXT_MAX_CHARS
+      ? trimmedResult.substring(0, HIPPO_CONTEXT_MAX_CHARS) + '...'
+      : trimmedResult
+    debug('Hippo context extracted, length:', cappedResult.length)
+    return { context: cappedResult, connectionOk: true, lastError: null }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     debug('Hippo context-search failed:', errorMessage)
@@ -549,7 +597,7 @@ export const storeRunToHippo = (params: StoreRunToHippoParams): void => {
 // Subagent hippo helpers
 // ---------------------------------------------------------------------------
 
-const HIPPO_SUBAGENT_TIMEOUT_MS = 3000
+const HIPPO_SUBAGENT_TIMEOUT_MS = 8000
 const HIPPO_SUBAGENT_CONTEXT_MAX_CHARS = 1500
 
 export const HIPPO_ENRICHED_AGENTS = ['commander', 'commander-lite', 'file-picker', 'file-picker-max', 'opus-agent', 'gpt-5-agent']

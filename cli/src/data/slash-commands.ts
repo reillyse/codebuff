@@ -193,6 +193,12 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
   //   description: 'Publish agents to the agent store',
   // },
   {
+    id: 'logs:clear',
+    label: 'logs:clear',
+    description: 'Clear all debug log files in the current project (debug/)',
+    aliases: ['debug:clear'],
+  },
+  {
     id: 'theme:toggle',
     label: 'theme:toggle',
     description: 'Toggle between light and dark mode',

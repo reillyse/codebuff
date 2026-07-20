@@ -5,6 +5,7 @@ import { TerminalLink } from './terminal-link'
 import { useTheme } from '../hooks/use-theme'
 import { useChatStore } from '../state/chat-store'
 import type { TopBannerType } from '../types/store'
+import { getAgentLoadErrors } from '../utils/local-agent-registry'
 import { formatCwd } from '../utils/path-helpers'
 import { BORDER_CHARS } from '../utils/ui-constants'
 
@@ -44,6 +45,33 @@ const TOP_BANNER_REGISTRY: Record<NonNullable<TopBannerType>, BannerConfig> = {
     textColorKey: 'foreground',
     content:
       '⚠ Claude subscription credentials expired and could not be refreshed.\nClaude model requests will fail until you reconnect.\nReconnect via /connect:claude.',
+  },
+  agentLoadError: {
+    borderColorKey: 'error',
+    textColorKey: 'foreground',
+    layout: 'custom',
+    content: ({ textColor }) => {
+      const errors = getAgentLoadErrors()
+      if (errors.length === 0) {
+        return null
+      }
+      const fileWord = errors.length === 1 ? 'agent file' : 'agent files'
+      return (
+        <>
+          <text style={{ wrapMode: 'word', fg: textColor }}>
+            {`⚠ Failed to load ${errors.length} ${fileWord} — fix and restart:`}
+          </text>
+          {errors.map((err, index) => (
+            <text
+              key={`${err.filePath}:${index}`}
+              style={{ wrapMode: 'word', fg: textColor }}
+            >
+              {`  • ${err.filePath}: ${err.message}`}
+            </text>
+          ))}
+        </>
+      )
+    },
   },
   homeDir: {
     borderColorKey: 'warning',

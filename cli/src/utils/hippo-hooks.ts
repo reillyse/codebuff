@@ -29,6 +29,10 @@ export const HIPPO_BINARY = resolveHippoBinary()
 const HIPPO_SEARCH_TIMEOUT_MS = 5000 // 5 second timeout for search
 const HIPPO_CONTEXT_SEARCH_TIMEOUT_MS = 15000 // 15 second timeout for hippo context-search
 const HIPPO_QUERY_MAX_LENGTH = 500
+// Hard cap on how many characters of hippo context are injected into the main
+// agent prompt. Cross-session summaries can be arbitrarily large; 3000 chars
+// (~750 tokens) gives enough signal without bloating the context window.
+const HIPPO_CONTEXT_MAX_CHARS = 3000
 
 // Track last stored pruning summary to avoid duplicate hippo stores
 let lastStoredSummaryHash: string | null = null
@@ -423,6 +427,36 @@ const isRetryableHippoError = (error: string | null): boolean => {
   return error.startsWith('Connection timed out') || error.startsWith('Command failed')
 }
 
+/**
+ * Low-signal phrases that carry no real semantic content for hippo search.
+ * When the user types one of these as their entire prompt (e.g. after typing
+ * "continue" on a new session), hippo would fall back to a cross-session
+ * similarity search using the --context string, injecting large blobs of past
+ * session summaries that bloat the context and trigger the read-loop.
+ *
+ * Phrases are stored normalised (lowercase, single-spaced, trimmed).
+ */
+const LOW_SIGNAL_QUERIES = new Set([
+  'continue', 'continue please', 'please continue',
+  'yes', 'yep', 'yeah', 'y',
+  'no', 'n', 'nope',
+  'ok', 'okay', 'k',
+  'sure', 'alright', 'sounds good',
+  'go', 'go ahead', 'proceed',
+  'next', 'done', 'finish', 'resume', 'carry on',
+  'do it', 'keep going',
+])
+
+/**
+ * Returns true when the query is so short / generic that hippo context-search
+ * would produce no useful signal — only cross-session noise. Skipping the call
+ * in these cases prevents the "continue" context-bloat loop.
+ */
+const isSemanticallySparseQuery = (query: string): boolean => {
+  const normalised = query.toLowerCase().replace(/\s+/g, ' ').trim()
+  return LOW_SIGNAL_QUERIES.has(normalised)
+}
+
 export type HippoContextResult = {
   context: string
   /** null = didn't attempt, true = CLI responded, false = CLI failed/timed out */
@@ -450,6 +484,13 @@ export const getHippoContext = async (
 
     const trimmedQuery = query.trim()
     if (!trimmedQuery) return { context: '', connectionOk: null, lastError: null }
+
+    // Skip hippo for semantically empty prompts (e.g. "continue", "yes", "ok").
+    // These produce no useful search signal and cause cross-session context bloat.
+    if (isSemanticallySparseQuery(trimmedQuery)) {
+      logger.debug({ query: trimmedQuery }, 'Skipping hippo context-search for low-signal query')
+      return { context: '', connectionOk: null, lastError: null }
+    }
 
     const truncatedQuery = trimmedQuery.length > HIPPO_QUERY_MAX_LENGTH
       ? trimmedQuery.substring(0, HIPPO_QUERY_MAX_LENGTH)
@@ -497,9 +538,12 @@ export const getHippoContext = async (
       return { context: '', connectionOk: true, lastError: null }
     }
 
-    logger.debug({ contextLength: trimmedResult.length }, 'Hippo context extracted via context-search')
-    logHippoPrompt('response', trimmedResult, { 'Content length': trimmedResult.length })
-    return { context: trimmedResult, connectionOk: true, lastError: null }
+    const cappedResult = trimmedResult.length > HIPPO_CONTEXT_MAX_CHARS
+      ? trimmedResult.substring(0, HIPPO_CONTEXT_MAX_CHARS) + '...'
+      : trimmedResult
+    logger.debug({ contextLength: cappedResult.length }, 'Hippo context extracted via context-search')
+    logHippoPrompt('response', cappedResult, { 'Content length': cappedResult.length })
+    return { context: cappedResult, connectionOk: true, lastError: null }
   } catch (error) {
     try {
       logger.debug(
@@ -792,7 +836,7 @@ export const storeErrorToHippo = (params: {
 // Subagent hippo helpers
 // ---------------------------------------------------------------------------
 
-const HIPPO_SUBAGENT_TIMEOUT_MS = 3000
+const HIPPO_SUBAGENT_TIMEOUT_MS = 8000
 const HIPPO_SUBAGENT_CONTEXT_MAX_CHARS = 1500
 
 const HIPPO_ENRICHED_AGENTS = ['commander', 'commander-lite', 'file-picker', 'file-picker-max', 'opus-agent', 'gpt-5-agent']

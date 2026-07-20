@@ -248,10 +248,10 @@ export async function loadLocalAgents({
       const agentDefinition = agentModule.default ?? agentModule
 
       if (!agentDefinition?.id || !agentDefinition?.model) {
-        const message = `Agent definition missing required attributes (id, model)`
-        onError?.({ filePath: fullPath, message })
+        // Silently skip helper/type files that aren't agent definitions.
+        // Only log in verbose mode — this is expected for lib/, types/, constants, etc.
         if (verbose) {
-          console.error(`${message}: ${fullPath}`)
+          console.error(`Agent definition missing required attributes (id, model): ${fullPath}`)
         }
         continue
       }

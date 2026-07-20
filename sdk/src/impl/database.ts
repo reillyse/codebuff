@@ -59,8 +59,19 @@ async function fetchWithRetry(
     try {
       const response = await fetch(url, options)
 
-      // If response is OK or not retryable, return it
-      if (response.ok || !isRetryableStatusCode(response.status)) {
+      // If response is OK, return it
+      if (response.ok) {
+        return response
+      }
+
+      // Non-2xx: log it regardless of whether it is retryable
+      if (!isRetryableStatusCode(response.status)) {
+        // Non-retryable error — log so the per-project log captures every
+        // unexpected status code, then return the response to the caller.
+        logger?.warn(
+          { status: response.status, url: String(url) },
+          `HTTP ${response.status} (non-retryable)`,
+        )
         return response
       }
 
@@ -299,50 +310,101 @@ export async function fetchAgentFromDatabase(
   }
 }
 
+/**
+ * Extra outer retry attempts for startAgentRun beyond the inner fetchWithRetry retries.
+ * startAgentRun is uniquely critical — without a runId the entire agent run fails
+ * immediately with no recovery path. Give it more resilience against brief backend outages.
+ * Outer delays: 5 s → 10 s → 20 s.
+ */
+const START_AGENT_RUN_OUTER_MAX_RETRIES = 3
+const START_AGENT_RUN_OUTER_BASE_DELAY_MS = 5000
+const START_AGENT_RUN_OUTER_MAX_DELAY_MS = 20000
+
 export async function startAgentRun(
   params: ParamsOf<StartAgentRunFn>,
 ): ReturnType<StartAgentRunFn> {
   const { apiKey, agentId, ancestorRunIds, logger } = params
 
   const url = new URL(`/api/v1/agent-runs`, WEBSITE_URL)
+  const requestOptions: RequestInit = {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      action: 'START',
+      agentId,
+      ancestorRunIds,
+    }),
+  }
 
-  try {
-    const response = await fetchWithRetry(
-      url,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          action: 'START',
-          agentId,
-          ancestorRunIds,
-        }),
-      },
-      logger,
-    )
+  let outerDelay = START_AGENT_RUN_OUTER_BASE_DELAY_MS
 
-    if (!response.ok) {
-      logger.error({ response }, 'startAgentRun request failed')
+  for (let outerAttempt = 0; outerAttempt <= START_AGENT_RUN_OUTER_MAX_RETRIES; outerAttempt++) {
+    if (outerAttempt > 0) {
+      logger.warn(
+        { agentId, outerAttempt, maxRetries: START_AGENT_RUN_OUTER_MAX_RETRIES, delayMs: outerDelay },
+        `startAgentRun: retrying after error (outer attempt ${outerAttempt}/${START_AGENT_RUN_OUTER_MAX_RETRIES})`,
+      )
+      await new Promise((resolve) => setTimeout(resolve, outerDelay))
+      outerDelay = Math.min(outerDelay * 2, START_AGENT_RUN_OUTER_MAX_DELAY_MS)
+    }
+
+    try {
+      const response = await fetchWithRetry(url, requestOptions, logger)
+
+      if (!response.ok) {
+        // Only retry on retryable status codes (e.g. 502/503/529).
+        // fetchWithRetry already returns non-retryable codes (401/403/404/422…)
+        // immediately, so retrying them here would be wasteful and could trip
+        // rate-limiting or account lockouts.
+        if (outerAttempt < START_AGENT_RUN_OUTER_MAX_RETRIES && isRetryableStatusCode(response.status)) {
+          continue
+        }
+        logger.error(
+          { status: response.status, agentId },
+          'startAgentRun request failed after all retries',
+        )
+        return null
+      }
+
+      let responseBody: unknown
+      try {
+        responseBody = await response.json()
+      } catch (parseError) {
+        logger.error(
+          {
+            error: getErrorObject(parseError instanceof Error ? parseError : new Error(String(parseError))),
+            agentId,
+          },
+          'startAgentRun JSON parse error',
+        )
+        return null
+      }
+
+      const body = responseBody as { runId?: string | null } | null | undefined
+      if (!body?.runId) {
+        logger.error({ responseBody }, 'no runId found from startAgentRun request')
+      }
+      return body?.runId ?? null
+    } catch (error) {
+      // Network-level error (DNS, connection refused, etc.) — retry via outer loop.
+      if (outerAttempt < START_AGENT_RUN_OUTER_MAX_RETRIES) {
+        logger.warn(
+          { error: getErrorObject(error), agentId, outerAttempt },
+          'startAgentRun network error, will retry',
+        )
+        continue
+      }
+      logger.error(
+        { error: getErrorObject(error), agentId },
+        'startAgentRun error',
+      )
       return null
     }
-
-    const responseBody = await response.json()
-    if (!responseBody?.runId) {
-      logger.error(
-        { responseBody },
-        'no runId found from startAgentRun request',
-      )
-    }
-    return responseBody?.runId ?? null
-  } catch (error) {
-    logger.error(
-      { error: getErrorObject(error), agentId },
-      'startAgentRun error',
-    )
-    return null
   }
+
+  return null
 }
 
 export async function finishAgentRun(
@@ -431,19 +493,33 @@ export async function addAgentStep(
       logger,
     )
 
-    const responseBody = await response.json()
     if (!response.ok) {
-      logger.error({ responseBody }, 'addAgentStep request failed')
+      logger.error(
+        { status: response.status, agentRunId, stepNumber },
+        'addAgentStep request failed',
+      )
       return null
     }
 
-    if (!responseBody?.stepId) {
+    let responseBody: unknown
+    try {
+      responseBody = await response.json()
+    } catch (parseError) {
+      logger.error(
+        { error: getErrorObject(parseError instanceof Error ? parseError : new Error(String(parseError))), agentRunId, stepNumber },
+        'addAgentStep JSON parse error',
+      )
+      return null
+    }
+
+    const body = responseBody as Record<string, unknown> | null | undefined
+    if (!body?.stepId) {
       logger.error(
         { responseBody },
         'no stepId found from addAgentStep request',
       )
     }
-    return responseBody.stepId ?? null
+    return (body?.stepId as string | null | undefined) ?? null
   } catch (error) {
     logger.error(
       {

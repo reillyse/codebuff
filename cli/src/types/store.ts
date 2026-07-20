@@ -1,5 +1,10 @@
 /** Types of banners that can appear at the top of the chat */
-export type TopBannerType = 'homeDir' | 'gitRoot' | 'claudeOAuthExpired' | null
+export type TopBannerType =
+  | 'homeDir'
+  | 'gitRoot'
+  | 'claudeOAuthExpired'
+  | 'agentLoadError'
+  | null
 
 export type InputValue = {
   text: string

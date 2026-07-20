@@ -95,6 +95,10 @@ export const HelpBanner = () => {
                 )}
               </box>
             )}
+            <box style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 1 }}>
+              <text style={{ fg: theme.foreground }}>/logs:clear</text>
+              <text style={{ fg: theme.muted }}>wipe debug/ log files</text>
+            </box>
             {IS_FREEBUFF && !chatGptOAuth.connected && (
               <text style={{ fg: theme.muted }}>
                 Connect via /connect:chatgpt to unlock /plan & /review

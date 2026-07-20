@@ -36,6 +36,7 @@ import { getAgentPrompt } from './templates/strings'
 import { getToolSet } from './tools/prompts'
 import { processStream } from './tools/stream-parser'
 import { getAgentOutput } from './util/agent-output'
+import { logRawApiRequest } from './util/api-request-logger'
 import {
   getDefaultNormalizeMode,
   normalizeConversation,
@@ -127,6 +128,34 @@ const TOKEN_COUNT_REMOTE_SKIP_THRESHOLD = 500_000
  * visible in the logs.
  */
 const TOKEN_COUNT_SLOW_WARN_MS = 3_000
+
+/**
+ * Warn in cli.jsonl when the local token estimate approaches the safe input
+ * budget for a 200k-window model (200k context − 64k max_output = 136k input).
+ * At this level the next pruning cycle may not bring us back under budget.
+ */
+const CONTEXT_BUDGET_WARN_TOKENS = 120_000
+
+/**
+ * Log at ERROR when the estimate is likely OVER the safe budget. At this level
+ * the model will almost certainly return an empty response (the classic
+ * context-overflow symptom: dropped stream with no content or tool calls).
+ */
+const CONTEXT_BUDGET_ERROR_TOKENS = 140_000
+
+/**
+ * Emergency loop-breaker: after this many CONSECUTIVE steps whose context
+ * estimate is at/above CONTEXT_BUDGET_ERROR_TOKENS, force-end the turn WITHOUT
+ * calling the model. At that level the model returns empty responses (the
+ * context-overflow loop: prune → overflow → empty → retry → prune …), so
+ * calling it again just burns retries forever. Two consecutive CRITICAL steps
+ * means the pruner already ran and could not bring us under budget — the
+ * session is unrecoverable without a fresh start.
+ */
+const MAX_CONSECUTIVE_CONTEXT_OVERFLOW_STEPS = 2
+
+const CONTEXT_OVERFLOW_FORCE_END_MESSAGE =
+  '\n⚠️ CONTEXT WINDOW CRITICAL: Your context is full and the model cannot respond. Ending the turn now to prevent an infinite loop. Please start a new session (e.g. /new) to continue.\n\n'
 
 async function additionalToolDefinitions(
   params: {
@@ -374,26 +403,35 @@ export const runAgentStep = async (
       })
     : undefined
 
-  const onCacheDebugProviderRequestBuilt =
-    cacheDebugCorrelation
-      ? ({
-          provider,
-          rawBody,
-          normalizedBody,
-        }: {
-          provider: string
-          rawBody: unknown
-          normalizedBody?: unknown
-        }) => {
-          enrichCacheDebugSnapshotWithProviderRequest({
-            correlation: cacheDebugCorrelation,
-            provider,
-            rawBody,
-            normalized: normalizedBody ?? rawBody,
-            logger,
-          })
-        }
-      : undefined
+  const onCacheDebugProviderRequestBuilt = ({
+    provider,
+    rawBody,
+    normalizedBody,
+  }: {
+    provider: string
+    rawBody: unknown
+    normalizedBody?: unknown
+  }) => {
+    // Always log the EXACT wire body captured at build time (no reconstruction).
+    // Gated internally by CODEBUFF_API_REQUEST_LOG.
+    logRawApiRequest({
+      projectRoot: fileContext.projectRoot,
+      agentType: String(agentType),
+      stepNumber: iterationNum,
+      model,
+      provider,
+      rawBody,
+    })
+    if (cacheDebugCorrelation) {
+      enrichCacheDebugSnapshotWithProviderRequest({
+        correlation: cacheDebugCorrelation,
+        provider,
+        rawBody,
+        normalized: normalizedBody ?? rawBody,
+        logger,
+      })
+    }
+  }
 
   const onCacheDebugUsageReceived =
     cacheDebugCorrelation
@@ -903,14 +941,31 @@ export async function loopAgentSteps(
     system = system + (system ? '\n\n' : '') + mcpErrorNotice
   }
 
-  // Build agent tools (agents as direct tool calls) for non-inherited tools
-  const agentTools = useParentTools
-    ? {}
-    : await buildAgentToolSet({
-      ...params,
-      spawnableAgents: agentTemplate.spawnableAgents,
-      agentTemplates: localAgentTemplates,
-    })
+  // Build agent tools (agents as direct tool calls) for non-inherited tools.
+  // Skip entirely when spawn_agents is NOT in the agent's toolNames: such
+  // agents can never spawn sub-agents, so building agent tool definitions is
+  // pure token waste. Inherited/declared spawnableAgents can be 30+ agents
+  // (~100k tokens of tool schemas) that would otherwise be injected into every
+  // step of a leaf agent that can't use them — a major context-budget driver.
+  const skipAgentToolsBecauseNoSpawnAgents =
+    !useParentTools && !agentTemplate.toolNames.includes('spawn_agents')
+  if (skipAgentToolsBecauseNoSpawnAgents) {
+    logger.debug(
+      {
+        agentId: agentTemplate.id,
+        spawnableAgentsCount: agentTemplate.spawnableAgents?.length ?? 0,
+      },
+      'Skipping buildAgentToolSet: spawn_agents not in toolNames (token bloat prevention)',
+    )
+  }
+  const agentTools =
+    useParentTools || skipAgentToolsBecauseNoSpawnAgents
+      ? {}
+      : await buildAgentToolSet({
+        ...params,
+        spawnableAgents: agentTemplate.spawnableAgents,
+        agentTemplates: localAgentTemplates,
+      })
 
   const tools = useParentTools
     ? parentTools
@@ -919,6 +974,7 @@ export async function loopAgentSteps(
       additionalToolDefinitions: getAdditionalToolDefs,
       agentTools,
       skills: fileContext.skills ?? {},
+      includeCacheControl: supportsCacheControl(agentTemplate.model),
     })
 
   const hasUserMessage = Boolean(
@@ -992,6 +1048,12 @@ export async function loopAgentSteps(
   // Whether we've already nudged during the CURRENT no-progress streak. Reset
   // when a step makes progress so a later, separate streak can be nudged again.
   let hasNudgedForNoProgress = false
+  // Emergency context-overflow loop-breaker: count CONSECUTIVE steps whose
+  // context estimate is CRITICAL (>= CONTEXT_BUDGET_ERROR_TOKENS). One
+  // CRITICAL step gets a chance (the pruner may still recover it); two in a
+  // row means pruning already ran and failed — force-end the turn instead of
+  // calling the model again (it would just return empty responses forever).
+  let consecutiveContextOverflowSteps = 0
 
   try {
     while (true) {
@@ -1121,6 +1183,84 @@ export async function loopAgentSteps(
           },
           'Token count took a long time; large histories make this a per-step hang contributor',
         )
+      }
+
+      // Surface context-budget pressure in cli.jsonl so we can catch the
+      // context-overflow loop without parsing api-request-log.txt. At
+      // WARN level you'll see it in a simple `grep WARN cli.jsonl`; at
+      // ERROR it means we're almost certainly going to get an empty
+      // response on this step.
+      const ctxEst = currentAgentState.contextTokenCount ?? localTokenEstimate
+      if (ctxEst >= CONTEXT_BUDGET_ERROR_TOKENS) {
+        consecutiveContextOverflowSteps++
+        logger.error(
+          {
+            agentType,
+            agentId: currentAgentState.agentId,
+            runId,
+            totalSteps,
+            contextTokenEstimate: ctxEst,
+            localTokenEstimate,
+            warningThreshold: CONTEXT_BUDGET_WARN_TOKENS,
+            errorThreshold: CONTEXT_BUDGET_ERROR_TOKENS,
+            consecutiveContextOverflowSteps,
+            systemTokens: countTokensJson(system),
+            toolTokens: countTokensJson(toolDefinitions),
+            messageTokens: countTokensJson(currentAgentState.messageHistory),
+          },
+          '🚨 Context budget CRITICAL: estimated tokens likely exceed safe input budget (200k − 64k output = 136k). Expect empty response / context-overflow loop on this step.',
+        )
+        // Emergency escape: on the 2nd+ consecutive CRITICAL step, the pruner
+        // has already run (it fires every step via handleSteps) and could not
+        // bring us under budget — the non-prunable floor (system prompt + tool
+        // schemas) exceeds the safe input budget. Calling the model again just
+        // yields another empty response and re-enters the loop. Force-end the
+        // turn WITHOUT calling the model.
+        if (
+          consecutiveContextOverflowSteps >=
+          MAX_CONSECUTIVE_CONTEXT_OVERFLOW_STEPS
+        ) {
+          logger.error(
+            {
+              agentType,
+              agentId: currentAgentState.agentId,
+              runId,
+              totalSteps,
+              contextTokenEstimate: ctxEst,
+              consecutiveContextOverflowSteps,
+              finishReason: 'context-overflow-force-end',
+            },
+            'Context overflow loop detected (consecutive CRITICAL steps after pruning); force-ending the turn without calling the model',
+          )
+          onResponseChunk(CONTEXT_OVERFLOW_FORCE_END_MESSAGE)
+          currentAgentState.messageHistory = [
+            ...currentAgentState.messageHistory,
+            userMessage(
+              withSystemTags(
+                'The context window overflowed and the turn was automatically ended to prevent an infinite loop. The user should start a new session to continue.',
+              ),
+            ),
+          ]
+          shouldEndTurn = true
+          break
+        }
+      } else if (ctxEst >= CONTEXT_BUDGET_WARN_TOKENS) {
+        consecutiveContextOverflowSteps = 0
+        logger.warn(
+          {
+            agentType,
+            agentId: currentAgentState.agentId,
+            runId,
+            totalSteps,
+            contextTokenEstimate: ctxEst,
+            localTokenEstimate,
+            warningThreshold: CONTEXT_BUDGET_WARN_TOKENS,
+            errorThreshold: CONTEXT_BUDGET_ERROR_TOKENS,
+          },
+          '⚠️ Context budget WARNING: approaching safe input budget limit (200k − 64k output = 136k). Pruning may not be sufficient.',
+        )
+      } else {
+        consecutiveContextOverflowSteps = 0
       }
 
       // Check if output is required but missing

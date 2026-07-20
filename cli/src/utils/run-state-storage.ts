@@ -9,11 +9,13 @@ import type { RunState } from '@codebuff/sdk'
 
 const RUN_STATE_FILENAME = 'run-state.json'
 const CHAT_MESSAGES_FILENAME = 'chat-messages.json'
+const CHAT_META_FILENAME = 'chat-meta.json'
 
 type SavedChatState = {
   runState: RunState
   messages: ChatMessage[]
   chatId?: string
+  hippoSessionId?: string
 }
 
 /**
@@ -67,15 +69,27 @@ export function getChatMessagesPath(): string {
 }
 
 /**
- * Save both the RunState and ChatMessage[] to disk
+ * Save both the RunState and ChatMessage[] to disk.
+ * When hippoSessionId is provided, it is persisted to chat-meta.json so a later
+ * `continueChat` can pass the *previous* session's hippo ID to context-search
+ * (within-session lookup) instead of a fresh empty session ID.
  */
-export function saveChatState(runState: RunState, messages: ChatMessage[]): void {
+export function saveChatState(
+  runState: RunState,
+  messages: ChatMessage[],
+  hippoSessionId?: string,
+): void {
   try {
-    const runStatePath = getRunStatePath()
-    const messagesPath = getChatMessagesPath()
+    const chatDir = getCurrentChatDir()
+    const runStatePath = path.join(chatDir, RUN_STATE_FILENAME)
+    const messagesPath = path.join(chatDir, CHAT_MESSAGES_FILENAME)
     
     fs.writeFileSync(runStatePath, JSON.stringify(runState, null, 2))
     fs.writeFileSync(messagesPath, JSON.stringify(messages, null, 2))
+    if (hippoSessionId) {
+      const metaPath = path.join(chatDir, CHAT_META_FILENAME)
+      fs.writeFileSync(metaPath, JSON.stringify({ hippoSessionId }, null, 2))
+    }
   } catch (error) {
     logger.error(
       {
@@ -137,12 +151,27 @@ export function loadMostRecentChatState(chatId?: string): SavedChatState | null 
 
     const resolvedChatId = path.basename(chatDir)
 
+    let hippoSessionId: string | undefined
+    const metaPath = path.join(chatDir, CHAT_META_FILENAME)
+    if (fs.existsSync(metaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as {
+          hippoSessionId?: string
+        }
+        if (typeof meta.hippoSessionId === 'string' && meta.hippoSessionId) {
+          hippoSessionId = meta.hippoSessionId
+        }
+      } catch {
+        // Missing/unparseable meta is fine — just omit hippoSessionId (backward-compatible)
+      }
+    }
+
     logger.info(
       { runStatePath, messagesPath, messageCount: messages.length, chatId: resolvedChatId },
       'Loaded chat state from chat directory',
     )
 
-    return { runState, messages, chatId: resolvedChatId }
+    return { runState, messages, chatId: resolvedChatId, hippoSessionId }
   } catch (error) {
     logger.error(
       {

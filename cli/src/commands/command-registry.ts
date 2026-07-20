@@ -11,6 +11,7 @@ import open from 'open'
 
 import { handleAdsEnable, handleAdsDisable } from './ads'
 import { handleHippoEnable, handleHippoDisable, handleHippoStatus, handleHippoRetry, handleHippoLogEnable, handleHippoLogDisable, handleHippoLogToggle } from './hippo'
+import { handleLogsClear } from './logs'
 import { buildInterviewPrompt, buildPlanPrompt, buildReviewPromptFromArgs } from './prompt-builders'
 // SPARROW: /telemetry command — inspect/mutate sparrow-config.json telemetry section
 import { handleTelemetry } from './telemetry'
@@ -959,6 +960,16 @@ const ALL_COMMANDS: CommandDefinition[] = [
 
       const { postUserMessage } = await handleTelemetry(args)
       params.setMessages((prev) => postUserMessage(prev))
+    },
+  }),
+  defineCommand({
+    name: 'logs:clear',
+    aliases: ['debug:clear'],
+    handler: (params) => {
+      const { postUserMessage } = handleLogsClear()
+      params.setMessages((prev) => postUserMessage(prev))
+      params.saveToHistory(params.inputValue.trim())
+      clearInput(params)
     },
   }),
   defineCommand({

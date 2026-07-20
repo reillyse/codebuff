@@ -267,25 +267,25 @@ export async function validateAndGetAgentTemplate(
   // Note: `mcpServers` is typed as non-optional, but some runtime templates
   // (e.g. base2) can have it undefined, so guard with `?? {}` on both sides.
   //
-  // Subagents also inherit the parent's spawnableAgents (deduped union, child's
-  // own entries preserved) so a multi-agent workflow where one custom agent
-  // delegates to another works: if the parent can spawn a custom agent, so can
-  // its children. This mirrors the mcpServers inheritance above. Note this only
-  // propagates agents literally listed in a parent's spawnableAgents — the
-  // BASE_AGENTS "can spawn anything" bypass below is deliberately NOT inherited,
-  // so there is no privilege escalation.
+  // spawnableAgents resolution: if the child agent explicitly declares its own
+  // spawnableAgents list, use ONLY those. Inheriting the union of parent+child
+  // caused massive token bloat — e.g. a parent with 35 agents would inject all
+  // 35 into a child that only needs 4, adding ~100k tokens of agent tool
+  // definitions on every step. Agents that declare no spawnableAgents of their
+  // own fall back to the parent's list (backward-compat for agents that rely on
+  // implicit inheritance). BASE_AGENTS bypass below is deliberately NOT
+  // inherited, so there is no privilege escalation.
+  const childSpawnableAgents =
+    agentTemplate.spawnableAgents && agentTemplate.spawnableAgents.length > 0
+      ? agentTemplate.spawnableAgents
+      : (parentAgentTemplate.spawnableAgents ?? [])
   const mergedAgentTemplate: AgentTemplate = {
     ...agentTemplate,
     mcpServers: {
       ...(parentAgentTemplate.mcpServers ?? {}),
       ...(agentTemplate.mcpServers ?? {}),
     },
-    spawnableAgents: [
-      ...new Set([
-        ...(parentAgentTemplate.spawnableAgents ?? []),
-        ...(agentTemplate.spawnableAgents ?? []),
-      ]),
-    ],
+    spawnableAgents: childSpawnableAgents,
   }
 
   const BASE_AGENTS = ['base', 'base-free', 'base-max', 'base-experimental']

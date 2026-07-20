@@ -412,13 +412,86 @@ ${toolDescriptionsList.join('\n\n')}
 `.trim()
 }
 
+/**
+ * Maximum characters allowed for an MCP tool's top-level description.
+ * Sparrow tools average ~750 chars but the model only needs the first
+ * sentence or two to know which tool to call. Reduced from 200 to 100:
+ * on 400+ Sparrow tools this saves another several thousand tokens, and
+ * the tool NAME (e.g. sparrow_people_add_email) already conveys intent.
+ */
+const MAX_MCP_TOOL_DESCRIPTION_CHARS = 100
+
+/**
+ * Recursively truncate `description` strings in a JSON Schema object to at
+ * most `maxChars` characters. When `maxChars` is 0, descriptions are REMOVED
+ * entirely. Handles nested `properties`, `items`, `allOf`/`anyOf`/`oneOf`
+ * arrays, and `$defs`. Never mutates the original.
+ *
+ * On MCP-heavy setups (e.g. 400+ Sparrow tools), verbose per-property
+ * descriptions (deprecation notes, internal ticket refs, edge-case
+ * walkthroughs) are the biggest driver of tool-schema token cost — measured
+ * at ~75k tokens on a 400-tool Sparrow session. Removing them keeps argument
+ * names and types intact so the model still knows what to pass: well-named
+ * params (person_id, campaign_id, ...) carry the intent; the schema
+ * STRUCTURE is what matters.
+ */
+function truncatePropertyDescriptions(
+  schema: Record<string, unknown>,
+  maxChars = 0,
+): Record<string, unknown> {
+  const truncateDesc = (s: Record<string, unknown>): Record<string, unknown> => {
+    const result: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(s)) {
+      if (k === 'description' && typeof v === 'string' && v.length > maxChars) {
+        if (maxChars <= 0) {
+          // Drop property descriptions entirely — the single biggest
+          // context-floor reduction on MCP-heavy sessions.
+          continue
+        }
+        result[k] = v.slice(0, maxChars) + '…'
+      } else if (k === 'properties' && v && typeof v === 'object' && !Array.isArray(v)) {
+        const truncatedProps: Record<string, unknown> = {}
+        for (const [propKey, propVal] of Object.entries(v as Record<string, unknown>)) {
+          truncatedProps[propKey] =
+            propVal && typeof propVal === 'object' && !Array.isArray(propVal)
+              ? truncateDesc(propVal as Record<string, unknown>)
+              : propVal
+        }
+        result[k] = truncatedProps
+      } else if (k === 'items' && v && typeof v === 'object' && !Array.isArray(v)) {
+        result[k] = truncateDesc(v as Record<string, unknown>)
+      } else if ((k === 'allOf' || k === 'anyOf' || k === 'oneOf') && Array.isArray(v)) {
+        result[k] = v.map((entry) =>
+          entry && typeof entry === 'object' && !Array.isArray(entry)
+            ? truncateDesc(entry as Record<string, unknown>)
+            : entry,
+        )
+      } else if (k === '$defs' && v && typeof v === 'object' && !Array.isArray(v)) {
+        const truncatedDefs: Record<string, unknown> = {}
+        for (const [defKey, defVal] of Object.entries(v as Record<string, unknown>)) {
+          truncatedDefs[defKey] =
+            defVal && typeof defVal === 'object' && !Array.isArray(defVal)
+              ? truncateDesc(defVal as Record<string, unknown>)
+              : defVal
+        }
+        result[k] = truncatedDefs
+      } else {
+        result[k] = v
+      }
+    }
+    return result
+  }
+  return truncateDesc(schema)
+}
+
 export async function getToolSet(params: {
   toolNames: string[]
   additionalToolDefinitions: () => Promise<CustomToolDefinitions>
   agentTools: ToolSet
   skills: SkillsMap
+  includeCacheControl?: boolean
 }): Promise<ToolSet> {
-  const { toolNames, additionalToolDefinitions, agentTools, skills } = params
+  const { toolNames, additionalToolDefinitions, agentTools, skills, includeCacheControl } = params
 
   // Generate available skills XML for the skill tool description
   const availableSkillsXml = formatAvailableSkillsXml(skills)
@@ -455,7 +528,11 @@ export async function getToolSet(params: {
     }
   }
 
-  const toolDefinitions = await additionalToolDefinitions()
+  // Skip MCP tools entirely when toolNames is explicitly empty. An agent with
+  // toolNames: [] wants NO tools — loading 400+ Sparrow MCP schemas
+  // (~82k tokens) for it would be pure waste and pushes the non-prunable
+  // floor over the safe input budget, causing an infinite pruning loop.
+  const toolDefinitions = toolNames.length === 0 ? {} : await additionalToolDefinitions()
   for (const [toolName, toolDefinition] of Object.entries(toolDefinitions)) {
     const clonedDef = cloneDeep(toolDefinition)
     if (
@@ -476,9 +553,31 @@ export async function getToolSet(params: {
         additionalProperties: _additionalProperties,
         ...rawSchema
       } = clonedDef.rawInputSchema as Record<string, unknown>
+      // Hard-cap the tool description. The first-paragraph split('\n\n')[0]
+      // was a no-op for Sparrow tools (no blank lines in their descriptions).
+      // A 500-char cap actually reduces tokens: Sparrow descs avg ~750 chars.
+      const rawDesc = clonedDef.description ?? ''
+      const truncatedDescription =
+        rawDesc.length > MAX_MCP_TOOL_DESCRIPTION_CHARS
+          ? rawDesc.slice(0, MAX_MCP_TOOL_DESCRIPTION_CHARS).trimEnd() + '…'
+          : rawDesc
+      // Also strip per-property descriptions in the input schema. On
+      // MCP-heavy setups (e.g. 400+ Sparrow tools), verbose per-property
+      // descriptions (deprecation notes, internal ticket refs, edge-case
+      // walkthroughs) dominate the tool-schema token cost (~75k tokens
+      // measured on a 400-tool Sparrow session, enough to make the
+      // non-prunable context floor EXCEED the safe input budget and cause
+      // an infinite context-overflow loop). Removing them (maxChars = 0)
+      // keeps the argument names and types intact so the model still knows
+      // what to pass — well-named params carry the intent.
+      const trimmedRawSchema = truncatePropertyDescriptions(
+        rawSchema as Record<string, unknown>,
+        0,
+      )
       toolSet[toolName] = {
         ...clonedDef,
-        inputSchema: jsonSchema(rawSchema as Parameters<typeof jsonSchema>[0]),
+        description: truncatedDescription,
+        inputSchema: jsonSchema(trimmedRawSchema as Parameters<typeof jsonSchema>[0]),
       } as (typeof toolSet)[string]
     } else {
       // Custom tool inputSchema may be JSON Schema (from SDK) or Zod (from MCP)
@@ -492,9 +591,39 @@ export async function getToolSet(params: {
     }
   }
 
-  // Add agent tools (agents as direct tool calls)
-  for (const [toolName, toolDefinition] of Object.entries(agentTools)) {
-    toolSet[toolName] = toolDefinition
+  // Add agent tools (agents as direct tool calls). Defense-in-depth: only
+  // inject these when the agent actually has spawn_agents in its toolNames.
+  // An agent without spawn_agents can never spawn sub-agents, so a non-empty
+  // agentTools map for such an agent would be pure token waste (a parent's
+  // full spawnableAgents list can be 30+ agents = ~100k tokens). This mirrors
+  // the build-time skip in run-agent-step.ts (agentTools is already {} there),
+  // so this is a belt-and-suspenders guard. Note we gate on spawn_agents
+  // presence — NOT per-agent-id toolNames membership — because agents list
+  // `spawn_agents` (not individual agent IDs) in toolNames, and the
+  // direct-agent-tool-call mechanism needs every built agent tool present.
+  if (toolNames.includes('spawn_agents')) {
+    for (const [toolName, toolDefinition] of Object.entries(agentTools)) {
+      toolSet[toolName] = toolDefinition
+    }
+  }
+
+  // Mark the last tool with cache_control so @ai-sdk/anthropic caches the
+  // entire tools block. Anthropic's prompt caching treats everything up to
+  // (and including) the cache-breakpoint tool as a single cacheable prefix,
+  // saving ~60k tokens of re-tokenisation per step on MCP-heavy sessions.
+  // Mutate providerOptions in-place to avoid reconstructing the full Tool
+  // object (which would require re-asserting required fields like inputSchema).
+  if (includeCacheControl) {
+    const lastToolName = Object.keys(toolSet).at(-1)
+    if (lastToolName) {
+      const lastTool = toolSet[lastToolName] as unknown as Record<string, unknown>
+      const existingProviderOptions = (lastTool.providerOptions as Record<string, unknown> | undefined) ?? {}
+      const existingAnthropic = (existingProviderOptions.anthropic as Record<string, unknown> | undefined) ?? {}
+      lastTool.providerOptions = {
+        ...existingProviderOptions,
+        anthropic: { ...existingAnthropic, cacheControl: { type: 'ephemeral' } },
+      }
+    }
   }
 
   return toolSet

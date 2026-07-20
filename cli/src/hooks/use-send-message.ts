@@ -145,6 +145,10 @@ export const useSendMessage = ({
     setIsSearchingMemory,
   } = useChatStore.getState()
   const previousRunStateRef = useRef<RunState | null>(null)
+  // Holds the *previous* session's hippo session ID when continuing a chat, so
+  // the first hippo context-search runs within-session instead of falling back
+  // to a cross-session blob. Cleared after the first message is sent.
+  const previousHippoSessionIdRef = useRef<string | null>(null)
   // Memoize stream controller to maintain referential stability across renders
   const streamRefsRef = useRef<ReturnType<
     typeof createStreamController
@@ -159,6 +163,7 @@ export const useSendMessage = ({
       const loadedState = loadMostRecentChatState(continueChatId ?? undefined)
       if (loadedState) {
         previousRunStateRef.current = loadedState.runState
+        previousHippoSessionIdRef.current = loadedState.hippoSessionId ?? null
         setRunState(loadedState.runState)
         setMessages(loadedState.messages)
         if (loadedState.chatId) {
@@ -412,9 +417,13 @@ export const useSendMessage = ({
       const { chatSessionId } = useChatStore.getState()
       setStreamStatus('waiting')
       setIsSearchingMemory(true)
+      // On the first message after a continueChat, search hippo using the
+      // previous session's ID (within-session) instead of the fresh empty one.
+      const hippoSessionIdToUse = previousHippoSessionIdRef.current ?? chatSessionId
+      previousHippoSessionIdRef.current = null // clear after first use
       let hippoContext: string
       try {
-        const hippoResult = await getHippoContext(effectivePrompt, previousRunStateRef.current, chatSessionId)
+        const hippoResult = await getHippoContext(effectivePrompt, previousRunStateRef.current, hippoSessionIdToUse)
         hippoContext = hippoResult.context
         if (hippoResult.connectionOk !== null) {
           useChatStore.getState().setHippoConnectionOk(hippoResult.connectionOk)
@@ -543,7 +552,7 @@ export const useSendMessage = ({
         setIsRetrying(false)
 
         setMessages((currentMessages) => {
-          saveChatState(runState, currentMessages)
+          saveChatState(runState, currentMessages, chatSessionId)
           return currentMessages
         })
         handleRunCompletion({
