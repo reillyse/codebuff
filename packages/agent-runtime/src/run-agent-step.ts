@@ -17,7 +17,7 @@ import {
 } from '@codebuff/common/sparrow/telemetry'
 import { TOOLS_WHICH_WONT_FORCE_NEXT_STEP } from '@codebuff/common/tools/constants'
 import { buildArray } from '@codebuff/common/util/array'
-import { AbortError, describeTransientApiError, getErrorObject, getErrorStatusCode, getTransientStatusCode, isAbortError, isNoOutputGeneratedError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
+import { AbortError, describeTransientApiError, getContextOverflowSignal, getErrorObject, getErrorStatusCode, getTransientStatusCode, isAbortError, isNoOutputGeneratedError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
 import { abortableSleep } from '@codebuff/common/util/promise'
 import { serializeCacheDebugCorrelation } from '@codebuff/common/util/cache-debug'
 import { systemMessage, userMessage } from '@codebuff/common/util/messages'
@@ -1451,25 +1451,57 @@ export async function loopAgentSteps(
         } catch (error) {
           stepError = error
           lastAttemptWasEmpty = false
-          // Diagnostic: capture the FIRST occurrence of
-          // AI_NoOutputGeneratedError (the retry-notice log below only fires on
-          // retryAttempt > 0). getErrorObject walks the cause chain to surface
-          // statusCode/responseBody, letting us confirm whether this masks a
-          // transient 529/overload.
+          // Diagnostic + control-flow for AI_NoOutputGeneratedError: the stream
+          // opened but closed without output. This is AMBIGUOUS — it can be a
+          // genuine transient provider overload (retryable, possibly a 529) OR
+          // an oversized request that exceeded the endpoint's context window
+          // (whose real status code is swallowed mid-stream, and which is NOT
+          // retryable — resending the same too-big payload fails identically).
+          // getErrorObject walks the cause chain to surface
+          // statusCode/responseBody; getContextOverflowSignal walks it for an
+          // explicit context-length message.
           if (isNoOutputGeneratedError(error)) {
+            const contextOverflowSignal = getContextOverflowSignal(error)
             logger.warn(
               {
                 site: 'agent-runtime/loopAgentSteps',
-                error: getErrorObject(error),
+                agentType,
+                agentId: currentAgentState.agentId,
+                error: getErrorObject(error, { includeRawError: true }),
                 transientStatusCode: getTransientStatusCode(error),
+                // Measured input token count for THIS step (from the Anthropic
+                // token-count API, or a local estimate fallback). Compare
+                // against the model's context window to judge overflow.
+                contextTokenCount: currentAgentState.contextTokenCount,
+                // True when the error/cause chain contains an explicit
+                // context-length message — strong evidence the failure was an
+                // oversized request rather than a transient overload.
+                likelyContextOverflow: contextOverflowSignal !== undefined,
+                contextOverflowSignal,
                 // Report the ACTUAL model used on this attempt (may have been
                 // switched by the 529 fallback ladder), not the original template model.
                 model: currentModel,
                 attempt: retryAttempt + 1,
+                maxAttempts: MAX_STEP_RETRIES + 1,
                 runId,
               },
-              'AI_NoOutputGeneratedError caught in agent step — dumping cause chain (statusCode/responseBody) to confirm whether it is a transient 529/overload',
+              contextOverflowSignal !== undefined
+                ? 'AI_NoOutputGeneratedError with context-overflow signal (not retrying: oversized request)'
+                : 'AI_NoOutputGeneratedError caught in agent step — dumping cause chain (statusCode/responseBody) to confirm whether it is a transient 529/overload',
             )
+
+            // Context overflow is NOT transient: retrying resends the same
+            // too-big payload and fails identically. Surface a clear, actionable
+            // error immediately instead of burning all retry attempts.
+            if (contextOverflowSignal !== undefined) {
+              throw new Error(
+                `Request exceeded the model's context window for agent '${agentTemplate.displayName}' (${agentType}). ` +
+                  `The conversation is too large to send (measured ~${currentAgentState.contextTokenCount} tokens). ` +
+                  `Start a new conversation or reduce the amount of context. ` +
+                  `Provider signal: ${contextOverflowSignal}`,
+                { cause: error },
+              )
+            }
           }
           // On a CONFIRMED Anthropic 529 (Overloaded), escalate the model ladder so
           // the next retry uses a different model instead of hitting the same

@@ -1,19 +1,21 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
+import type { MCPConfig } from '../types/mcp'
+import type { ToolResultOutput } from '../types/messages/content-part'
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
-import type { FetchLike, Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import type {
+  FetchLike,
+  Transport,
+} from '@modelcontextprotocol/sdk/shared/transport.js'
 import type {
   BlobResourceContents,
   CallToolResult,
   TextResourceContents,
 } from '@modelcontextprotocol/sdk/types.js'
-
-import type { MCPConfig } from '../types/mcp'
-import type { ToolResultOutput } from '../types/messages/content-part'
 
 /**
  * OAuth client provider for a remote MCP server, extended with the callback
@@ -30,6 +32,25 @@ export interface McpOAuthClientProvider extends OAuthClientProvider {
   stopCallbackServer(): void
 }
 
+/**
+ * Thrown by {@link getMCPClient} on the NON-interactive OAuth path when a
+ * server requires authorization but no on-disk tokens exist yet.
+ *
+ * This is a distinct, typed error (not a generic failure) so callers can tell
+ * "you must run /connect:mcp first" apart from a transient network/provider
+ * error. Crucially, we throw it BEFORE connecting so we never cache a zombie
+ * client or fetch a degraded (empty-`properties`) tool list that would poison
+ * the shared module-level cache for the parent agent AND every subagent.
+ */
+export class McpAuthorizationRequiredError extends Error {
+  constructor(serverUrl: string) {
+    super(
+      `MCP server ${serverUrl} requires authorization. Run '/connect:mcp' to authenticate, then retry.`,
+    )
+    this.name = 'McpAuthorizationRequiredError'
+  }
+}
+
 // Module-level mutex to serialize interactive OAuth flows.
 // If multiple servers need OAuth at startup they queue up and open browser
 // tabs one at a time instead of all simultaneously.
@@ -39,7 +60,10 @@ async function runWithOAuthMutex<T>(fn: () => Promise<T>): Promise<T> {
   let release!: () => void
   const previous = oauthFlowMutex
   oauthFlowMutex = oauthFlowMutex.then(
-    () => new Promise<void>(resolve => { release = resolve }),
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve
+      }),
   )
   await previous
   try {
@@ -232,7 +256,9 @@ export async function getMCPClient(
       }
     : undefined
 
-  const createHttpTransport = (): StreamableHTTPClientTransport | SSEClientTransport => {
+  const createHttpTransport = ():
+    | StreamableHTTPClientTransport
+    | SSEClientTransport => {
     const authProvider = useOAuth ? oauthOptions!.authProvider : undefined
     if (config.type === 'http') {
       return new StreamableHTTPClientTransport(url, {
@@ -254,10 +280,19 @@ export async function getMCPClient(
   if (useOAuth && !interactive) {
     // Non-interactive OAuth path (agent-runtime tool calls, incl. subagents).
     // Attach the authProvider so any stored on-disk tokens are used, but do NOT
-    // run the callback-server / browser orchestration. If the server needs a
-    // fresh authorization, the provider's redirectToAuthorization throws a
-    // clear "run /connect:mcp" error (surfaced to the caller as a tool error)
-    // rather than hanging on a browser flow that no one can complete.
+    // run the callback-server / browser orchestration.
+    //
+    // If there are no on-disk tokens yet, do NOT connect. Sparrow-style servers
+    // accept the MCP `initialize` handshake WITHOUT auth, so connecting here
+    // would (a) cache a zombie client that reports "connected" without being
+    // able to call tools, and (b) let a subsequent listMCPTools fetch a
+    // DEGRADED tool list (empty `inputSchema.properties`) that gets cached in
+    // the shared module-level cache — stripping every tool's parameters for the
+    // parent agent AND all subagents. Throwing here (before connecting) keeps
+    // the cache clean and surfaces a clear "run /connect:mcp" message instead.
+    if (!oauthOptions!.authProvider.tokens()) {
+      throw new McpAuthorizationRequiredError(config.url)
+    }
     const transport = createHttpTransport()
     await client.connect(transport)
     runningClients[key] = client
@@ -363,6 +398,56 @@ export function listMCPTools(
         delete listToolsCache[clientId]
       }
     })
+    // Don't cache a DEGRADED tools/list either. Servers like Sparrow accept the
+    // MCP `initialize` handshake WITHOUT auth (a "zombie" session — see
+    // clearMCPClient), so a pre-auth listTools can resolve (HTTP 200) yet return
+    // tools whose `inputSchema.properties` is empty. Caching that would strip
+    // every tool's parameters for the parent AND all subagents (shared cache),
+    // making the model call tools with empty `{}` args.
+    //
+    // We evict (treat as retryable) when the response is degraded in EITHER of
+    // two ways:
+    //  1. ALL tools lack properties — a whole-list zombie response. (Tradeoff: a
+    //     healthy server whose tools ALL legitimately take zero params is
+    //     re-listed on every call — niche and low-cost.)
+    //  2. ANY tool has empty properties BUT declares `required` fields — a
+    //     self-contradictory (a required param that isn't described) and
+    //     therefore degraded schema. This catches a MIXED response where most
+    //     tools loaded fine but one (e.g. quarterly_status_save) came back with
+    //     its parameters stripped — which would otherwise be cached and silently
+    //     poison just that one tool for every agent and subagent.
+    promise.then(
+      (result) => {
+        const tools = result?.tools ?? []
+        const isEmptyProps = (tool: (typeof tools)[number]): boolean => {
+          const properties = tool.inputSchema?.properties
+          return (
+            !properties ||
+            typeof properties !== 'object' ||
+            Object.keys(properties).length === 0
+          )
+        }
+        const declaresRequired = (tool: (typeof tools)[number]): boolean => {
+          const required = tool.inputSchema?.required
+          return Array.isArray(required) && required.length > 0
+        }
+        const allDegraded = tools.length > 0 && tools.every(isEmptyProps)
+        const anySelfContradictory = tools.some(
+          (tool: (typeof tools)[number]) =>
+            isEmptyProps(tool) && declaresRequired(tool),
+        )
+        if (
+          (allDegraded || anySelfContradictory) &&
+          listToolsCache[clientId] === promise
+        ) {
+          delete listToolsCache[clientId]
+        }
+      },
+      () => {
+        // Rejection is handled by the `.catch` above; this no-op arm just
+        // prevents an unhandled rejection on this derived promise.
+      },
+    )
     listToolsCache[clientId] = promise
   }
   return listToolsCache[clientId]

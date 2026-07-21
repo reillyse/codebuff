@@ -80,8 +80,17 @@ const definition: AgentDefinition = {
     /** Token budget for user content in the conversation summary */
     const USER_BUDGET = 50_000
 
-    /** Fudge factor for token count threshold to trigger pruning earlier */
-    const TOKEN_COUNT_FUDGE_FACTOR = 1_000
+    /**
+     * Headroom (in tokens) reserved below maxContextLength so pruning triggers
+     * BEFORE a request is built at the ceiling. The measured contextTokenCount
+     * does not include the step's own per-request overhead (STEP_PROMPT, the
+     * tools JSON schema, and the model's generated output), so pruning at only
+     * ~1k below the limit let harbor build requests at ~199.5k that then
+     * overflowed the 200k Anthropic window mid-stream (surfacing as
+     * AI_NoOutputGeneratedError -> "Response stream interrupted"). Reserve a
+     * generous buffer instead.
+     */
+    const TOKEN_COUNT_FUDGE_FACTOR = 15_000
 
     /** Axiom-only operational event understood by the logging adapters. */
     const CONTEXT_PRUNING_COMPLETED_EVENT = 'context_pruning.completed'

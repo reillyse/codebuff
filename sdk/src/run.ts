@@ -61,19 +61,18 @@ import type { Source } from '@codebuff/common/types/source'
 import type { CodebuffSpawn } from '@codebuff/common/types/spawn'
 
 /**
- * Build interactive OAuth options for a remote MCP server that opts into the
- * OAuth flow via `"oauth": true`. Returns undefined for stdio servers or when
- * OAuth is not enabled, leaving the static-header auth path untouched.
+ * Builds the OAuth options passed to getMCPClient for a remote MCP server.
+ *
+ * This path serves the agent-runtime tool calls (parent AND subagents), so it
+ * must be NON-interactive: reuse stored on-disk tokens, but never open a
+ * browser. Interactive authentication happens separately via /connect:mcp at
+ * the top level. Subagents that explicitly call an MCP tool reuse the same
+ * on-disk tokens obtained there (and the shared process-level client cache).
  */
 function getMcpOAuthOptions(
   config: MCPConfig,
 ): { authProvider: McpOAuthProvider; interactive: boolean } | undefined {
   if (config.type !== 'stdio' && config.oauth) {
-    // This path serves the agent-runtime tool calls (parent AND subagents), so
-    // it must be non-interactive: reuse stored on-disk tokens, but never open a
-    // browser. Interactive authentication happens separately via /connect:mcp
-    // at the top level. Subagents inherit the parent's mcpServers config and
-    // reuse the same on-disk tokens obtained there.
     return {
       authProvider: new McpOAuthProvider(config.url, { interactive: false }),
       interactive: false,
@@ -456,7 +455,7 @@ async function runOnce({
           filteredTools.push(tool)
           continue
         }
-        if (tool.name in toolNames) {
+        if (toolNames.includes(tool.name)) {
           filteredTools.push(tool)
           continue
         }

@@ -5,6 +5,7 @@ import { toolParams } from '@codebuff/common/tools/list'
 import { generateCompactId } from '@codebuff/common/util/string'
 import { cloneDeep } from 'lodash'
 
+import { coerceInputToJsonSchema } from '../mcp-coerce'
 import { getMCPToolData } from '../mcp'
 import { MCP_TOOL_SEPARATOR } from '../mcp-constants'
 import { getAgentShortName } from '../templates/prompts'
@@ -410,116 +411,6 @@ export async function executeToolCall<T extends ToolName>(
   )
 }
 
-/**
- * Coerces a single value to the type declared by a JSON Schema property definition.
- * Handles numbers, booleans, arrays, and objects — including string-encoded variants.
- * Recurses into nested object properties and array items, and handles JSON Schema
- * composition keywords (anyOf, oneOf, allOf).
- */
-function coerceValue(value: unknown, propSchema: Record<string, unknown>): unknown {
-  const type = propSchema.type as string | string[] | undefined
-  const types = Array.isArray(type) ? type : type ? [type] : []
-
-  // When no explicit `type` is declared, try JSON Schema composition keywords.
-  if (types.length === 0) {
-    // allOf: apply each sub-schema sequentially (each result feeds into the next)
-    const allOf = propSchema.allOf
-    if (Array.isArray(allOf)) {
-      let result = value
-      for (const subSchema of allOf) {
-        if (subSchema !== null && typeof subSchema === 'object' && !Array.isArray(subSchema)) {
-          result = coerceValue(result, subSchema as Record<string, unknown>)
-        }
-      }
-      return result
-    }
-
-    // anyOf / oneOf: try each sub-schema in order, return the first that changes the value
-    const anyOf = propSchema.anyOf ?? propSchema.oneOf
-    if (Array.isArray(anyOf)) {
-      for (const subSchema of anyOf) {
-        if (subSchema !== null && typeof subSchema === 'object' && !Array.isArray(subSchema)) {
-          const coerced = coerceValue(value, subSchema as Record<string, unknown>)
-          if (coerced !== value) return coerced
-        }
-      }
-      return value
-    }
-  }
-
-  if (typeof value === 'string') {
-    if (types.includes('number') || types.includes('integer')) {
-      // Guard against empty string coercing to 0 via Number("")
-      if (value.trim() !== '') {
-        const num = Number(value)
-        if (Number.isFinite(num)) return num
-      }
-    } else if (types.includes('boolean')) {
-      const lower = value.toLowerCase()
-      if (lower === 'true') return true
-      if (lower === 'false') return false
-    } else if (types.includes('array')) {
-      try {
-        const parsed: unknown = JSON.parse(value)
-        if (Array.isArray(parsed)) return coerceArrayItems(parsed, propSchema)
-      } catch {
-        // leave as string if not valid JSON
-      }
-    } else if (types.includes('object')) {
-      try {
-        const parsed: unknown = JSON.parse(value)
-        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return propSchema.properties
-            ? coerceInputToJsonSchema(parsed as Record<string, unknown>, propSchema)
-            : parsed
-        }
-      } catch {
-        // leave as string if not valid JSON
-      }
-    }
-  } else if (Array.isArray(value)) {
-    if (types.includes('array')) return coerceArrayItems(value, propSchema)
-  } else if (value !== null && typeof value === 'object') {
-    if (types.includes('object') && propSchema.properties) {
-      return coerceInputToJsonSchema(value as Record<string, unknown>, propSchema)
-    }
-  }
-
-  return value
-}
-
-/** Coerces each element of an array using the schema's `items` definition. */
-function coerceArrayItems(items: unknown[], arraySchema: Record<string, unknown>): unknown[] {
-  const itemSchema = arraySchema.items as Record<string, unknown> | undefined
-  if (!itemSchema) return items
-  return items.map((item) => coerceValue(item, itemSchema))
-}
-
-/**
- * Coerces string-encoded values in `input` to the types declared by a JSON Schema.
- * This is a defensive layer for the MCP tool call path: when an LLM uses text/XML
- * tool-calling mode, parameter values can arrive as strings even when the JSON Schema
- * declares number, boolean, array, or object types. The MCP server then rejects them
- * with errors like "expected number, received string". Values already of the correct
- * type are left untouched (idempotent). Coercion recurses into nested objects and
- * array items.
- */
-export function coerceInputToJsonSchema(
-  input: Record<string, unknown>,
-  schema: Record<string, unknown>,
-): Record<string, unknown> {
-  const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>
-  const result: Record<string, unknown> = { ...input }
-
-  for (const [key, value] of Object.entries(result)) {
-    const propSchema = properties[key]
-    if (!propSchema) continue
-    result[key] = coerceValue(value, propSchema)
-  }
-
-  return result
-}
-
 export function parseRawCustomToolCall(params: {
   customToolDefs: CustomToolDefinitions
   rawToolCall: {
@@ -544,30 +435,54 @@ export function parseRawCustomToolCall(params: {
     }
   }
 
+  // MCP tool names (containing MCP_TOOL_SEPARATOR) bypass the "not found" guard
+  // above so agents can call server-provided tools. But if no def was registered
+  // for this MCP tool, its parameter schema never loaded (e.g. the server's
+  // tools/list came back empty on a pre-auth "zombie" session). Rather than
+  // silently forwarding unvalidated (often empty `{}`) arguments to the server,
+  // fail loudly so the problem is diagnosable.
+  if (
+    toolName.includes(MCP_TOOL_SEPARATOR) &&
+    !(customToolDefs && toolName in customToolDefs)
+  ) {
+    return {
+      toolName,
+      toolCallId: rawToolCall.toolCallId,
+      input: rawToolCall.input,
+      error: `MCP tool ${toolName} has no registered parameter schema (the server's tool list may not have loaded — try reconnecting with /connect:mcp). Refusing to call it with unvalidated arguments.`,
+    }
+  }
+
   const processedParameters: Record<string, any> = {}
   for (const [param, val] of Object.entries(rawToolCall.input ?? {})) {
     processedParameters[param] = val
+  }
+
+  // Coerce string-encoded numbers/booleans (e.g. year:"2026") against the tool's
+  // original JSON Schema. LLMs frequently emit numeric args as strings in the
+  // tool-call format; without this the call fails with
+  // "invalid_type: expected number, received string" — either here at Zod
+  // validation or downstream at the MCP server. We coerce IN PLACE so the same
+  // object is used for BOTH validation and the value forwarded to the server
+  // (see `input` below).
+  const rawInputSchema = customToolDefs?.[toolName]?.rawInputSchema as
+    | Record<string, unknown>
+    | undefined
+  if (rawInputSchema) {
+    const coerced = coerceInputToJsonSchema(processedParameters, rawInputSchema)
+    // coerceInputToJsonSchema returns `unknown`; for a top-level object schema
+    // the result is an object with the same keys. Guard before copying back.
+    if (coerced && typeof coerced === 'object' && !Array.isArray(coerced)) {
+      for (const [k, v] of Object.entries(coerced as Record<string, unknown>)) {
+        processedParameters[k] = v
+      }
+    }
   }
 
   // Add the required codebuff_end_step parameter with the correct value for this tool if requested
   if (autoInsertEndStepParam) {
     processedParameters[endsAgentStepParam] =
       customToolDefs?.[toolName]?.endsAgentStep
-  }
-
-  // Apply type coercion BEFORE Zod validation so that both strict and permissive
-  // schemas receive correctly-typed values. Without this, XML/text tool-calling
-  // mode sends all values as strings and strict schemas fail validation before
-  // coercion can help; permissive schemas pass validation but forward raw strings
-  // to the MCP server which then rejects them.
-  const rawInputSchema = customToolDefs?.[toolName]?.rawInputSchema as
-    | Record<string, unknown>
-    | undefined
-  if (rawInputSchema) {
-    const coerced = coerceInputToJsonSchema(processedParameters, rawInputSchema)
-    for (const [k, v] of Object.entries(coerced)) {
-      processedParameters[k] = v
-    }
   }
 
   const rawSchema = customToolDefs?.[toolName]?.inputSchema

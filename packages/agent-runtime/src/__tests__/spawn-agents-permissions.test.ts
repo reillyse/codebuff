@@ -15,7 +15,10 @@ import {
 import { mockFileContext } from './test-utils'
 import * as runAgentStep from '../run-agent-step'
 import { handleSpawnAgentInline } from '../tools/handlers/tool/spawn-agent-inline'
-import { getMatchingSpawn } from '../tools/handlers/tool/spawn-agent-utils'
+import {
+  getMatchingSpawn,
+  getReferencedMcpServers,
+} from '../tools/handlers/tool/spawn-agent-utils'
 import { handleSpawnAgents } from '../tools/handlers/tool/spawn-agents'
 
 import type { CodebuffToolCall } from '@codebuff/common/tools/list'
@@ -101,6 +104,139 @@ describe('Spawn Agents Permissions', () => {
 
   afterEach(() => {
     mock.restore()
+  })
+
+  describe('getReferencedMcpServers function', () => {
+    it('returns an empty set for empty toolNames', () => {
+      expect(getReferencedMcpServers([]).size).toBe(0)
+    })
+
+    it('ignores built-in tools without a slash', () => {
+      const result = getReferencedMcpServers(['read_files', 'spawn_agents'])
+      expect(result.size).toBe(0)
+    })
+
+    it('extracts the server name (prefix before the first slash)', () => {
+      const result = getReferencedMcpServers([
+        'sparrow/companies_get',
+        'sparrow/list_tables',
+        'notionApi/search',
+        'read_files',
+      ])
+      expect([...result].sort()).toEqual(['notionApi', 'sparrow'])
+    })
+
+    it('uses only the prefix before the first slash for nested names', () => {
+      const result = getReferencedMcpServers(['sparrow/a/b/c'])
+      expect([...result]).toEqual(['sparrow'])
+    })
+
+    it('ignores names with a leading slash (no server prefix)', () => {
+      const result = getReferencedMcpServers(['/foo'])
+      expect(result.size).toBe(0)
+    })
+  })
+
+  describe('subagent MCP server inheritance (opt-in)', () => {
+    const createMcpAgent = (
+      id: string,
+      opts: {
+        toolNames?: string[]
+        mcpServers?: AgentTemplate['mcpServers']
+        spawnableAgents?: string[]
+      } = {},
+    ): AgentTemplate => ({
+      ...createMockAgent(id, opts.spawnableAgents ?? []),
+      toolNames: opts.toolNames ?? [],
+      mcpServers: opts.mcpServers ?? {},
+    })
+
+    const sparrowConfig = {
+      type: 'http' as const,
+      url: 'https://api.sparrow.io/mcp',
+      params: {},
+      headers: {},
+      oauth: true,
+    }
+
+    it('does NOT inherit a parent MCP server the child never references', async () => {
+      const parentAgent = createMcpAgent('parent', {
+        spawnableAgents: ['context-pruner'],
+        mcpServers: { sparrow: sparrowConfig },
+      })
+      // Child names no sparrow tools -> should inherit nothing.
+      const childAgent = createMcpAgent('context-pruner', { toolNames: [] })
+      const sessionState = getInitialSessionState(mockFileContext)
+
+      let capturedChildMcpServers: AgentTemplate['mcpServers'] | undefined
+      mockLoopAgentSteps.mockImplementation(async (options: any) => {
+        capturedChildMcpServers = options.agentTemplate.mcpServers
+        return {
+          agentState: {
+            ...options.agentState,
+            messageHistory: [assistantMessage('Mock agent response')],
+          },
+          output: {
+            type: 'lastMessage',
+            value: [assistantMessage('Mock agent response')],
+          },
+        }
+      })
+
+      await handleSpawnAgents({
+        ...handleSpawnAgentsBaseParams,
+        agentState: sessionState.mainAgentState,
+        agentTemplate: parentAgent,
+        localAgentTemplates: { 'context-pruner': childAgent },
+        toolCall: {
+          toolName: 'spawn_agents' as const,
+          toolCallId: 'test-tool-call-id',
+          input: { agents: [{ agent_type: 'context-pruner', prompt: 'x' }] },
+        },
+      })
+
+      expect(capturedChildMcpServers).toEqual({})
+    })
+
+    it('inherits a parent MCP server the child DOES reference in toolNames', async () => {
+      const parentAgent = createMcpAgent('parent', {
+        spawnableAgents: ['sparrow-worker'],
+        mcpServers: { sparrow: sparrowConfig },
+      })
+      const childAgent = createMcpAgent('sparrow-worker', {
+        toolNames: ['sparrow/companies_get'],
+      })
+      const sessionState = getInitialSessionState(mockFileContext)
+
+      let capturedChildMcpServers: AgentTemplate['mcpServers'] | undefined
+      mockLoopAgentSteps.mockImplementation(async (options: any) => {
+        capturedChildMcpServers = options.agentTemplate.mcpServers
+        return {
+          agentState: {
+            ...options.agentState,
+            messageHistory: [assistantMessage('Mock agent response')],
+          },
+          output: {
+            type: 'lastMessage',
+            value: [assistantMessage('Mock agent response')],
+          },
+        }
+      })
+
+      await handleSpawnAgents({
+        ...handleSpawnAgentsBaseParams,
+        agentState: sessionState.mainAgentState,
+        agentTemplate: parentAgent,
+        localAgentTemplates: { 'sparrow-worker': childAgent },
+        toolCall: {
+          toolName: 'spawn_agents' as const,
+          toolCallId: 'test-tool-call-id',
+          input: { agents: [{ agent_type: 'sparrow-worker', prompt: 'x' }] },
+        },
+      })
+
+      expect(capturedChildMcpServers).toEqual({ sparrow: sparrowConfig })
+    })
   })
 
   describe('getMatchingSpawn function', () => {

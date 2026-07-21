@@ -107,6 +107,38 @@ export function extractSubagentContextParams(
 }
 
 /**
+ * The separator used in user-facing agent `toolNames` to reference a specific
+ * MCP tool, e.g. 'sparrow/list_tables'. This is intentionally '/' and NOT the
+ * internal `MCP_TOOL_SEPARATOR` ('__'): agent templates declare their tools
+ * with '/', and getMCPToolData parses them with the same '/' separator (see
+ * `USER_INPUT_SEPARATOR` in mcp.ts) before rewriting them to the internal '__'
+ * form for LLM API compatibility.
+ */
+const MCP_TOOLNAME_SEPARATOR = '/'
+
+/**
+ * Extracts the set of MCP server names an agent references in its toolNames.
+ *
+ * MCP tool names use '/' as the server/tool separator (e.g. 'sparrow/list_tables'),
+ * so the server name is the prefix before the first '/'. Non-MCP tool names
+ * (built-ins like 'read_files') have no '/' and are ignored.
+ *
+ * Used to decide which of a parent's MCP servers a subagent opts into inheriting.
+ */
+export function getReferencedMcpServers(
+  toolNames: readonly string[],
+): Set<string> {
+  const servers = new Set<string>()
+  for (const t of toolNames) {
+    const separatorIndex = t.indexOf(MCP_TOOLNAME_SEPARATOR)
+    if (separatorIndex > 0) {
+      servers.add(t.slice(0, separatorIndex))
+    }
+  }
+  return servers
+}
+
+/**
  * Checks if a parent agent is allowed to spawn a child agent
  */
 export function getMatchingSpawn(
@@ -257,15 +289,34 @@ export async function validateAndGetAgentTemplate(
     throw new Error(`Agent type ${agentTypeStr} not found.`)
   }
 
-  // Subagents inherit the parent's MCP servers so they can reach the same MCP
-  // tools (e.g. an OAuth server the user authenticated at the top level). The
-  // child's own declarations win on key conflicts. This is safe because the
-  // agent-runtime tool path is non-interactive (getMcpOAuthOptions in the SDK):
-  // subagents reuse the parent's on-disk tokens and never launch a browser.
-  // We clone rather than mutate because getAgentTemplate may return a cached
-  // template shared across runs.
-  // Note: `mcpServers` is typed as non-optional, but some runtime templates
-  // (e.g. base2) can have it undefined, so guard with `?? {}` on both sides.
+  // Subagents inherit the parent's MCP servers CONFIG so they can reach the
+  // same MCP tools (e.g. an OAuth server the user authenticated at the top
+  // level) using the parent's on-disk tokens + the shared process-level MCP
+  // client cache.
+  //
+  // BUT a subagent must OPT IN to which inherited servers it wants, by naming at
+  // least one of that server's tools in its own toolNames (e.g. 'sparrow/list_tables').
+  // getMCPToolData loads ALL of a configured server's tools into the agent's
+  // context, so blindly inheriting every parent server would flood tool-less
+  // subagents (e.g. context-pruner) with hundreds of tool definitions they will
+  // never use. Top-level agents get their mcpServers from the mcp.json merge
+  // (not this inheritance path), so they still receive all tools.
+  //
+  // The child's OWN directly-declared mcpServers are always kept (and win on key
+  // conflicts). We only filter the servers INHERITED from the parent.
+  //
+  // The agent-runtime tool path is non-interactive (getMcpOAuthOptions in the
+  // SDK returns interactive:false): subagents reuse the parent's on-disk tokens
+  // and never launch a browser. We clone rather than mutate because
+  // getAgentTemplate may return a cached template shared across runs.
+  const referencedMcpServers = getReferencedMcpServers(
+    agentTemplate.toolNames ?? [],
+  )
+  const inheritedMcpServers = Object.fromEntries(
+    Object.entries(parentAgentTemplate.mcpServers ?? {}).filter(
+      ([serverName]) => referencedMcpServers.has(serverName),
+    ),
+  )
   //
   // spawnableAgents resolution: if the child agent explicitly declares its own
   // spawnableAgents list, use ONLY those. Inheriting the union of parent+child
@@ -282,8 +333,8 @@ export async function validateAndGetAgentTemplate(
   const mergedAgentTemplate: AgentTemplate = {
     ...agentTemplate,
     mcpServers: {
-      ...(parentAgentTemplate.mcpServers ?? {}),
-      ...(agentTemplate.mcpServers ?? {}),
+      ...inheritedMcpServers,
+      ...agentTemplate.mcpServers,
     },
     spawnableAgents: childSpawnableAgents,
   }

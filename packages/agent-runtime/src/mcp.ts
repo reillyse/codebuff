@@ -1,6 +1,8 @@
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { convertJsonSchemaToZod } from 'zod-from-json-schema'
 
+import { McpAuthorizationRequiredError } from '@codebuff/common/mcp/client'
+
 import { MCP_TOOL_SEPARATOR } from './mcp-constants'
 
 import type { AgentTemplate } from './templates/types'
@@ -67,9 +69,11 @@ export async function getMCPToolData(
           for (const { name, description, inputSchema } of mcpData) {
             writeTo[mcpName + MCP_TOOL_SEPARATOR + name] = {
               inputSchema: convertJsonSchemaToZod(inputSchema as any) as any,
-              // Preserve the original JSON Schema so tool-call inputs can be
-              // coerced back to their declared types (numbers, booleans,
-              // arrays) before being sent to the MCP server.
+              // Preserve the original JSON Schema so parseRawCustomToolCall can
+              // coerce string-encoded numbers/booleans (e.g. year:"2026") into
+              // the types the server expects. The Zod schema built above does
+              // NOT coerce, so without this the call would fail with
+              // "invalid_type: expected number, received string".
               rawInputSchema: inputSchema as Record<string, unknown>,
               endsAgentStep: true,
               description,
@@ -87,6 +91,7 @@ export async function getMCPToolData(
           // Rather than failing silently, record a human-readable reason so the
           // caller can surface it to the model (and, through it, the user).
           const isAuthError =
+            error instanceof McpAuthorizationRequiredError ||
             error instanceof UnauthorizedError ||
             (error instanceof Error &&
               /401|unauthorized/i.test(error.message))

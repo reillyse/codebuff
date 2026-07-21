@@ -1,6 +1,5 @@
 import fs from 'fs'
 import path from 'node:path'
-import os from 'os'
 
 import {
   CHATGPT_OAUTH_CLIENT_ID,
@@ -8,6 +7,7 @@ import {
 } from '@codebuff/common/constants/chatgpt-oauth'
 import { CLAUDE_OAUTH_CLIENT_ID } from '@codebuff/common/constants/claude-oauth'
 import { env } from '@codebuff/common/env'
+import { getConfigDir } from '@codebuff/common/util/config-dir'
 import { userSchema } from '@codebuff/common/util/credentials'
 import { atomicWriteFileSync, withCredentialFileLock } from '@codebuff/common/util/fs'
 import { z } from 'zod/v4'
@@ -59,18 +59,9 @@ export const userFromJson = (json: string): User | null => {
   }
 }
 
-/**
- * Get the config directory path based on the environment.
- * Uses the clientEnv to determine the environment suffix.
- */
-export const getConfigDir = (clientEnv: ClientEnv = env): string => {
-  const envSuffix =
-    clientEnv.NEXT_PUBLIC_CB_ENVIRONMENT &&
-    clientEnv.NEXT_PUBLIC_CB_ENVIRONMENT !== 'prod'
-      ? `-${clientEnv.NEXT_PUBLIC_CB_ENVIRONMENT}`
-      : ''
-  return path.join(os.homedir(), '.config', `manicode${envSuffix}`)
-}
+// getConfigDir is now defined once in @codebuff/common/util/config-dir.
+// Re-exported here so existing importers of `sdk/src/credentials` keep working.
+export { getConfigDir } from '@codebuff/common/util/config-dir'
 
 /**
  * Get the credentials file path based on the environment.

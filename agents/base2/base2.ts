@@ -88,6 +88,7 @@ export function createBase2(
       isDefault && 'thinker',
       (isDefault || isMax) && ['opus-agent', 'gpt-5-agent', 'fable-agent'],
       isMax && 'thinker-best-of-n-opus',
+      (isDefault || isMax) && 'fable',
       isDefault && 'editor',
       isMax && 'editor-multi-prompt',
       isFree && 'code-reviewer-lite',

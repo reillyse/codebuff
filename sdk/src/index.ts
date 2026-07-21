@@ -37,6 +37,17 @@ export { getUserInfoFromApiKey } from './impl/database'
 export * from './credentials'
 export { loadLocalAgents } from './agents/load-agents'
 export { loadMCPConfig, loadMCPConfigSync } from './agents/load-mcp-config'
+
+// NOTE: MCP helpers are deliberately NOT re-exported from this public barrel.
+// Both the MCP *client* helpers (getMCPClient, etc.) and the *OAuth provider*
+// (McpOAuthProvider, getMcpOAuthStatus, clearMcpOAuthCredentials) have type
+// signatures that reference `@modelcontextprotocol/sdk` types (`Client`,
+// `OAuthClientMetadata`, `OAuthTokens`, ...). Those declarations contain an
+// unresolvable zod `objectOutputType<...>` symbol that breaks
+// `dts-bundle-generator` when it tries to inline them into the public bundle.
+// The CLI imports the client helpers from `@codebuff/common/mcp/client` and the
+// OAuth provider from `@codebuff/common/mcp/oauth-provider` instead.
+export type { MCPConfig } from '@codebuff/common/types/mcp'
 export { loadSkills } from './skills/load-skills'
 export { formatAvailableSkillsXml } from '@codebuff/common/util/skills'
 export type { LoadSkillsOptions } from './skills/load-skills'

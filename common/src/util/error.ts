@@ -417,6 +417,80 @@ export function describeTransientApiError(error: unknown): string {
 }
 
 /**
+ * Substrings that appear in provider error messages when a request exceeds the
+ * endpoint's context window. Used by {@link getContextOverflowSignal} to
+ * distinguish an oversized-context failure from a genuine transient overload
+ * when both surface as an `AI_NoOutputGeneratedError` (which swallows the
+ * underlying status code mid-stream).
+ */
+const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
+  'maximum context length',
+  'context length exceeded',
+  'context_length_exceeded',
+  'context window',
+  'too many tokens',
+  'prompt is too long',
+  'input is too long',
+  'reduce the length',
+  'exceeds the maximum',
+  'maximum number of tokens',
+]
+
+/**
+ * Walks the `error.cause` chain (cycle-guarded) looking for evidence that the
+ * failure was caused by the request exceeding the model endpoint's context
+ * window. Returns the first matching message found, or undefined.
+ *
+ * This is diagnostic-only: it lets us tell apart "the payload was too big"
+ * (retrying is futile) from a genuine transient provider overload, both of
+ * which can otherwise surface identically as `AI_NoOutputGeneratedError` with
+ * the real status code swallowed inside the stream.
+ */
+export function getContextOverflowSignal(error: unknown): string | undefined {
+  return getContextOverflowSignalImpl(error, new Set())
+}
+
+function getContextOverflowSignalImpl(
+  error: unknown,
+  seen: Set<unknown>,
+): string | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  if (seen.has(error)) return undefined
+  seen.add(error)
+
+  const matchesOverflow = (text: string): boolean => {
+    const lower = text.toLowerCase()
+    return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((p) => lower.includes(p))
+  }
+
+  const message =
+    'message' in error && typeof (error as { message: unknown }).message === 'string'
+      ? ((error as { message: string }).message)
+      : undefined
+  if (message && matchesOverflow(message)) {
+    return message
+  }
+
+  // Some providers put the human-readable reason in the response body rather
+  // than the message.
+  if ('responseBody' in error) {
+    const body = (error as { responseBody: unknown }).responseBody
+    if (typeof body === 'string' && matchesOverflow(body)) {
+      return body.slice(0, 500)
+    }
+  }
+
+  if ('cause' in error) {
+    return getContextOverflowSignalImpl(
+      (error as { cause: unknown }).cause,
+      seen,
+    )
+  }
+
+  return undefined
+}
+
+/**
  * Extracts the HTTP status code from an error object, if present.
  * Checks 'statusCode' first (our convention / AI SDK errors), then 'status' (APICallError).
  *

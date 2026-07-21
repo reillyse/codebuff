@@ -5,6 +5,7 @@ import {
   NO_OUTPUT_GENERATED_ERROR_NAME,
   StreamStallError,
   describeTransientApiError,
+  getContextOverflowSignal,
   getTransientStatusCode,
   isNoOutputGeneratedError,
   isStreamStallError,
@@ -236,6 +237,55 @@ describe('getTransientStatusCode', () => {
     ;(a as Error & { cause?: unknown }).cause = b
     ;(b as Error & { cause?: unknown }).cause = a
     expect(getTransientStatusCode(a)).toBeUndefined()
+  })
+})
+
+describe('getContextOverflowSignal', () => {
+  it('detects a top-level context-length message', () => {
+    const error = new Error(
+      "This endpoint's maximum context length is 200000 tokens. However, you requested about 201209 tokens.",
+    )
+    expect(getContextOverflowSignal(error)).toContain('maximum context length')
+  })
+
+  it('detects a context-overflow signal nested in the cause chain', () => {
+    // Simulates an AI_NoOutputGeneratedError wrapping the real (swallowed)
+    // context-length error mid-stream.
+    const inner = new Error(
+      'context_length_exceeded: the prompt is too long for this model',
+    )
+    const wrapper = new Error('No output generated.')
+    wrapper.name = NO_OUTPUT_GENERATED_ERROR_NAME
+    ;(wrapper as Error & { cause?: unknown }).cause = inner
+    expect(getContextOverflowSignal(wrapper)).toContain('context_length_exceeded')
+  })
+
+  it('detects a context-overflow signal in an error responseBody', () => {
+    const error = new Error('Request failed') as Error & {
+      responseBody?: string
+    }
+    error.responseBody = JSON.stringify({
+      error: { message: 'Please reduce the length of the messages.' },
+    })
+    expect(getContextOverflowSignal(error)).toContain('reduce the length')
+  })
+
+  it('returns undefined for a transient overload (no context signal)', () => {
+    // A genuine 529 overload should NOT be misreported as context overflow.
+    expect(getContextOverflowSignal(makeApiError(529, 'Overloaded'))).toBe(
+      undefined,
+    )
+    expect(getContextOverflowSignal(new Error('Network error'))).toBe(undefined)
+    expect(getContextOverflowSignal(null)).toBe(undefined)
+    expect(getContextOverflowSignal(undefined)).toBe(undefined)
+  })
+
+  it('guards against cyclic cause chains', () => {
+    const a = new Error('a')
+    const b = new Error('b')
+    ;(a as Error & { cause?: unknown }).cause = b
+    ;(b as Error & { cause?: unknown }).cause = a
+    expect(getContextOverflowSignal(a)).toBe(undefined)
   })
 })
 
