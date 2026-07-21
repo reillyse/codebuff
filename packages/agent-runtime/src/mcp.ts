@@ -1,7 +1,10 @@
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { convertJsonSchemaToZod } from 'zod-from-json-schema'
 
-import { McpAuthorizationRequiredError } from '@codebuff/common/mcp/client'
+import {
+  DegradedToolListError,
+  McpAuthorizationRequiredError,
+} from '@codebuff/common/mcp/client'
 
 import { MCP_TOOL_SEPARATOR } from './mcp-constants'
 
@@ -90,16 +93,17 @@ export async function getMCPToolData(
           //
           // Rather than failing silently, record a human-readable reason so the
           // caller can surface it to the model (and, through it, the user).
-          const isAuthError =
-            error instanceof McpAuthorizationRequiredError ||
-            error instanceof UnauthorizedError ||
-            (error instanceof Error &&
-              /401|unauthorized/i.test(error.message))
-          const errorMessage = isAuthError
-            ? `not authenticated — run /connect:mcp ${mcpName} to authorize access`
-            : error instanceof Error
+          const errorMessage =
+            error instanceof DegradedToolListError
               ? error.message
-              : String(error)
+              : error instanceof McpAuthorizationRequiredError ||
+                  error instanceof UnauthorizedError ||
+                  (error instanceof Error &&
+                    /401|unauthorized/i.test(error.message))
+                ? `not authenticated — run /connect:mcp ${mcpName} to authorize access`
+                : error instanceof Error
+                  ? error.message
+                  : String(error)
           mcpLoadErrors.push(`'${mcpName}': ${errorMessage}`)
           logger.warn(
             {

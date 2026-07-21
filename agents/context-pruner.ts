@@ -541,6 +541,43 @@ const definition: AgentDefinition = {
       0,
       agentState.contextTokenCount - currentSummaryEstimatedTokens,
     )
+
+    // === DIAGNOSTIC BREAKDOWN ===
+    // Best-effort estimates (same CHARS_PER_TOKEN heuristic) of WHAT is filling
+    // the non-prunable floor, so the WARN / HARD-STOP logs below can pinpoint
+    // the culprit: the system prompt, the (MCP) tool schemas, or the message
+    // history. This is the key signal for debugging the "Emergency Stop" hard
+    // stop — a huge tool-schema estimate means too many MCP tools are loaded,
+    // while a huge message-history estimate points at un-summarizable content.
+    const systemPromptEstimatedTokens = Math.ceil(
+      (agentState.systemPrompt ?? '').length / CHARS_PER_TOKEN,
+    )
+    const toolDefinitionsRecord = agentState.toolDefinitions ?? {}
+    const toolDefinitionEntries = Object.entries(toolDefinitionsRecord)
+    const toolDefinitionsEstimatedTokens = Math.ceil(
+      JSON.stringify(toolDefinitionsRecord).length / CHARS_PER_TOKEN,
+    )
+    const messageHistoryEstimatedTokens = Math.ceil(
+      JSON.stringify(agentState.messageHistory).length / CHARS_PER_TOKEN,
+    )
+    // Top 5 heaviest tool schemas by estimated tokens — usually the smoking gun
+    // when an MCP server contributes hundreds of tools.
+    const topHeavyTools = toolDefinitionEntries
+      .map(([name, def]) => ({
+        name,
+        tokens: Math.ceil(JSON.stringify(def).length / CHARS_PER_TOKEN),
+      }))
+      .sort((a, b) => b.tokens - a.tokens)
+      .slice(0, 5)
+    const contextBreakdown = {
+      system_prompt_estimated_tokens: systemPromptEstimatedTokens,
+      tool_definitions_estimated_tokens: toolDefinitionsEstimatedTokens,
+      tool_count: toolDefinitionEntries.length,
+      top_heavy_tools: topHeavyTools,
+      message_history_estimated_tokens: messageHistoryEstimatedTokens,
+      previous_summary_estimated_tokens: currentSummaryEstimatedTokens,
+    }
+
     // Leave 15k tokens of headroom so the next agent step doesn't immediately
     // trigger pruning again (each step adds ~2–10k tokens of new content).
     const SUMMARY_HEADROOM_TOKENS = 15_000
@@ -557,6 +594,8 @@ const definition: AgentDefinition = {
             non_prunable_floor_tokens: nonPrunableFloor,
             max_context_length: maxContextLength,
             raw_available: rawAvailable,
+            context_token_count: agentState.contextTokenCount,
+            ...contextBreakdown,
           },
           'Context floor nearly fills the context window — pruning cannot prevent re-triggering. Reduce MCP tool schemas or system prompt size.',
         )
@@ -581,6 +620,7 @@ const definition: AgentDefinition = {
             max_context_length: maxContextLength,
             raw_available: rawAvailable,
             context_token_count: agentState.contextTokenCount,
+            ...contextBreakdown,
           },
           'CONTEXT OVERFLOW: non-prunable floor exceeds the safe budget — pruning cannot help. Replacing history with a forced end-turn instruction to break the overflow loop.',
         )

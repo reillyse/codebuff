@@ -130,32 +130,34 @@ const TOKEN_COUNT_REMOTE_SKIP_THRESHOLD = 500_000
 const TOKEN_COUNT_SLOW_WARN_MS = 3_000
 
 /**
- * Warn in cli.jsonl when the local token estimate approaches the safe input
- * budget for a 200k-window model (200k context − 64k max_output = 136k input).
- * At this level the next pruning cycle may not bring us back under budget.
+ * Warn in cli.jsonl when the local token estimate is approaching the context-
+ * pruner's trigger threshold. The pruner fires when contextTokenCount + 15k >
+ * 200k (i.e. at ~185k). This WARN level fires somewhat earlier so the pressure
+ * is visible in logs before the pruner engages.
  */
-const CONTEXT_BUDGET_WARN_TOKENS = 120_000
+const CONTEXT_BUDGET_WARN_TOKENS = 170_000
 
 /**
- * Log at ERROR when the estimate is likely OVER the safe budget. At this level
- * the model will almost certainly return an empty response (the classic
- * context-overflow symptom: dropped stream with no content or tool calls).
+ * Log at ERROR and start counting consecutive overflow steps when the estimate
+ * is ABOVE the pruner's own trigger threshold (~185k). At this point the pruner
+ * has already run (or should have) and the context is still critically large —
+ * meaning the non-prunable floor (system prompt + tool schemas) is too big to
+ * recover. Two consecutive steps at this level emit the user-visible warning.
  */
-const CONTEXT_BUDGET_ERROR_TOKENS = 140_000
+const CONTEXT_BUDGET_ERROR_TOKENS = 190_000
 
 /**
- * Emergency loop-breaker: after this many CONSECUTIVE steps whose context
- * estimate is at/above CONTEXT_BUDGET_ERROR_TOKENS, force-end the turn WITHOUT
- * calling the model. At that level the model returns empty responses (the
- * context-overflow loop: prune → overflow → empty → retry → prune …), so
- * calling it again just burns retries forever. Two consecutive CRITICAL steps
- * means the pruner already ran and could not bring us under budget — the
- * session is unrecoverable without a fresh start.
+ * After this many CONSECUTIVE steps whose context estimate is at/above
+ * CONTEXT_BUDGET_ERROR_TOKENS, emit a one-time user-visible warning. The run
+ * continues — we warn rather than force-quit so long-running agents are not
+ * abruptly terminated when the pruner temporarily can't bring the context under
+ * budget. Two consecutive CRITICAL steps is the threshold so a single transient
+ * spike doesn't trigger the notice.
  */
 const MAX_CONSECUTIVE_CONTEXT_OVERFLOW_STEPS = 2
 
-const CONTEXT_OVERFLOW_FORCE_END_MESSAGE =
-  '\n⚠️ CONTEXT WINDOW CRITICAL: Your context is full and the model cannot respond. Ending the turn now to prevent an infinite loop. Please start a new session (e.g. /new) to continue.\n\n'
+const CONTEXT_OVERFLOW_WARN_MESSAGE =
+  '\n⚠️ CONTEXT WINDOW CRITICAL: Your context is very full. The model may struggle to respond. Consider starting a new session (e.g. /new) if you encounter issues.\n\n'
 
 async function additionalToolDefinitions(
   params: {
@@ -1048,11 +1050,10 @@ export async function loopAgentSteps(
   // Whether we've already nudged during the CURRENT no-progress streak. Reset
   // when a step makes progress so a later, separate streak can be nudged again.
   let hasNudgedForNoProgress = false
-  // Emergency context-overflow loop-breaker: count CONSECUTIVE steps whose
-  // context estimate is CRITICAL (>= CONTEXT_BUDGET_ERROR_TOKENS). One
-  // CRITICAL step gets a chance (the pruner may still recover it); two in a
-  // row means pruning already ran and failed — force-end the turn instead of
-  // calling the model again (it would just return empty responses forever).
+  // Count CONSECUTIVE steps whose context estimate is CRITICAL
+  // (>= CONTEXT_BUDGET_ERROR_TOKENS). Used to emit a one-time user-visible
+  // warning after MAX_CONSECUTIVE_CONTEXT_OVERFLOW_STEPS steps — the run is
+  // NOT force-ended; we warn and continue.
   let consecutiveContextOverflowSteps = 0
 
   try {
@@ -1210,14 +1211,12 @@ export async function loopAgentSteps(
           },
           '🚨 Context budget CRITICAL: estimated tokens likely exceed safe input budget (200k − 64k output = 136k). Expect empty response / context-overflow loop on this step.',
         )
-        // Emergency escape: on the 2nd+ consecutive CRITICAL step, the pruner
-        // has already run (it fires every step via handleSteps) and could not
-        // bring us under budget — the non-prunable floor (system prompt + tool
-        // schemas) exceeds the safe input budget. Calling the model again just
-        // yields another empty response and re-enters the loop. Force-end the
-        // turn WITHOUT calling the model.
+        // On the 2nd consecutive CRITICAL step, emit a one-time user-visible
+        // warning but continue the run. We warn rather than force-quit so
+        // long-running agents aren't abruptly terminated when the pruner
+        // temporarily can't recover the budget.
         if (
-          consecutiveContextOverflowSteps >=
+          consecutiveContextOverflowSteps ===
           MAX_CONSECUTIVE_CONTEXT_OVERFLOW_STEPS
         ) {
           logger.error(
@@ -1228,21 +1227,10 @@ export async function loopAgentSteps(
               totalSteps,
               contextTokenEstimate: ctxEst,
               consecutiveContextOverflowSteps,
-              finishReason: 'context-overflow-force-end',
             },
-            'Context overflow loop detected (consecutive CRITICAL steps after pruning); force-ending the turn without calling the model',
+            'Context overflow warning threshold reached (consecutive CRITICAL steps after pruning); emitting one-time user warning and continuing',
           )
-          onResponseChunk(CONTEXT_OVERFLOW_FORCE_END_MESSAGE)
-          currentAgentState.messageHistory = [
-            ...currentAgentState.messageHistory,
-            userMessage(
-              withSystemTags(
-                'The context window overflowed and the turn was automatically ended to prevent an infinite loop. The user should start a new session to continue.',
-              ),
-            ),
-          ]
-          shouldEndTurn = true
-          break
+          onResponseChunk(CONTEXT_OVERFLOW_WARN_MESSAGE)
         }
       } else if (ctxEst >= CONTEXT_BUDGET_WARN_TOKENS) {
         consecutiveContextOverflowSteps = 0

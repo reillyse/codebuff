@@ -51,6 +51,81 @@ export class McpAuthorizationRequiredError extends Error {
   }
 }
 
+/**
+ * Thrown by {@link listMCPTools} when a `tools/list` response is
+ * UNAMBIGUOUSLY degraded: a tool whose `inputSchema.properties` is empty yet
+ * declares `required` fields (a self-contradictory schema — a required param
+ * that is never described).
+ *
+ * This is the fingerprint of an under-authenticated session against a
+ * Sparrow-style server that accepts the MCP `initialize` handshake WITHOUT
+ * valid auth (e.g. an EXPIRED on-disk token that still passes the presence-only
+ * `tokens()` guard) and returns tools with their parameters stripped.
+ *
+ * Crucially we THROW rather than silently return the degraded list: otherwise
+ * the model would be shown parameter-less tools and call them with empty `{}`
+ * args, producing `expected string, received undefined` Zod errors on every
+ * call. Throwing lets the per-server catch in `getMCPToolData` surface an
+ * actionable "run /connect:mcp" reason to the model instead.
+ */
+export class DegradedToolListError extends Error {
+  constructor() {
+    super(
+      "MCP server returned a degraded tool list (tool parameters were stripped). This usually means the session is not fully authenticated — run '/connect:mcp' to re-authenticate, then retry.",
+    )
+    this.name = 'DegradedToolListError'
+  }
+}
+
+/**
+ * Classifies how (if at all) a `tools/list` response is degraded.
+ *
+ *  - `'self-contradictory'`: at least one tool has EMPTY `properties` but
+ *    declares `required` fields — a required parameter that is never described.
+ *    This is unambiguously broken (the fingerprint of a parameter-stripped,
+ *    under-authenticated response) and is treated as a hard error by
+ *    {@link listMCPTools}.
+ *  - `'all-degraded'`: EVERY tool lacks properties and NONE declares `required`.
+ *    Ambiguous — could be a healthy server whose tools all take zero params, or
+ *    a whole-list zombie response. Treated as retryable (evict-but-return).
+ *  - `'none'`: the list looks healthy.
+ */
+export function classifyToolListDegradation(
+  tools: Array<{
+    inputSchema?: {
+      properties?: unknown
+      required?: unknown
+    }
+  }>,
+): 'self-contradictory' | 'all-degraded' | 'none' {
+  const isEmptyProps = (tool: (typeof tools)[number]): boolean => {
+    const properties = tool.inputSchema?.properties
+    return (
+      !properties ||
+      typeof properties !== 'object' ||
+      Object.keys(properties as Record<string, unknown>).length === 0
+    )
+  }
+  const declaresRequired = (tool: (typeof tools)[number]): boolean => {
+    const required = tool.inputSchema?.required
+    return Array.isArray(required) && required.length > 0
+  }
+
+  const anySelfContradictory = tools.some(
+    (tool) => isEmptyProps(tool) && declaresRequired(tool),
+  )
+  if (anySelfContradictory) {
+    return 'self-contradictory'
+  }
+
+  const allDegraded = tools.length > 0 && tools.every(isEmptyProps)
+  if (allDegraded) {
+    return 'all-degraded'
+  }
+
+  return 'none'
+}
+
 // Module-level mutex to serialize interactive OAuth flows.
 // If multiple servers need OAuth at startup they queue up and open browser
 // tabs one at a time instead of all simultaneously.
@@ -387,57 +462,44 @@ export function listMCPTools(
     throw new Error(`listTools: client not found with id: ${clientId}`)
   }
   if (!listToolsCache[clientId]) {
-    const promise = client.listTools(...args)
+    // Wrap the raw listTools() so the cached/returned promise itself REJECTS on
+    // an unambiguously-degraded response. This is the key difference from a
+    // plain eviction: eviction only keeps the degraded list out of the cache,
+    // but the caller of THIS call would still receive it. By rejecting, the
+    // degraded list never reaches the model as a parameter-less toolset.
+    const promise = (async () => {
+      const result = await client.listTools(...args)
+      const degradation = classifyToolListDegradation(result?.tools ?? [])
+      if (degradation === 'self-contradictory') {
+        // A tool has empty `properties` but declares `required` fields — the
+        // fingerprint of a parameter-stripped (under-authenticated) response.
+        // Throw so getMCPToolData's per-server catch surfaces an actionable
+        // "run /connect:mcp" reason instead of the model calling tools with {}.
+        throw new DegradedToolListError()
+      }
+      return result
+    })()
     // Don't cache rejected promises. A failed listTools (e.g. a not-yet-
-    // authenticated OAuth server) must be retryable: otherwise every future
-    // call — including subagents sharing this cache — would get the same stale
-    // rejection even after `/connect:mcp` re-authenticates and replaces the
-    // client. Drop the entry on rejection so the next call tries fresh.
+    // authenticated OAuth server, or a DegradedToolListError thrown above) must
+    // be retryable: otherwise every future call — including subagents sharing
+    // this cache — would get the same stale rejection even after `/connect:mcp`
+    // re-authenticates and replaces the client. Drop the entry on rejection so
+    // the next call tries fresh.
     promise.catch(() => {
       if (listToolsCache[clientId] === promise) {
         delete listToolsCache[clientId]
       }
     })
-    // Don't cache a DEGRADED tools/list either. Servers like Sparrow accept the
-    // MCP `initialize` handshake WITHOUT auth (a "zombie" session — see
-    // clearMCPClient), so a pre-auth listTools can resolve (HTTP 200) yet return
-    // tools whose `inputSchema.properties` is empty. Caching that would strip
-    // every tool's parameters for the parent AND all subagents (shared cache),
-    // making the model call tools with empty `{}` args.
-    //
-    // We evict (treat as retryable) when the response is degraded in EITHER of
-    // two ways:
-    //  1. ALL tools lack properties — a whole-list zombie response. (Tradeoff: a
-    //     healthy server whose tools ALL legitimately take zero params is
-    //     re-listed on every call — niche and low-cost.)
-    //  2. ANY tool has empty properties BUT declares `required` fields — a
-    //     self-contradictory (a required param that isn't described) and
-    //     therefore degraded schema. This catches a MIXED response where most
-    //     tools loaded fine but one (e.g. quarterly_status_save) came back with
-    //     its parameters stripped — which would otherwise be cached and silently
-    //     poison just that one tool for every agent and subagent.
+    // Also evict (but DON'T reject) the milder `all-degraded` case: every tool
+    // lacks properties AND none declares `required`. This is ambiguous — it can
+    // legitimately be a healthy server whose tools all take zero params — so we
+    // keep returning the result to the caller but avoid caching it, in case it
+    // was actually a whole-list zombie response that heals after auth.
     promise.then(
       (result) => {
-        const tools = result?.tools ?? []
-        const isEmptyProps = (tool: (typeof tools)[number]): boolean => {
-          const properties = tool.inputSchema?.properties
-          return (
-            !properties ||
-            typeof properties !== 'object' ||
-            Object.keys(properties).length === 0
-          )
-        }
-        const declaresRequired = (tool: (typeof tools)[number]): boolean => {
-          const required = tool.inputSchema?.required
-          return Array.isArray(required) && required.length > 0
-        }
-        const allDegraded = tools.length > 0 && tools.every(isEmptyProps)
-        const anySelfContradictory = tools.some(
-          (tool: (typeof tools)[number]) =>
-            isEmptyProps(tool) && declaresRequired(tool),
-        )
+        const degradation = classifyToolListDegradation(result?.tools ?? [])
         if (
-          (allDegraded || anySelfContradictory) &&
+          degradation === 'all-degraded' &&
           listToolsCache[clientId] === promise
         ) {
           delete listToolsCache[clientId]

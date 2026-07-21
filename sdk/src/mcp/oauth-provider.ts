@@ -18,7 +18,52 @@ import type {
 interface McpServerCredentials {
   clientInformation?: OAuthClientInformationFull
   tokens?: OAuthTokens
+  /**
+   * Absolute epoch-ms timestamp of when {@link McpServerCredentials.tokens}
+   * were saved. OAuthTokens only carries a *relative* `expires_in`, so we stamp
+   * this at save time to later compute an absolute expiry in {@link tokens}.
+   */
+  tokensObtainedAt?: number
   codeVerifier?: string
+}
+
+/**
+ * Safety margin (ms) subtracted from a token's computed expiry so a token that
+ * is about to expire is treated as already expired. Covers clock skew and the
+ * round-trip time between the guard check and the actual request.
+ */
+export const MCP_TOKEN_EXPIRY_MARGIN_MS = 60_000
+
+/**
+ * Whether an OAuth access token should be considered expired (and therefore
+ * treated as ABSENT by the presence-only guard in `getMCPClient`).
+ *
+ * Uses the absolute `obtainedAt` timestamp stamped at save time plus the
+ * token's relative `expires_in`. Deliberately conservative:
+ *  - a token with no `expires_in` is treated as non-expiring (returns false),
+ *  - a token we can't date (no `obtainedAt`, e.g. legacy stored credentials
+ *    saved before this field existed) is also treated as non-expiring, so we
+ *    never force an unnecessary reconnect on tokens that might still be valid.
+ *    (The `DegradedToolListError` guard still catches the bad case at runtime.)
+ */
+export function isMcpAccessTokenExpired(args: {
+  expiresInSeconds: number | undefined
+  obtainedAtMs: number | undefined
+  nowMs: number
+  marginMs: number
+}): boolean {
+  const { expiresInSeconds, obtainedAtMs, nowMs, marginMs } = args
+  if (
+    typeof expiresInSeconds !== 'number' ||
+    !Number.isFinite(expiresInSeconds)
+  ) {
+    return false
+  }
+  if (typeof obtainedAtMs !== 'number' || !Number.isFinite(obtainedAtMs)) {
+    return false
+  }
+  const expiresAtMs = obtainedAtMs + expiresInSeconds * 1000
+  return nowMs >= expiresAtMs - marginMs
 }
 
 type McpOAuthStorage = Record<string, McpServerCredentials>
@@ -177,16 +222,40 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
   }
 
   tokens(): OAuthTokens | undefined {
-    return this.getStorage().tokens
+    const stored = this.getStorage()
+    const tokens = stored.tokens
+    if (!tokens) {
+      return undefined
+    }
+    if (
+      isMcpAccessTokenExpired({
+        expiresInSeconds: tokens.expires_in,
+        obtainedAtMs: stored.tokensObtainedAt,
+        nowMs: Date.now(),
+        marginMs: MCP_TOKEN_EXPIRY_MARGIN_MS,
+      })
+    ) {
+      // Expired: treat as ABSENT so the presence-only guard in getMCPClient
+      // throws McpAuthorizationRequiredError instead of sending a stale Bearer
+      // token. Sparrow-style servers accept the request WITHOUT valid auth and
+      // return HTTP 200 with a degraded/empty tools list (rather than a clean
+      // 401 that would trigger the SDK's silent refresh), so sending an expired
+      // token silently breaks every subsequent tool call. Forcing '/connect:mcp'
+      // is the correct, recoverable outcome.
+      return undefined
+    }
+    return tokens
   }
 
   saveTokens(tokens: OAuthTokens): void {
     // Clear the code verifier now that the exchange is complete — it's
-    // single-use and no longer needed after successful token save.
+    // single-use and no longer needed after successful token save. Stamp an
+    // absolute obtained-at timestamp so tokens() can later compute expiry
+    // (OAuthTokens only carries a *relative* expires_in).
     const all = readMcpOAuthStorage()
     const current = all[this.serverUrl] ?? {}
     delete current.codeVerifier
-    all[this.serverUrl] = { ...current, tokens }
+    all[this.serverUrl] = { ...current, tokens, tokensObtainedAt: Date.now() }
     writeMcpOAuthStorage(all)
   }
 
@@ -238,6 +307,7 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
       delete current.clientInformation
     } else if (scope === 'tokens') {
       delete current.tokens
+      delete current.tokensObtainedAt
       delete current.codeVerifier
     } else if (scope === 'verifier') {
       delete current.codeVerifier
