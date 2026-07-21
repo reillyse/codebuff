@@ -66,11 +66,11 @@ describe('isMcpAccessTokenExpired', () => {
   })
 
   it('treats a token inside the safety margin as already expired', () => {
-    // Expires exactly 30s from now — inside the 60s margin, so expired.
+    // Expires exactly 1s from now — inside the 2s margin, so expired.
     expect(
       isMcpAccessTokenExpired({
         expiresInSeconds: 3600,
-        obtainedAtMs: NOW - (3600 - 30) * 1000,
+        obtainedAtMs: NOW - (3600 - 1) * 1000,
         nowMs: NOW,
         marginMs: MARGIN,
       }),
@@ -78,11 +78,11 @@ describe('isMcpAccessTokenExpired', () => {
   })
 
   it('treats a token just outside the safety margin as still valid', () => {
-    // Expires 120s from now — outside the 60s margin, so still valid.
+    // Expires 5s from now — outside the 2s margin, so still valid.
     expect(
       isMcpAccessTokenExpired({
         expiresInSeconds: 3600,
-        obtainedAtMs: NOW - (3600 - 120) * 1000,
+        obtainedAtMs: NOW - (3600 - 5) * 1000,
         nowMs: NOW,
         marginMs: MARGIN,
       }),

@@ -29,10 +29,16 @@ interface McpServerCredentials {
 
 /**
  * Safety margin (ms) subtracted from a token's computed expiry so a token that
- * is about to expire is treated as already expired. Covers clock skew and the
- * round-trip time between the guard check and the actual request.
+ * is about to expire is treated as already expired.
+ *
+ * Intentionally small (2 s) because {@link DegradedToolListError} is the
+ * primary runtime guard for stale-token sessions: if an expired token slips
+ * through (e.g. the token has no `expires_in` or no `obtainedAt`), the server
+ * returns a parameter-stripped tool list and `listMCPTools` throws rather than
+ * silently poisoning the toolset. This margin therefore only needs to cover
+ * clock skew between the client and the authorization server.
  */
-export const MCP_TOKEN_EXPIRY_MARGIN_MS = 60_000
+export const MCP_TOKEN_EXPIRY_MARGIN_MS = 2_000
 
 /**
  * Whether an OAuth access token should be considered expired (and therefore
