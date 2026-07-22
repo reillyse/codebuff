@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 
 import type { MCPConfig } from '../types/mcp'
 import type { ToolResultOutput } from '../types/messages/content-part'
+import type { Logger } from '../types/contracts/logger'
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 import type {
   FetchLike,
@@ -260,11 +261,25 @@ export async function getMCPClient(
      */
     interactive?: boolean
   },
+  logger?: Logger,
 ): Promise<string> {
+  const mcpTarget =
+    config.type !== 'stdio' ? config.url : config.command
   const key = hashConfig(config)
   if (key in runningClients) {
+    logger?.debug(
+      { mcpTarget, cacheKey: key },
+      '[mcp] getMCPClient: cache HIT - reusing existing connection (shared across parent + all subagents)',
+    )
     return key
   }
+  logger?.debug(
+    {
+      mcpTarget,
+      hasTokens: Boolean(oauthOptions?.authProvider?.tokens()),
+    },
+    '[mcp] getMCPClient: cache MISS - connecting fresh',
+  )
 
   const client = new Client({
     name: 'codebuff',
@@ -366,6 +381,10 @@ export async function getMCPClient(
     // parent agent AND all subagents. Throwing here (before connecting) keeps
     // the cache clean and surfaces a clear "run /connect:mcp" message instead.
     if (!oauthOptions!.authProvider.tokens()) {
+      logger?.warn(
+        { mcpTarget: config.url },
+        '[mcp] getMCPClient: no valid on-disk tokens, throwing McpAuthorizationRequiredError',
+      )
       throw new McpAuthorizationRequiredError(config.url)
     }
     const transport = createHttpTransport()
@@ -455,13 +474,26 @@ export async function getMCPClient(
 
 export function listMCPTools(
   clientId: string,
+  logger?: Logger,
   ...args: Parameters<typeof Client.prototype.listTools>
 ): ReturnType<typeof Client.prototype.listTools> {
   const client = runningClients[clientId]
   if (!client) {
     throw new Error(`listTools: client not found with id: ${clientId}`)
   }
-  if (!listToolsCache[clientId]) {
+  const hasCachedList = clientId in listToolsCache
+  if (hasCachedList) {
+    logger?.debug(
+      { clientId },
+      '[mcp] listMCPTools: cache HIT - returning cached tool list',
+    )
+  } else {
+    logger?.debug(
+      { clientId },
+      '[mcp] listMCPTools: cache MISS - fetching tool list',
+    )
+  }
+  if (!hasCachedList) {
     // Wrap the raw listTools() so the cached/returned promise itself REJECTS on
     // an unambiguously-degraded response. This is the key difference from a
     // plain eviction: eviction only keeps the degraded list out of the cache,
@@ -469,12 +501,20 @@ export function listMCPTools(
     // degraded list never reaches the model as a parameter-less toolset.
     const promise = (async () => {
       const result = await client.listTools(...args)
+      logger?.debug(
+        { clientId, toolCount: result?.tools?.length ?? 0 },
+        '[mcp] listMCPTools: fetched tool list',
+      )
       const degradation = classifyToolListDegradation(result?.tools ?? [])
       if (degradation === 'self-contradictory') {
         // A tool has empty `properties` but declares `required` fields — the
         // fingerprint of a parameter-stripped (under-authenticated) response.
         // Throw so getMCPToolData's per-server catch surfaces an actionable
         // "run /connect:mcp" reason instead of the model calling tools with {}.
+        logger?.warn(
+          { clientId },
+          '[mcp] listMCPTools: degraded tool list detected (self-contradictory schema), throwing DegradedToolListError',
+        )
         throw new DegradedToolListError()
       }
       return result
@@ -525,12 +565,20 @@ function getResourceData(
 
 export async function callMCPTool(
   clientId: string,
+  logger?: Logger,
   ...args: Parameters<typeof Client.prototype.callTool>
 ): Promise<ToolResultOutput[]> {
   const client = runningClients[clientId]
   if (!client) {
     throw new Error(`callTool: client not found with id: ${clientId}`)
   }
+  logger?.debug(
+    {
+      clientId,
+      toolName: (args[0] as { name?: string } | undefined)?.name,
+    },
+    '[mcp] callMCPTool: invoking tool',
+  )
   const callResult = await client.callTool(...args)
   const result = callResult as CallToolResult
   const content = result.content

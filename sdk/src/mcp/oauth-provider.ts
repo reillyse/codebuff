@@ -231,6 +231,11 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
     const stored = this.getStorage()
     const tokens = stored.tokens
     if (!tokens) {
+      console.error(
+        '[mcp:oauth] tokens() for',
+        this.serverUrl,
+        ': no tokens stored',
+      )
       return undefined
     }
     if (
@@ -248,7 +253,40 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
       // 401 that would trigger the SDK's silent refresh), so sending an expired
       // token silently breaks every subsequent tool call. Forcing '/connect:mcp'
       // is the correct, recoverable outcome.
+      const obtainedAt = stored.tokensObtainedAt ?? 0
+      const expiresIn = tokens.expires_in ?? 0
+      const expiredSecondsAgo = Math.round(
+        (Date.now() - (obtainedAt + expiresIn * 1000)) / 1000,
+      )
+      console.error(
+        '[mcp:oauth] tokens() for',
+        this.serverUrl,
+        ': token EXPIRED',
+        expiredSecondsAgo,
+        's ago (treating as ABSENT)',
+      )
       return undefined
+    }
+    if (
+      typeof tokens.expires_in === 'number' &&
+      typeof stored.tokensObtainedAt === 'number'
+    ) {
+      const expiresInSeconds = Math.round(
+        (stored.tokensObtainedAt + tokens.expires_in * 1000 - Date.now()) / 1000,
+      )
+      console.error(
+        '[mcp:oauth] tokens() for',
+        this.serverUrl,
+        ': token VALID, expires in ~',
+        expiresInSeconds,
+        's',
+      )
+    } else {
+      console.error(
+        '[mcp:oauth] tokens() for',
+        this.serverUrl,
+        ': token present (no expiry info)',
+      )
     }
     return tokens
   }

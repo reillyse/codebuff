@@ -440,14 +440,16 @@ async function runOnce({
         cwd,
         fs,
         env,
+        logger,
       })
     },
     requestMcpToolData: async ({ mcpConfig, toolNames }) => {
       const mcpClientId = await getMCPClient(
         mcpConfig,
         getMcpOAuthOptions(mcpConfig),
+        logger,
       )
-      const listToolsResult = await listMCPTools(mcpClientId)
+      const listToolsResult = await listMCPTools(mcpClientId, logger)
       const tools = listToolsResult.tools
       const filteredTools: typeof tools = []
       for (const tool of tools) {
@@ -642,6 +644,7 @@ async function handleToolCall({
   cwd,
   fs,
   env,
+  logger,
 }: {
   action: ServerAction<'tool-call-request'>
   overrides: NonNullable<CodebuffClientOptions['overrideTools']>
@@ -649,6 +652,7 @@ async function handleToolCall({
   cwd?: string
   fs: CodebuffFileSystem
   env?: Record<string, string>
+  logger?: Logger
 }): Promise<{ output: ToolResultOutput[] }> {
   const toolName = action.toolName
   const input = action.input
@@ -659,8 +663,9 @@ async function handleToolCall({
       const mcpClientId = await getMCPClient(
         action.mcpConfig,
         getMcpOAuthOptions(action.mcpConfig),
+        logger,
       )
-      const result = await callMCPTool(mcpClientId, {
+      const result = await callMCPTool(mcpClientId, logger, {
         name: toolName,
         arguments: input,
       })

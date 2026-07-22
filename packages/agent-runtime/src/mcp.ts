@@ -57,6 +57,14 @@ export async function getMCPToolData(
     requestedToolsByMcp[mcpName].push(toolName)
   }
 
+  logger.debug(
+    {
+      mcpServers: Object.keys(mcpServers ?? {}),
+      requestedToolsByMcp,
+    },
+    '[mcp] getMCPToolData: starting tool load',
+  )
+
   const promises: Promise<any>[] = []
   // `mcpServers` is typed as non-optional, but some runtime templates can have
   // it undefined; guard so tool-def loading never crashes.
@@ -82,6 +90,14 @@ export async function getMCPToolData(
               description,
             }
           }
+          logger.debug(
+            {
+              mcpServer: mcpName,
+              toolCount: mcpData.length,
+              requestedTools: requestedToolsByMcp[mcpName] ?? 'all',
+            },
+            '[mcp] getMCPToolData: successfully loaded tools',
+          )
         } catch (error) {
           // Degrade gracefully: a single MCP server that fails to list tools
           // (e.g. an unauthenticated OAuth server inherited from the parent, or
@@ -117,6 +133,14 @@ export async function getMCPToolData(
     )
   }
   await Promise.all(promises)
+
+  logger.debug(
+    {
+      totalToolsLoaded: Object.keys(writeTo).length,
+      errors: mcpLoadErrors.length,
+    },
+    '[mcp] getMCPToolData: complete',
+  )
 
   return { customToolDefinitions: writeTo, mcpLoadErrors }
 }
