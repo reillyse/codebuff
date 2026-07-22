@@ -31,15 +31,10 @@ bun install
 
 echo ""
 
-# Find where codebuff is currently installed, or fall back to npm global bin
-EXISTING_BIN=$(which codebuff 2>/dev/null || true)
-if [ -n "$EXISTING_BIN" ]; then
-  GLOBAL_BIN=$(dirname "$EXISTING_BIN")
-else
-  GLOBAL_BIN=$(npm config get prefix)/bin
-fi
+# Find where global npm binaries are installed
+GLOBAL_BIN=$(npm config get prefix)/bin
 if [ ! -d "$GLOBAL_BIN" ]; then
-  echo "❌ Could not find global bin directory: $GLOBAL_BIN"
+  echo "❌ Could not find global npm bin directory: $GLOBAL_BIN"
   exit 1
 fi
 echo "Global bin directory: $GLOBAL_BIN"
@@ -63,20 +58,28 @@ if [ ! -f "$BINARY_PATH" ]; then
   exit 1
 fi
 
-# Copy to global bin directory
-echo ""
-echo "📋 Installing to $GLOBAL_BIN/codebuff..."
-
-# Remove existing binary first (may need to handle permissions)
-if [ -f "$GLOBAL_BIN/codebuff" ]; then
-  rm -f "$GLOBAL_BIN/codebuff" 2>/dev/null || {
-    echo "⚠️  Need elevated permissions to replace existing binary"
-    sudo rm -f "$GLOBAL_BIN/codebuff"
-  }
+# Determine install targets:
+# 1. Always install to the npm global bin dir
+# 2. Also install to wherever `which codebuff` currently resolves
+#    (handles nvm, fnm, etc. where the active node bin differs from npm prefix)
+INSTALL_TARGETS=("$GLOBAL_BIN/codebuff")
+WHICH_TARGET=$(which codebuff 2>/dev/null || true)
+if [ -n "$WHICH_TARGET" ] && [ "$WHICH_TARGET" != "$GLOBAL_BIN/codebuff" ]; then
+  INSTALL_TARGETS+=("$WHICH_TARGET")
 fi
 
-cp "$BINARY_PATH" "$GLOBAL_BIN/codebuff"
-chmod +x "$GLOBAL_BIN/codebuff"
+for TARGET in "${INSTALL_TARGETS[@]}"; do
+  echo ""
+  echo "📋 Installing to $TARGET..."
+  if [ -f "$TARGET" ]; then
+    rm -f "$TARGET" 2>/dev/null || {
+      echo "⚠️  Need elevated permissions to replace $TARGET"
+      sudo rm -f "$TARGET"
+    }
+  fi
+  cp "$BINARY_PATH" "$TARGET"
+  chmod +x "$TARGET"
+done
 
 # Verify installation
 echo ""

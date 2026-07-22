@@ -57,20 +57,28 @@ if [ ! -f "$BINARY_PATH" ]; then
   exit 1
 fi
 
-# Copy to global bin directory
-echo ""
-echo "📋 Installing to $GLOBAL_BIN/codebuff-lite..."
-
-# Remove existing binary first (may need to handle permissions)
-if [ -f "$GLOBAL_BIN/codebuff-lite" ]; then
-  rm -f "$GLOBAL_BIN/codebuff-lite" 2>/dev/null || {
-    echo "⚠️  Need elevated permissions to replace existing binary"
-    sudo rm -f "$GLOBAL_BIN/codebuff-lite"
-  }
+# Determine install targets:
+# 1. Always install to the npm global bin dir
+# 2. Also install to wherever `which codebuff-lite` currently resolves
+#    (handles nvm, fnm, etc. where the active node bin differs from npm prefix)
+INSTALL_TARGETS=("$GLOBAL_BIN/codebuff-lite")
+WHICH_TARGET=$(which codebuff-lite 2>/dev/null || true)
+if [ -n "$WHICH_TARGET" ] && [ "$WHICH_TARGET" != "$GLOBAL_BIN/codebuff-lite" ]; then
+  INSTALL_TARGETS+=("$WHICH_TARGET")
 fi
 
-cp "$BINARY_PATH" "$GLOBAL_BIN/codebuff-lite"
-chmod +x "$GLOBAL_BIN/codebuff-lite"
+for TARGET in "${INSTALL_TARGETS[@]}"; do
+  echo ""
+  echo "📋 Installing to $TARGET..."
+  if [ -f "$TARGET" ]; then
+    rm -f "$TARGET" 2>/dev/null || {
+      echo "⚠️  Need elevated permissions to replace $TARGET"
+      sudo rm -f "$TARGET"
+    }
+  fi
+  cp "$BINARY_PATH" "$TARGET"
+  chmod +x "$TARGET"
+done
 
 # Verify installation
 echo ""
