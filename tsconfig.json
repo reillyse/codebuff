@@ -8,7 +8,7 @@
       "@codebuff/web/*": ["./web/src/*"],
       "@codebuff/evals/*": ["./evals/*"],
       "@codebuff/sdk": ["./sdk/src/index.ts"],
-      "@codebuff/sdk/*": ["./sdk/*"],
+      "@codebuff/sdk/*": ["./sdk/src/*"],
       "@codebuff/agent-runtime/*": ["./packages/agent-runtime/src/*"],
       "@codebuff/billing/*": ["./packages/billing/src/*"],
       "@codebuff/bigquery/*": ["./packages/bigquery/src/*"],
