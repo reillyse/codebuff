@@ -31,9 +31,6 @@ const definition: AgentDefinition = {
         userBudget: {
           type: 'number',
         },
-        cacheExpiryMs: {
-          type: 'number',
-        },
       },
       required: [],
     },
@@ -94,9 +91,6 @@ const definition: AgentDefinition = {
 
     /** Axiom-only operational event understood by the logging adapters. */
     const CONTEXT_PRUNING_COMPLETED_EVENT = 'context_pruning.completed'
-
-    /** Prompt cache expiry time (Anthropic caches for 5 minutes by default) */
-    const CACHE_EXPIRY_MS: number = params?.cacheExpiryMs ?? 5 * 60 * 1000
 
     /** Header used in conversation summaries */
     const SUMMARY_HEADER =
@@ -392,39 +386,27 @@ const definition: AgentDefinition = {
       }
     }
 
-    // Check for prompt cache miss (>5 min gap before the USER_PROMPT message)
-    // The USER_PROMPT is the actual user message; INSTRUCTIONS_PROMPT comes after it
-    // We need to find the USER_PROMPT and check the gap between it and the last assistant message
-    let cacheWillMiss = false
-    let cacheGapMs: number | null = null
-    const userPromptIndex = currentMessages.findLastIndex((message) =>
-      message.tags?.includes('USER_PROMPT'),
+    // Compute a local estimate of the current context size from the actual message
+    // history content. agentState.contextTokenCount can be stale (measured at the
+    // start of the previous step); if new messages have been appended since then,
+    // the true context may already exceed the limit even though the stored count
+    // does not reflect it yet. Taking the max of the two ensures we prune when
+    // either measurement indicates overflow.
+    const localMessageHistoryEstimate =
+      Math.ceil(JSON.stringify(currentMessages).length / CHARS_PER_TOKEN) +
+      Math.ceil((agentState.systemPrompt ?? '').length / CHARS_PER_TOKEN) +
+      Math.ceil(JSON.stringify(agentState.toolDefinitions ?? {}).length / CHARS_PER_TOKEN)
+    const effectiveContextTokenCount = Math.max(
+      agentState.contextTokenCount,
+      localMessageHistoryEstimate,
     )
-    if (userPromptIndex > 0) {
-      const userPromptMsg = currentMessages[userPromptIndex]
-      // Find the last assistant message before USER_PROMPT (tool messages don't have sentAt)
-      let lastAssistantMsg: Message | undefined
-      for (let i = userPromptIndex - 1; i >= 0; i--) {
-        if (currentMessages[i].role === 'assistant') {
-          lastAssistantMsg = currentMessages[i]
-          break
-        }
-      }
-      if (userPromptMsg.sentAt && lastAssistantMsg?.sentAt) {
-        const gap = userPromptMsg.sentAt - lastAssistantMsg.sentAt
-        cacheGapMs = gap
-        cacheWillMiss = gap > CACHE_EXPIRY_MS
-      }
-    }
 
     const contextLimitExceeded =
-      agentState.contextTokenCount + TOKEN_COUNT_FUDGE_FACTOR > maxContextLength
+      effectiveContextTokenCount + TOKEN_COUNT_FUDGE_FACTOR > maxContextLength
 
-    // Check if we need to prune at all:
-    // - Prune when context exceeds max, OR
-    // - Prune when prompt cache will miss (>5 min gap) to take advantage of fresh context
-    // If not, return messages with just the subagent-specific tags removed
-    if (!contextLimitExceeded && !cacheWillMiss) {
+    // If context is within bounds, just return the messages with the
+    // subagent-specific tags removed (no pruning needed).
+    if (!contextLimitExceeded) {
       yield {
         toolName: 'set_messages',
         input: { messages: currentMessages },
@@ -539,7 +521,7 @@ const definition: AgentDefinition = {
       : 0
     const nonPrunableFloor = Math.max(
       0,
-      agentState.contextTokenCount - currentSummaryEstimatedTokens,
+      effectiveContextTokenCount - currentSummaryEstimatedTokens,
     )
 
     // === DIAGNOSTIC BREAKDOWN ===
@@ -620,6 +602,7 @@ const definition: AgentDefinition = {
             max_context_length: maxContextLength,
             raw_available: rawAvailable,
             context_token_count: agentState.contextTokenCount,
+            effective_context_token_count: effectiveContextTokenCount,
             ...contextBreakdown,
           },
           'CONTEXT OVERFLOW: non-prunable floor exceeds the safe budget — pruning cannot help. Replacing history with a forced end-turn instruction to break the overflow loop.',
@@ -1057,11 +1040,7 @@ ${SUMMARY_DISCLAIMER}`,
     ).length
     const includedAssistantToolEntryCount =
       includedEntries.length - includedUserEntryCount
-    const triggerReason = contextLimitExceeded
-      ? cacheWillMiss
-        ? 'context_limit_and_cache_expiry'
-        : 'context_limit'
-      : 'cache_expiry'
+    const triggerReason = 'context_limit'
 
     // Telemetry is best-effort and must never block the actual pruning update.
     try {
@@ -1072,9 +1051,8 @@ ${SUMMARY_DISCLAIMER}`,
           parent_agent_run_id: agentState.parentId,
           trigger_reason: triggerReason,
           context_token_count: agentState.contextTokenCount,
+          effective_context_token_count: effectiveContextTokenCount,
           max_context_length: maxContextLength,
-          ...(cacheGapMs === null ? {} : { cache_gap_ms: cacheGapMs }),
-          cache_expiry_ms: CACHE_EXPIRY_MS,
           previous_summary_entry_count: previousSummaryEntries.length,
           non_prunable_floor_tokens: nonPrunableFloor,
           available_for_summary_tokens: availableForSummary,
