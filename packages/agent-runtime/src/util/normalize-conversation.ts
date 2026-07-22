@@ -164,13 +164,14 @@ function conversationHasViolation(messages: Message[]): boolean {
  * orphan-detect first, `tool_result A` would be incorrectly dropped (its
  * preceding assistant is assistant(B), whose id set is {B}).
  *
- * In `'repair'` mode returns a new array with structured WARN logs per
- * repair. In `'throw'` mode throws `ConversationShapeError` on the first
+ * In `'repair'` mode returns a new array with structured WARN/DEBUG logs per
+ * repair (lossless repairs like consecutive-assistant merges log at DEBUG;
+ * data-synthesizing or data-dropping repairs log at WARN). In `'throw'` mode throws `ConversationShapeError` on the first
  * **data-synthesizing** violation found (unbalanced tool_use, trailing
  * assistant). Lossless repairs (consecutive-assistant merge, orphan
- * tool_result drop) always warn in both modes — they represent either
- * normal runtime shapes (`end_turn` excluded from history produces
- * back-to-back assistants) or safe cleanup with no fabricated data.
+ * tool_result drop) log at debug/warn depending on violation kind — they
+ * represent either normal runtime shapes (`end_turn` excluded from history
+ * produces back-to-back assistants) or safe cleanup with no fabricated data.
  * Idempotent on already-valid conversations.
  */
 export function normalizeConversation(
@@ -196,7 +197,13 @@ export function normalizeConversation(
   //     assistant → fabricated user continuation). These indicate an upstream
   //     bug that should surface at PR time in strict mode.
   const emitRepair = (violation: ViolationKind, message: string) => {
-    logger.warn(
+    // consecutive_same_role is an expected, lossless runtime shape (back-to-back
+    // assistant turns from excludeToolFromMessageHistory tools like end_turn).
+    // Downgrade to debug to avoid noise in normal operation. All other lossless
+    // repairs (e.g. orphan_tool_result drops data) stay at warn.
+    const logFn =
+      violation === 'consecutive_same_role' ? logger.debug : logger.warn
+    logFn(
       {
         event: 'conversation.shape.repaired',
         violation,

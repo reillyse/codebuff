@@ -274,27 +274,6 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
       )
       return undefined
     }
-    if (
-      typeof tokens.expires_in === 'number' &&
-      typeof stored.tokensObtainedAt === 'number'
-    ) {
-      const expiresInSeconds = Math.round(
-        (stored.tokensObtainedAt + tokens.expires_in * 1000 - Date.now()) / 1000,
-      )
-      console.error(
-        '[mcp:oauth] tokens() for',
-        this.serverUrl,
-        ': token VALID, expires in ~',
-        expiresInSeconds,
-        's',
-      )
-    } else {
-      console.error(
-        '[mcp:oauth] tokens() for',
-        this.serverUrl,
-        ': token present (no expiry info)',
-      )
-    }
     return tokens
   }
 
