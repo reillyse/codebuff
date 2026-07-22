@@ -11,6 +11,8 @@ import {
   getMCPClient,
   listMCPTools,
   callMCPTool,
+  clearMCPClient,
+  DegradedToolListError,
 } from '@codebuff/common/mcp/client'
 import { McpOAuthProvider } from './mcp/oauth-provider'
 import { toolNames } from '@codebuff/common/tools/constants'
@@ -444,26 +446,61 @@ async function runOnce({
       })
     },
     requestMcpToolData: async ({ mcpConfig, toolNames }) => {
-      const mcpClientId = await getMCPClient(
-        mcpConfig,
-        getMcpOAuthOptions(mcpConfig),
-        logger,
-      )
-      const listToolsResult = await listMCPTools(mcpClientId, logger)
-      const tools = listToolsResult.tools
-      const filteredTools: typeof tools = []
-      for (const tool of tools) {
-        if (!toolNames) {
-          filteredTools.push(tool)
-          continue
+      const mcpOAuthOptions = getMcpOAuthOptions(mcpConfig)
+
+      const doRequest = async () => {
+        const mcpClientId = await getMCPClient(
+          mcpConfig,
+          mcpOAuthOptions,
+          logger,
+        )
+        const listToolsResult = await listMCPTools(mcpClientId, logger)
+        const tools = listToolsResult.tools
+        const filteredTools: typeof tools = []
+        for (const tool of tools) {
+          if (!toolNames) {
+            filteredTools.push(tool)
+            continue
+          }
+          if (toolNames.includes(tool.name)) {
+            filteredTools.push(tool)
+            continue
+          }
         }
-        if (toolNames.includes(tool.name)) {
-          filteredTools.push(tool)
-          continue
-        }
+
+        return filteredTools
       }
 
-      return filteredTools
+      try {
+        return await doRequest()
+      } catch (error) {
+        // When a DegradedToolListError occurs, the cached MCP client's access
+        // token likely expired mid-session. Sparrow-style servers return 200
+        // with stripped tools (rather than 401) so the SDK never auto-refreshes.
+        // Attempt a silent token refresh, evict the stale cached client, then retry.
+        const mcpTarget =
+          mcpConfig.type !== 'stdio' ? mcpConfig.url : mcpConfig.command
+        if (
+          error instanceof DegradedToolListError &&
+          mcpOAuthOptions?.authProvider.getStoredRefreshToken?.() &&
+          mcpOAuthOptions.authProvider.tryRefreshTokens
+        ) {
+          logger?.debug(
+            { mcpTarget },
+            '[mcp] requestMcpToolData: DegradedToolListError - attempting silent token refresh and retry',
+          )
+          const refreshed = await mcpOAuthOptions.authProvider.tryRefreshTokens()
+          if (refreshed) {
+            logger?.debug(
+              { mcpTarget },
+              '[mcp] requestMcpToolData: token refresh succeeded, clearing cached client and retrying',
+            )
+            clearMCPClient(mcpConfig)
+            return await doRequest()
+          }
+        }
+        throw error
+      }
     },
     requestFiles: ({ filePaths }) =>
       readFiles({

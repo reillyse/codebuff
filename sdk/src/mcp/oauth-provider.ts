@@ -5,6 +5,12 @@ import path from 'path'
 
 import open from 'open'
 
+import {
+  refreshAuthorization,
+  discoverOAuthProtectedResourceMetadata,
+  discoverOAuthMetadata,
+} from '@modelcontextprotocol/sdk/client/auth.js'
+
 import { getConfigDir } from '../credentials'
 
 import type { McpOAuthClientProvider } from '@codebuff/common/mcp/client'
@@ -14,6 +20,7 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js'
+import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
 
 interface McpServerCredentials {
   clientInformation?: OAuthClientInformationFull
@@ -301,6 +308,93 @@ export class McpOAuthProvider implements McpOAuthClientProvider {
     delete current.codeVerifier
     all[this.serverUrl] = { ...current, tokens, tokensObtainedAt: Date.now() }
     writeMcpOAuthStorage(all)
+  }
+
+  /** Returns the raw stored refresh_token (even if the access token is expired). */
+  getStoredRefreshToken(): string | undefined {
+    return this.getStorage().tokens?.refresh_token
+  }
+
+  /**
+   * Attempts to silently refresh the access token using the stored refresh_token.
+   * Discovers the auth server from the MCP server URL, then calls refreshAuthorization.
+   * Saves the new tokens on success.
+   * Returns true on success, false if no refresh_token or if refresh fails.
+   */
+  async tryRefreshTokens(fetchFn?: FetchLike): Promise<boolean> {
+    const stored = this.getStorage()
+    const refreshToken = stored.tokens?.refresh_token
+    if (!refreshToken) {
+      console.error(
+        '[mcp:oauth] tryRefreshTokens: no refresh_token stored for',
+        this.serverUrl,
+      )
+      return false
+    }
+
+    const clientInfo = stored.clientInformation
+    if (!clientInfo) {
+      console.error(
+        '[mcp:oauth] tryRefreshTokens: no client information stored for',
+        this.serverUrl,
+      )
+      return false
+    }
+
+    try {
+      // Discover the authorization server URL from the protected resource metadata.
+      // Falls back to the MCP server URL itself if discovery fails.
+      let authorizationServerUrl: URL = new URL(this.serverUrl)
+      try {
+        const resourceMeta = await discoverOAuthProtectedResourceMetadata(
+          this.serverUrl,
+          undefined,
+          fetchFn,
+        )
+        const firstAuthServer = resourceMeta?.authorization_servers?.[0]
+        if (firstAuthServer) {
+          authorizationServerUrl = new URL(firstAuthServer)
+        }
+      } catch {
+        // Fall back to using the server URL as the auth server base
+      }
+
+      // Discover the token endpoint metadata. Optional — refreshAuthorization
+      // falls back to /token relative to the auth server URL if metadata is absent.
+      let metadata: Awaited<ReturnType<typeof discoverOAuthMetadata>> = undefined
+      try {
+        metadata = await discoverOAuthMetadata(
+          authorizationServerUrl,
+          undefined,
+          fetchFn,
+        )
+      } catch {
+        // Will use default /token endpoint
+      }
+
+      const newTokens = await refreshAuthorization(authorizationServerUrl, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        metadata: metadata as any,
+        clientInformation: clientInfo,
+        refreshToken,
+        fetchFn,
+      })
+
+      this.saveTokens(newTokens)
+      console.error(
+        '[mcp:oauth] tryRefreshTokens: successfully refreshed token for',
+        this.serverUrl,
+      )
+      return true
+    } catch (error) {
+      console.error(
+        '[mcp:oauth] tryRefreshTokens: refresh failed for',
+        this.serverUrl,
+        ':',
+        error instanceof Error ? error.message : String(error),
+      )
+      return false
+    }
   }
 
   redirectToAuthorization(authorizationUrl: URL): void {

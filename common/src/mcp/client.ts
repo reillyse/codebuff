@@ -31,6 +31,13 @@ export interface McpOAuthClientProvider extends OAuthClientProvider {
   waitForCode(): Promise<string>
   /** Close the callback server. */
   stopCallbackServer(): void
+  /** Returns the raw stored refresh_token even if the access token is expired. */
+  getStoredRefreshToken?(): string | undefined
+  /**
+   * Silently refreshes the access token using the stored refresh_token.
+   * Returns true on success, false if no refresh_token is stored or refresh fails.
+   */
+  tryRefreshTokens?(fetchFn?: FetchLike): Promise<boolean>
 }
 
 /**
@@ -381,11 +388,34 @@ export async function getMCPClient(
     // parent agent AND all subagents. Throwing here (before connecting) keeps
     // the cache clean and surfaces a clear "run /connect:mcp" message instead.
     if (!oauthOptions!.authProvider.tokens()) {
-      logger?.warn(
-        { mcpTarget: config.url },
-        '[mcp] getMCPClient: no valid on-disk tokens, throwing McpAuthorizationRequiredError',
-      )
-      throw new McpAuthorizationRequiredError(config.url)
+      const { authProvider } = oauthOptions!
+      const refreshToken = authProvider.getStoredRefreshToken?.()
+      if (refreshToken && authProvider.tryRefreshTokens) {
+        logger?.debug(
+          { mcpTarget: config.url },
+          '[mcp] getMCPClient: access token expired, attempting silent refresh via refresh_token',
+        )
+        const refreshed = await authProvider.tryRefreshTokens(
+          oauthFetch ?? globalThis.fetch,
+        )
+        if (!refreshed) {
+          logger?.warn(
+            { mcpTarget: config.url },
+            '[mcp] getMCPClient: silent token refresh failed, throwing McpAuthorizationRequiredError',
+          )
+          throw new McpAuthorizationRequiredError(config.url)
+        }
+        logger?.debug(
+          { mcpTarget: config.url },
+          '[mcp] getMCPClient: silent token refresh succeeded, proceeding with fresh token',
+        )
+      } else {
+        logger?.warn(
+          { mcpTarget: config.url },
+          '[mcp] getMCPClient: no valid on-disk tokens, throwing McpAuthorizationRequiredError',
+        )
+        throw new McpAuthorizationRequiredError(config.url)
+      }
     }
     const transport = createHttpTransport()
     await client.connect(transport)
