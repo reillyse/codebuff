@@ -274,11 +274,26 @@ export async function getMCPClient(
     config.type !== 'stdio' ? config.url : config.command
   const key = hashConfig(config)
   if (key in runningClients) {
-    logger?.debug(
-      { mcpTarget, cacheKey: key },
-      '[mcp] getMCPClient: cache HIT - reusing existing connection (shared across parent + all subagents)',
-    )
-    return key
+    // On cache HIT with OAuth, verify the stored token is still valid.
+    // An expired token means the transport's _commonHeaders() will omit the
+    // Authorization header → HTTP 401 "Missing Authorization header" on the
+    // next tool call. Evict the stale client now and fall through to the
+    // cache-miss reconnect path (which refreshes the token automatically).
+    const useOAuthHint = Boolean(config.type !== 'stdio' && config.oauth && oauthOptions)
+    if (useOAuthHint && !oauthOptions!.authProvider.tokens()) {
+      logger?.debug(
+        { mcpTarget },
+        '[mcp] getMCPClient: cache HIT but OAuth token expired — evicting stale client to reconnect with refreshed token',
+      )
+      clearMCPClient(config)
+      // Fall through to the cache-miss reconnect path below.
+    } else {
+      logger?.debug(
+        { mcpTarget, cacheKey: key },
+        '[mcp] getMCPClient: cache HIT - reusing existing connection (shared across parent + all subagents)',
+      )
+      return key
+    }
   }
   logger?.debug(
     {
