@@ -503,27 +503,6 @@ const definition: AgentDefinition = {
       }
     }
 
-    // Headroom guard: ensure the pruned context will actually fit below the
-    // threshold. The "floor" is estimated as everything the runtime sends
-    // *other than* the previous summary (system prompt, tool schemas, MCP
-    // definitions, live messages, etc.).
-    //
-    // NOTE: This is a conservative overestimate on non-steady-state prunes
-    // (contextTokenCount includes raw messages that will be summarised away),
-    // but in the steady-state loop case it is accurate:
-    //   floor ≈ contextTokenCount − prevSummaryTokens.
-    //
-    // Example from prod: floor ≈ 161k, budgets = 70k → summary stays at 43k
-    // → total 204k > 200k → pruner fires every step → infinite loop.
-    // Fix: available = 200k − 161k − 15k headroom = 24k → scale budgets to 24k.
-    const currentSummaryEstimatedTokens = previousSummaryContent
-      ? Math.ceil(previousSummaryContent.length / CHARS_PER_TOKEN)
-      : 0
-    const nonPrunableFloor = Math.max(
-      0,
-      effectiveContextTokenCount - currentSummaryEstimatedTokens,
-    )
-
     // === DIAGNOSTIC BREAKDOWN ===
     // Best-effort estimates (same CHARS_PER_TOKEN heuristic) of WHAT is filling
     // the non-prunable floor, so the WARN / HARD-STOP logs below can pinpoint
@@ -539,6 +518,28 @@ const definition: AgentDefinition = {
     const toolDefinitionsEstimatedTokens = Math.ceil(
       JSON.stringify(toolDefinitionsRecord).length / CHARS_PER_TOKEN,
     )
+
+    // Estimated tokens of the PREVIOUS conversation summary (0 on first prune).
+    // Retained for telemetry only; it is NOT used to compute the floor anymore.
+    const currentSummaryEstimatedTokens = previousSummaryContent
+      ? Math.ceil(previousSummaryContent.length / CHARS_PER_TOKEN)
+      : 0
+
+    // Headroom guard: ensure the pruned context will actually fit below the
+    // threshold. The "floor" is the content pruning CANNOT shrink: the system
+    // prompt + the tool (MCP) schemas. Everything else — the entire message
+    // history, including any previous summary — is replaceable by the new
+    // summary we build below, so it must NOT count toward the floor.
+    //
+    // Prior formula (effectiveContextTokenCount − prevSummaryTokens) was wrong
+    // on the FIRST prune: with no previous summary, prevSummaryTokens = 0, so
+    // the floor equalled the full context size. Since pruning only fires once
+    // the context exceeds ~185k, rawAvailable was always ≤ 0 and the HARD STOP
+    // fired on every first-prune invocation — even when summarizing the message
+    // history would have comfortably fit under the limit.
+    const nonPrunableFloor =
+      systemPromptEstimatedTokens + toolDefinitionsEstimatedTokens
+
     const messageHistoryEstimatedTokens = Math.ceil(
       JSON.stringify(agentState.messageHistory).length / CHARS_PER_TOKEN,
     )
@@ -759,9 +760,15 @@ const definition: AgentDefinition = {
         }
 
         if (parts.length > 0) {
+          // Join the assistant's progress note and tool summaries into a single
+          // part so they stay within one --- delimited chunk. Keeping them as
+          // separate parts would split them across --- separators in the
+          // summary, and a subsequent re-compaction would then parse them as
+          // independent entries (breaking the association between a progress
+          // note and the tool calls it describes).
           summarizedEntries.push({
             role: 'assistant_tool',
-            parts,
+            parts: [parts.join('\n')],
           })
         }
       } else if (message.role === 'tool') {

@@ -1,11 +1,11 @@
-import { CURRENT_GPT5_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_GPT5_MODEL, CURRENT_HAIKU_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
 
 import { publisher } from '../constants'
 
 import type { AgentDefinition } from '../types/agent-definition'
 
 export const createCodeEditor = (options: {
-  model: 'gpt-5' | 'opus' | 'minimax'
+  model: 'gpt-5' | 'opus' | 'haiku' | 'minimax'
 }): Omit<AgentDefinition, 'id'> => {
   const { model } = options
   return {
@@ -13,9 +13,11 @@ export const createCodeEditor = (options: {
     model:
       options.model === 'gpt-5'
         ? CURRENT_GPT5_MODEL
-        : options.model === 'minimax'
-          ? 'minimax/minimax-m2.5'
-          : CURRENT_OPUS_MODEL,
+        : options.model === 'haiku'
+          ? CURRENT_HAIKU_MODEL
+          : options.model === 'minimax'
+            ? 'minimax/minimax-m2.5'
+            : CURRENT_OPUS_MODEL,
     ...(options.model === 'opus' && {
       providerOptions: {
         only: ['amazon-bedrock'],

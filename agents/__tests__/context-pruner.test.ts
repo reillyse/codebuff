@@ -256,8 +256,9 @@ describe('context-pruner handleSteps', () => {
       createMessage('assistant', 'Hi there!'),
     ]
 
-    // Context under max limit - should not trigger pruning
-    const results = runHandleSteps(messages, 199000, 200000)
+    // Context under max limit - should not trigger pruning.
+    // TOKEN_COUNT_FUDGE_FACTOR is 15_000, so 184000 + 15000 = 199000 <= 200000.
+    const results = runHandleSteps(messages, 184000, 200000)
 
     expect(results).toHaveLength(1)
     expect(results[0]).toEqual(
@@ -312,7 +313,7 @@ describe('context-pruner handleSteps', () => {
       createToolResultMessage('call-2', 'str_replace', { success: true }),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     // Should contain tool summaries
@@ -342,7 +343,7 @@ describe('context-pruner handleSteps', () => {
       createToolResultMessage('call-4', 'spawn_agents', { success: true }),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     expect(content).toContain('wrote file: new-file.ts')
@@ -362,7 +363,7 @@ describe('context-pruner handleSteps', () => {
       }),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     expect(content).toContain('Tool error from read_files: File not found')
@@ -379,7 +380,7 @@ describe('context-pruner handleSteps', () => {
 
     const messages = [messageWithImage, createMessage('assistant', 'I see it')]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     expect(content).toContain('[USER] [image(s) were attached]')
@@ -508,7 +509,7 @@ describe('context-pruner handleSteps', () => {
       createMessage('user', 'Third user request'),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     // All user messages should be in the summary
@@ -523,7 +524,7 @@ describe('context-pruner handleSteps', () => {
       createMessage('assistant', 'Here is my detailed answer to your question'),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     expect(content).toContain('Here is my detailed answer to your question')
@@ -561,7 +562,7 @@ describe('context-pruner handleSteps', () => {
       createToolResultMessage('call-1', 'spawn_agent_inline', { output: {} }),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     expect(content).toContain('delegated agent file-picker')
@@ -578,7 +579,7 @@ describe('context-pruner handleSteps', () => {
       createToolResultMessage('call-1', 'run_terminal_command', { stdout: '' }),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     // Should truncate to 50 chars + ...
@@ -594,7 +595,7 @@ describe('context-pruner handleSteps', () => {
       createToolResultMessage('call-1', 'unknown_tool_name', { result: 'ok' }),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     expect(content).toContain('used tool unknown_tool_name')
@@ -626,7 +627,7 @@ describe('context-pruner handleSteps', () => {
       createToolResultMessage('call-2', 'read_files', { content: 'b' }),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     // Both tool calls should be in the summary
@@ -654,7 +655,7 @@ describe('context-pruner handleSteps', () => {
       createToolResultMessage('call-1', 'read_files', { content: 'data' }),
     ]
 
-    const results = runHandleSteps(messages, 50000, 10000)
+    const results = runHandleSteps(messages, 250000, 200000)
     const content = results[0].input.messages[0].content[0].text
 
     // Should have both text and tool summary
@@ -1545,9 +1546,9 @@ describe('context-pruner threshold behavior', () => {
       createMessage('assistant', 'Hi'),
     ]
 
-    // Set context to max limit minus fudge factor (1000) - should NOT prune
-    // contextTokenCount + 1000 <= maxContextLength => 199000 + 1000 <= 200000
-    const results = runHandleSteps(messages, 199000, 200000)
+    // Set context to max limit minus fudge factor (15000) - should NOT prune
+    // contextTokenCount + 15000 <= maxContextLength => 184000 + 15000 <= 200000
+    const results = runHandleSteps(messages, 184000, 200000)
 
     // Should preserve original messages (not summarized)
     expect(results[0].input.messages).toHaveLength(2)
@@ -1561,8 +1562,8 @@ describe('context-pruner threshold behavior', () => {
       createMessage('assistant', 'Hi'),
     ]
 
-    // Set context to exactly max limit - should prune due to 1000 token fudge factor
-    // contextTokenCount + 1000 > maxContextLength => 200000 + 1000 > 200000
+    // Set context to exactly max limit - should prune due to the 15000 token fudge factor
+    // contextTokenCount + 15000 > maxContextLength => 200000 + 15000 > 200000
     const results = runHandleSteps(messages, 200000, 200000)
 
     // Should have summarized to single message
@@ -1749,7 +1750,7 @@ describe('context-pruner glob and list_directory tools', () => {
 
   const runHandleSteps = (messages: Message[]) => {
     mockAgentState.messageHistory = messages
-    mockAgentState.contextTokenCount = 50000
+    mockAgentState.contextTokenCount = 250000
     const mockLogger = {
       debug: () => {},
       info: () => {},
@@ -1759,7 +1760,7 @@ describe('context-pruner glob and list_directory tools', () => {
     const generator = contextPruner.handleSteps!({
       agentState: mockAgentState,
       logger: mockLogger,
-      params: { maxContextLength: 10000 },
+      params: { maxContextLength: 200000 },
     })
     const results: any[] = []
     let result = generator.next()
@@ -2414,32 +2415,302 @@ describe('context-pruner dual-budget behavior', () => {
   })
 
   test('clamps explicitly-passed budgets to fractions of maxContextLength', () => {
-    // With maxContextLength=10000, clamped budgets are:
-    //   assistantToolBudget = min(999999, 10% of 10000) = 1000 tokens = 3000 chars
-    //   userBudget          = min(999999, 25% of 10000) = 2500 tokens = 7500 chars
-    const longContent = 'LONG_RESPONSE_MARKER_' + 'x'.repeat(3080)
-    // longContent is ~3101 chars ≈ 1034 tokens — exceeds the clamped 1000-token assistant budget
+    // maxContextLength must exceed SUMMARY_HEADROOM_TOKENS (15_000) so pruning
+    // produces a summary instead of a hard-stop. With maxContextLength=20000:
+    //   rawAvailable        = 20000 - 0 (floor) - 15000 = 5000
+    //   availableForSummary = max(5000, 5000) = 5000 tokens
+    //   scaleFactor         = 5000 / (999999 + 999999) ≈ 0.0025
+    //   assistantToolBudget = floor(999999 * 0.0025) = 2500 tokens (clamped)
+    //   userBudget          = floor(999999 * 0.0025) = 2500 tokens (clamped)
+    //
+    // Each large assistant message is truncated to ASSISTANT_MESSAGE_LIMIT
+    // (1300 tokens ≈ 3900 chars) ≈ 1299 tokens as a summary entry. Two of them
+    // (~2598 tokens) exceed the clamped 2500-token assistant budget, so the
+    // OLDER one is dropped by the budget walk while the newer one survives.
+    const oldLongContent = 'OLD_LONG_MARKER_' + 'x'.repeat(3900)
+    const newLongContent = 'NEW_LONG_MARKER_' + 'y'.repeat(3900)
 
     const messages: Message[] = [
       createMessage('user', 'Request A'),
-      createMessage('assistant', longContent),
+      createMessage('assistant', oldLongContent),
       createMessage('user', 'Request B'),
+      createMessage('assistant', newLongContent),
+      createMessage('user', 'Request C'),
       createMessage('assistant', 'Short response'),
     ]
 
-    const results = runHandleSteps(messages, 250000, 10000, {
-      assistantToolBudget: 999999, // clamped to 1000 tokens
-      userBudget: 999999,          // clamped to 2500 tokens
+    const results = runHandleSteps(messages, 250000, 20000, {
+      assistantToolBudget: 999999, // clamped to ~2500 tokens
+      userBudget: 999999,          // clamped to ~2500 tokens
     })
 
     const content = results[0].input.messages[0].content[0].text
-    // Newest assistant entry always survives (forced)
+    // Newest assistant entry always survives
     expect(content).toContain('Short response')
-    // User entries are small and both fit within the clamped user budget
+    // User entries are small and all fit within the clamped user budget
     expect(content).toContain('Request A')
     expect(content).toContain('Request B')
-    // The large old assistant entry exceeds the clamped assistant budget → dropped
-    expect(content).not.toContain('LONG_RESPONSE_MARKER_')
+    expect(content).toContain('Request C')
+    // The newer large assistant entry fits within the clamped assistant budget
+    expect(content).toContain('NEW_LONG_MARKER_')
+    // The older large assistant entry exceeds the clamped assistant budget → dropped
+    expect(content).not.toContain('OLD_LONG_MARKER_')
+  })
+})
+
+describe('context-pruner nonPrunableFloor fix — first-prune regression', () => {
+  /**
+   * Regression test for the bug where `nonPrunableFloor` was calculated as
+   * `effectiveContextTokenCount - currentSummaryEstimatedTokens`.
+   *
+   * On the FIRST prune (no previous summary), `currentSummaryEstimatedTokens = 0`,
+   * so `nonPrunableFloor = effectiveContextTokenCount`. Since pruning only fires
+   * when `effectiveContextTokenCount > 185k`, `rawAvailable` was always ≤ 0, causing
+   * the HARD STOP to fire incorrectly — even when summarization could have succeeded.
+   *
+   * Fix: `nonPrunableFloor = systemPromptEstimatedTokens + toolDefinitionsEstimatedTokens`
+   * (the truly non-prunable content). Message history is always replaceable by a summary.
+   */
+
+  test('first prune with no previous summary produces a normal summary, NOT an emergency stop', () => {
+    // contextTokenCount = 190k > 185k → triggers pruning
+    // systemPrompt = '', toolDefinitions = {} → nonPrunableFloor = 0
+    // rawAvailable = 200k − 0 − 15k = 185k → well above 0 → normal summarization
+    // (Old bug: nonPrunableFloor = 190k → rawAvailable = −5k → HARD STOP incorrectly)
+    const messages = [
+      createMessage('user', 'Please help me implement a new feature'),
+      createMessage('assistant', 'Sure, I can help you with that. Let me start by reading the relevant files.'),
+      createMessage('user', 'Thanks, what did you find?'),
+      createMessage('assistant', 'I found the main module and will now make the changes.'),
+    ]
+
+    const mockAgentState: AgentState = {
+      agentId: 'test-agent',
+      runId: 'test-run',
+      parentId: undefined,
+      messageHistory: messages,
+      output: undefined,
+      systemPrompt: '',        // 0 tokens → nonPrunableFloor stays at 0
+      toolDefinitions: {},     // 0 tokens
+      contextTokenCount: 190_000, // > 185k → triggers pruning
+    }
+
+    const mockLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    }
+
+    const generator = contextPruner.handleSteps!({
+      agentState: mockAgentState,
+      logger: mockLogger,
+      params: { maxContextLength: 200_000 },
+    })
+
+    const results: any[] = []
+    let result = generator.next()
+    while (!result.done) {
+      if (typeof result.value === 'object') results.push(result.value)
+      result = generator.next()
+    }
+
+    expect(results).toHaveLength(1)
+    const output = results[0]
+    expect(output.toolName).toBe('set_messages')
+
+    const firstMsg = output.input.messages[0]
+    const text = firstMsg.content[0].text as string
+
+    // Must produce a conversation summary, NOT the emergency stop
+    expect(text).toContain('<conversation_summary>')
+    expect(text).not.toContain('EMERGENCY STOP')
+    expect(text).not.toContain('CONTEXT WINDOW COMPLETELY FULL')
+
+    // Original conversation content must be preserved in the summary
+    expect(text).toContain('Please help me implement a new feature')
+    expect(text).toContain('what did you find')
+  })
+
+  test('first prune with non-trivial systemPrompt + tools still succeeds when floor is small enough', () => {
+    // systemPrompt = ~10k tokens = 30k chars
+    // toolDefinitions ≈ 5k tokens = 15k chars
+    // nonPrunableFloor = 10k + 5k = 15k
+    // rawAvailable = 200k − 15k − 15k = 170k → normal summarization
+    const systemPrompt = 'S'.repeat(30_000) // ~10k tokens
+    const toolDef = { someTool: { description: 'T'.repeat(15_000) } } // ~5k tokens
+
+    const messages = [
+      createMessage('user', 'Start the task'),
+      createMessage('assistant', 'Starting now'),
+    ]
+
+    const mockAgentState: AgentState = {
+      agentId: 'test-agent',
+      runId: 'test-run',
+      parentId: undefined,
+      messageHistory: messages,
+      output: undefined,
+      systemPrompt,
+      toolDefinitions: toolDef,
+      contextTokenCount: 190_000, // > 185k → triggers pruning
+    }
+
+    const mockLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    }
+
+    const generator = contextPruner.handleSteps!({
+      agentState: mockAgentState,
+      logger: mockLogger,
+      params: { maxContextLength: 200_000 },
+    })
+
+    const results: any[] = []
+    let result = generator.next()
+    while (!result.done) {
+      if (typeof result.value === 'object') results.push(result.value)
+      result = generator.next()
+    }
+
+    expect(results).toHaveLength(1)
+    const text = results[0].input.messages[0].content[0].text as string
+
+    expect(text).toContain('<conversation_summary>')
+    expect(text).not.toContain('EMERGENCY STOP')
+    expect(text).toContain('Start the task')
+  })
+
+  test('HARD STOP fires correctly when system prompt + tools genuinely exceed the safe budget', () => {
+    // systemPrompt = 186k tokens = 558k chars → nonPrunableFloor = 186k
+    // toolDefinitions = {} → 0 additional tokens
+    // rawAvailable = 200k − 186k − 15k = −1k → HARD STOP must fire
+    // This is the legitimate HARD STOP case (system+tools are genuinely too large).
+    const systemPrompt = 'S'.repeat(186_000 * 3) // 558k chars = 186k tokens
+
+    const messages = [
+      createMessage('user', 'Help me'),
+      createMessage('assistant', 'Sure'),
+    ]
+
+    // localMessageHistoryEstimate = systemPrompt(186k) + messages(tiny) + tools(0) ≈ 186k
+    // effectiveContextTokenCount = max(0, 186k) = 186k > 185k → pruning triggers
+    const mockAgentState: AgentState = {
+      agentId: 'test-agent',
+      runId: 'test-run',
+      parentId: undefined,
+      messageHistory: messages,
+      output: undefined,
+      systemPrompt,
+      toolDefinitions: {},
+      contextTokenCount: 0, // stored count is stale; local estimate drives the check
+    }
+
+    let errorLogged = false
+    const mockLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => { errorLogged = true },
+    }
+
+    const generator = contextPruner.handleSteps!({
+      agentState: mockAgentState,
+      logger: mockLogger,
+      params: { maxContextLength: 200_000 },
+    })
+
+    const results: any[] = []
+    let result = generator.next()
+    while (!result.done) {
+      if (typeof result.value === 'object') results.push(result.value)
+      result = generator.next()
+    }
+
+    expect(results).toHaveLength(1)
+    const output = results[0]
+    expect(output.toolName).toBe('set_messages')
+    // Should be EXACTLY one message — the emergency stop instruction
+    expect(output.input.messages).toHaveLength(1)
+
+    const text = output.input.messages[0].content[0].text as string
+    expect(text).toContain('EMERGENCY STOP')
+    expect(text).not.toContain('<conversation_summary>')
+    expect(errorLogged).toBe(true)
+  })
+
+  test('steady-state prune (with previous summary) continues to work correctly', () => {
+    // This is the case that always worked: there IS a previous summary,
+    // so the new formula (floor = systemPrompt + tools) still gives the
+    // right answer and produces a new summary.
+    const previousSummaryMessage: Message = {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: `<conversation_summary>
+This is a summary of the conversation so far. The original messages have been condensed to save context space.
+
+[USER]
+Previous user request from the first prune
+
+---
+
+[ASSISTANT]
+Previous assistant response from the first prune
+</conversation_summary>`,
+        },
+      ],
+    }
+
+    const messages = [
+      previousSummaryMessage,
+      createMessage('user', 'New user request after first summary'),
+      createMessage('assistant', 'New response'),
+    ]
+
+    const mockAgentState: AgentState = {
+      agentId: 'test-agent',
+      runId: 'test-run',
+      parentId: undefined,
+      messageHistory: messages,
+      output: undefined,
+      systemPrompt: '',
+      toolDefinitions: {},
+      contextTokenCount: 190_000,
+    }
+
+    const mockLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    }
+
+    const generator = contextPruner.handleSteps!({
+      agentState: mockAgentState,
+      logger: mockLogger,
+      params: { maxContextLength: 200_000 },
+    })
+
+    const results: any[] = []
+    let result = generator.next()
+    while (!result.done) {
+      if (typeof result.value === 'object') results.push(result.value)
+      result = generator.next()
+    }
+
+    expect(results).toHaveLength(1)
+    const text = results[0].input.messages[0].content[0].text as string
+
+    expect(text).toContain('<conversation_summary>')
+    expect(text).not.toContain('EMERGENCY STOP')
+    // Both previous and new content must be preserved
+    expect(text).toContain('Previous user request from the first prune')
+    expect(text).toContain('New user request after first summary')
   })
 })
 
