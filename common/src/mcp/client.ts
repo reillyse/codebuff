@@ -163,6 +163,18 @@ const listToolsCache: Record<
 > = {}
 
 /**
+ * Per-client metadata tracked alongside `runningClients`.
+ * `urlKey`   – stable fingerprint of (url, params) used to look up same-server
+ *              clients across different OAuth/header configs.
+ * `authenticated` – true when this client was created WITH an authProvider
+ *              (i.e. OAuth tokens will be sent on every request).
+ */
+const runningClientMeta: Record<
+  string,
+  { urlKey: string; authenticated: boolean }
+> = {}
+
+/**
  * Substitutes environment variable references ($VAR_NAME) in a string with their values.
  * Supports both simple replacement ("$VAR_NAME") and interpolation ("Bearer $VAR_NAME").
  */
@@ -253,6 +265,34 @@ export function clearMCPClient(config: MCPConfig): void {
     delete runningClients[key]
   }
   delete listToolsCache[key]
+  delete runningClientMeta[key]
+}
+
+/**
+ * Returns a stable key for the (url, params) pair of a remote MCP config.
+ * Used to detect same-server clients that differ only by OAuth flag.
+ */
+function remoteUrlKey(config: MCPConfig): string | undefined {
+  if (config.type === 'stdio') return undefined
+  return JSON.stringify({ url: config.url, params: config.params })
+}
+
+/**
+ * Stores a newly-connected remote client in both `runningClients` and
+ * `runningClientMeta`. Always use this instead of assigning `runningClients[key]`
+ * directly for http/sse transports so the URL-based reuse lookup works.
+ */
+function cacheRemoteClient(
+  key: string,
+  client: Client,
+  config: MCPConfig,
+  authenticated: boolean,
+): void {
+  runningClients[key] = client
+  const urlKey = remoteUrlKey(config)
+  if (urlKey !== undefined) {
+    runningClientMeta[key] = { urlKey, authenticated }
+  }
 }
 
 export async function getMCPClient(
@@ -293,6 +333,55 @@ export async function getMCPClient(
         '[mcp] getMCPClient: cache HIT - reusing existing connection (shared across parent + all subagents)',
       )
       return key
+    }
+  }
+
+  // URL-based reuse: when configs for the same server differ only by OAuth flag
+  // (e.g. the main agent uses oauth:true while a subagent's template has no
+  // oauth field), they hash to DIFFERENT keys and the subagent would create a
+  // SECOND unauthenticated connection — sending requests without an
+  // Authorization header → HTTP 401 "Missing Authorization header".
+  //
+  // Fix: on cache MISS for a remote config, scan for an existing client at the
+  // same (url, params) pair:
+  //  • If this call wants NO auth but an authenticated client exists → reuse it
+  //    (piggyback on the main agent's auth'd connection).
+  //  • If this call wants auth but only an unauthenticated zombie exists → evict
+  //    it first so the zombie doesn't block creating the auth'd connection.
+  if (config.type !== 'stdio') {
+    const wantAuth = Boolean(config.oauth && oauthOptions)
+    const thisUrlKey = remoteUrlKey(config)!
+    const existingAuthKey = Object.keys(runningClientMeta).find(
+      (k) =>
+        runningClientMeta[k].urlKey === thisUrlKey &&
+        k in runningClients,
+    )
+    if (existingAuthKey !== undefined) {
+      const existingMeta = runningClientMeta[existingAuthKey]
+      if (!wantAuth && existingMeta.authenticated) {
+        // Reuse the authenticated client for an oauth-less request.
+        logger?.debug(
+          { mcpTarget, reusedKey: existingAuthKey },
+          '[mcp] getMCPClient: cache MISS (different oauth config) — reusing existing authenticated client for same URL',
+        )
+        return existingAuthKey
+      }
+      if (wantAuth && !existingMeta.authenticated) {
+        // Evict the unauthenticated zombie before creating the auth'd client.
+        // We can't use clearMCPClient() here because that hashes `config` to a
+        // key that may differ from existingAuthKey (oauth flag differs).
+        logger?.debug(
+          { mcpTarget, zombieKey: existingAuthKey },
+          '[mcp] getMCPClient: evicting unauthenticated zombie client before creating authenticated connection for same URL',
+        )
+        const zombie = runningClients[existingAuthKey]
+        if (zombie) {
+          try { zombie.close() } catch { /* best-effort */ }
+        }
+        delete runningClients[existingAuthKey]
+        delete listToolsCache[existingAuthKey]
+        delete runningClientMeta[existingAuthKey]
+      }
     }
   }
   logger?.debug(
@@ -434,7 +523,7 @@ export async function getMCPClient(
     }
     const transport = createHttpTransport()
     await client.connect(transport)
-    runningClients[key] = client
+    cacheRemoteClient(key, client, config, true)
     return key
   }
 
@@ -477,7 +566,7 @@ export async function getMCPClient(
         // connect() triggered an auth redirect. Complete the flow and reconnect.
         await completeAuthFlow()
         await client.connect(createHttpTransport())
-        runningClients[key] = client
+        cacheRemoteClient(key, client, config, true)
         return
       }
 
@@ -496,7 +585,7 @@ export async function getMCPClient(
             // No reconnect needed: the MCP session is already established;
             // subsequent requests will carry the new Bearer token.
             await completeAuthFlow()
-            runningClients[key] = client
+            cacheRemoteClient(key, client, config, true)
             return
           }
           // Any other listTools error (permission denied, unsupported, etc.)
@@ -506,12 +595,12 @@ export async function getMCPClient(
 
       // Already authorized (tokens existed or listTools succeeded without auth).
       authProvider.stopCallbackServer()
-      runningClients[key] = client
+      cacheRemoteClient(key, client, config, true)
     })
   } else {
     const transport: Transport = createHttpTransport()
     await client.connect(transport)
-    runningClients[key] = client
+    cacheRemoteClient(key, client, config, false)
   }
 
   return key
