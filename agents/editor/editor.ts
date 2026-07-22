@@ -5,7 +5,7 @@ import { publisher } from '../constants'
 import type { AgentDefinition } from '../types/agent-definition'
 
 export const createCodeEditor = (options: {
-  model: 'gpt-5' | 'opus' | 'haiku' | 'minimax'
+  model: 'gpt-5' | 'opus' | 'haiku'
 }): Omit<AgentDefinition, 'id'> => {
   const { model } = options
   return {
@@ -15,9 +15,7 @@ export const createCodeEditor = (options: {
         ? CURRENT_GPT5_MODEL
         : options.model === 'haiku'
           ? CURRENT_HAIKU_MODEL
-          : options.model === 'minimax'
-            ? 'minimax/minimax-m2.5'
-            : CURRENT_OPUS_MODEL,
+          : CURRENT_OPUS_MODEL,
     ...(options.model === 'opus' && {
       providerOptions: {
         only: ['amazon-bedrock'],
@@ -68,7 +66,7 @@ OR for new files or major rewrites:
 }
 </codebuff_tool_call>
 
-${model === 'gpt-5' || model === 'minimax'
+${model === 'gpt-5'
         ? ''
         : `Before you start writing your implementation, you should use <think> tags to think about the best way to implement the changes.
 

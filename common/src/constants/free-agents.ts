@@ -22,7 +22,7 @@ export const FREE_COST_MODE = 'free' as const
  */
 export const FREE_MODE_AGENT_MODELS: Record<string, Set<string>> = {
   // Root orchestrator
-  'base2-free': new Set(['minimax/minimax-m2.5']),
+  'base2-free': new Set([CURRENT_HAIKU_MODEL]),
 
   // File exploration agents (standardized on Claude Haiku via OAuth)
   'file-picker': new Set([CURRENT_HAIKU_MODEL]),
@@ -37,10 +37,10 @@ export const FREE_MODE_AGENT_MODELS: Record<string, Set<string>> = {
   'commander-lite': new Set([CURRENT_HAIKU_MODEL]),
 
   // Editor for free mode
-  'editor-lite': new Set(['minimax/minimax-m2.5']),
+  'editor-lite': new Set([CURRENT_HAIKU_MODEL]),
 
   // Code reviewer for free mode
-  'code-reviewer-lite': new Set(['minimax/minimax-m2.5']),
+  'code-reviewer-lite': new Set([CURRENT_HAIKU_MODEL]),
 }
 
 /**

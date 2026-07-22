@@ -5,13 +5,12 @@ import { publisher } from '../../constants'
 import type { SecretAgentDefinition } from '../../types/secret-agent-definition'
 
 export const createBestOfNImplementor = (options: {
-  model: 'sonnet' | 'opus' | 'gpt-5' | 'gemini'
+  model: 'sonnet' | 'opus' | 'gpt-5'
 }): Omit<SecretAgentDefinition, 'id'> => {
   const { model } = options
   const isSonnet = model === 'sonnet'
   const isOpus = model === 'opus'
   const isGpt5 = model === 'gpt-5'
-  const isGemini = model === 'gemini'
 
   return {
     publisher,
@@ -19,9 +18,7 @@ export const createBestOfNImplementor = (options: {
       ? CURRENT_SONNET_MODEL
       : isOpus
         ? CURRENT_OPUS_MODEL
-        : isGemini
-          ? 'google/gemini-3.1-pro-preview'
-          : CURRENT_GPT5_MODEL,
+        : CURRENT_GPT5_MODEL,
     ...(isOpus && {
       providerOptions: {
         only: ['amazon-bedrock'],
@@ -74,7 +71,7 @@ OR for new files or major rewrites:
   "content": "Complete file content"
 }
 </codebuff_tool_call>
-${isGpt5 || isGemini
+${isGpt5
         ? ``
         : `
 IMPORTANT: Before you start writing your implementation, you should use <think> tags to think about the best way to implement the changes. You should think really really hard to make sure you implement the changes in the best way possible. Take as much time as you to think through all the cases to produce the best changes.

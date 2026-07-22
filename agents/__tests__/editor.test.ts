@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test'
 
-import { CURRENT_GPT5_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_GPT5_MODEL, CURRENT_HAIKU_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
 
 import editor, { createCodeEditor } from '../editor/editor'
 
@@ -64,9 +64,9 @@ describe('editor agent', () => {
       expect(gpt5Editor.model).toBe(CURRENT_GPT5_MODEL)
     })
 
-    test('creates minimax editor', () => {
-      const minimaxEditor = createCodeEditor({ model: 'minimax' })
-      expect(minimaxEditor.model).toBe('minimax/minimax-m2.5')
+    test('creates haiku editor', () => {
+      const haikuEditor = createCodeEditor({ model: 'haiku' })
+      expect(haikuEditor.model).toBe(CURRENT_HAIKU_MODEL)
     })
 
     test('gpt-5 editor does not include think tags in instructions', () => {
@@ -75,10 +75,10 @@ describe('editor agent', () => {
       expect(gpt5Editor.instructionsPrompt).not.toContain('</think>')
     })
 
-    test('glm editor does not include think tags in instructions', () => {
-      const minimaxEditor = createCodeEditor({ model: 'minimax' })
-      expect(minimaxEditor.instructionsPrompt).not.toContain('<think>')
-      expect(minimaxEditor.instructionsPrompt).not.toContain('</think>')
+    test('haiku editor includes think tags in instructions', () => {
+      const haikuEditor = createCodeEditor({ model: 'haiku' })
+      expect(haikuEditor.instructionsPrompt).toContain('<think>')
+      expect(haikuEditor.instructionsPrompt).toContain('</think>')
     })
 
     test('opus editor includes think tags in instructions', () => {
@@ -90,17 +90,17 @@ describe('editor agent', () => {
     test('all variants have same base properties', () => {
       const opusEditor = createCodeEditor({ model: 'opus' })
       const gpt5Editor = createCodeEditor({ model: 'gpt-5' })
-      const minimaxEditor = createCodeEditor({ model: 'minimax' })
+      const haikuEditor = createCodeEditor({ model: 'haiku' })
 
       // All should have same basic structure
       expect(opusEditor.displayName).toBe(gpt5Editor.displayName)
-      expect(gpt5Editor.displayName).toBe(minimaxEditor.displayName)
+      expect(gpt5Editor.displayName).toBe(haikuEditor.displayName)
 
       expect(opusEditor.outputMode).toBe(gpt5Editor.outputMode)
-      expect(gpt5Editor.outputMode).toBe(minimaxEditor.outputMode)
+      expect(gpt5Editor.outputMode).toBe(haikuEditor.outputMode)
 
       expect(opusEditor.toolNames).toEqual(gpt5Editor.toolNames)
-      expect(gpt5Editor.toolNames).toEqual(minimaxEditor.toolNames)
+      expect(gpt5Editor.toolNames).toEqual(haikuEditor.toolNames)
     })
   })
 

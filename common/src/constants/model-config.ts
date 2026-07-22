@@ -219,7 +219,7 @@ export const getModelForMode = (
 ) => {
   if (operation === 'agent') {
     return {
-      free: models.openrouter_gemini2_5_flash,
+      free: models.openrouter_claude_3_5_haiku,
       normal: models.openrouter_claude_sonnet_4_6,
       max: models.openrouter_claude_sonnet_4_6,
       experimental: models.openrouter_claude_opus_4,
