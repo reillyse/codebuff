@@ -257,8 +257,8 @@ describe('context-pruner handleSteps', () => {
     ]
 
     // Context under max limit - should not trigger pruning.
-    // TOKEN_COUNT_FUDGE_FACTOR is 15_000, so 184000 + 15000 = 199000 <= 200000.
-    const results = runHandleSteps(messages, 184000, 200000)
+    // TOKEN_COUNT_FUDGE_FACTOR is 1_000, so 199000 + 1000 = 200000 <= 200000.
+    const results = runHandleSteps(messages, 199000, 200000)
 
     expect(results).toHaveLength(1)
     expect(results[0]).toEqual(
@@ -1546,9 +1546,9 @@ describe('context-pruner threshold behavior', () => {
       createMessage('assistant', 'Hi'),
     ]
 
-    // Set context to max limit minus fudge factor (15000) - should NOT prune
-    // contextTokenCount + 15000 <= maxContextLength => 184000 + 15000 <= 200000
-    const results = runHandleSteps(messages, 184000, 200000)
+    // Set context to max limit minus fudge factor (1000) - should NOT prune
+    // contextTokenCount + 1000 <= maxContextLength => 199000 + 1000 <= 200000
+    const results = runHandleSteps(messages, 199000, 200000)
 
     // Should preserve original messages (not summarized)
     expect(results[0].input.messages).toHaveLength(2)
@@ -1562,8 +1562,8 @@ describe('context-pruner threshold behavior', () => {
       createMessage('assistant', 'Hi'),
     ]
 
-    // Set context to exactly max limit - should prune due to the 15000 token fudge factor
-    // contextTokenCount + 15000 > maxContextLength => 200000 + 15000 > 200000
+    // Set context to exactly max limit - should prune due to the 1000 token fudge factor
+    // contextTokenCount + 1000 > maxContextLength => 200000 + 1000 > 200000
     const results = runHandleSteps(messages, 200000, 200000)
 
     // Should have summarized to single message
@@ -2473,10 +2473,10 @@ describe('context-pruner nonPrunableFloor fix — first-prune regression', () =>
    */
 
   test('first prune with no previous summary produces a normal summary, NOT an emergency stop', () => {
-    // contextTokenCount = 190k > 185k → triggers pruning
+    // contextTokenCount = 200k → triggers pruning (200k + 1k > 200k)
     // systemPrompt = '', toolDefinitions = {} → nonPrunableFloor = 0
     // rawAvailable = 200k − 0 − 15k = 185k → well above 0 → normal summarization
-    // (Old bug: nonPrunableFloor = 190k → rawAvailable = −5k → HARD STOP incorrectly)
+    // (Old bug: nonPrunableFloor = 200k → rawAvailable = −15k → HARD STOP incorrectly)
     const messages = [
       createMessage('user', 'Please help me implement a new feature'),
       createMessage('assistant', 'Sure, I can help you with that. Let me start by reading the relevant files.'),
@@ -2492,7 +2492,7 @@ describe('context-pruner nonPrunableFloor fix — first-prune regression', () =>
       output: undefined,
       systemPrompt: '',        // 0 tokens → nonPrunableFloor stays at 0
       toolDefinitions: {},     // 0 tokens
-      contextTokenCount: 190_000, // > 185k → triggers pruning
+      contextTokenCount: 200_000, // 200k + 1k > 200k → triggers pruning
     }
 
     const mockLogger = {
@@ -2553,7 +2553,7 @@ describe('context-pruner nonPrunableFloor fix — first-prune regression', () =>
       output: undefined,
       systemPrompt,
       toolDefinitions: toolDef,
-      contextTokenCount: 190_000, // > 185k → triggers pruning
+      contextTokenCount: 200_000, // 200k + 1k > 200k → triggers pruning
     }
 
     const mockLogger = {
@@ -2597,7 +2597,8 @@ describe('context-pruner nonPrunableFloor fix — first-prune regression', () =>
     ]
 
     // localMessageHistoryEstimate = systemPrompt(186k) + messages(tiny) + tools(0) ≈ 186k
-    // effectiveContextTokenCount = max(0, 186k) = 186k > 185k → pruning triggers
+    // effectiveContextTokenCount = max(200k, 186k) = 200k → 200k + 1k > 200k → pruning triggers
+    // nonPrunableFloor = 186k; rawAvailable = 200k − 186k − 15k = −1k → HARD STOP fires
     const mockAgentState: AgentState = {
       agentId: 'test-agent',
       runId: 'test-run',
@@ -2606,7 +2607,7 @@ describe('context-pruner nonPrunableFloor fix — first-prune regression', () =>
       output: undefined,
       systemPrompt,
       toolDefinitions: {},
-      contextTokenCount: 0, // stored count is stale; local estimate drives the check
+      contextTokenCount: 200_000, // ensures effectiveContextTokenCount = 200k → triggers pruning
     }
 
     let errorLogged = false
@@ -2680,7 +2681,7 @@ Previous assistant response from the first prune
       output: undefined,
       systemPrompt: '',
       toolDefinitions: {},
-      contextTokenCount: 190_000,
+      contextTokenCount: 200_000,
     }
 
     const mockLogger = {
