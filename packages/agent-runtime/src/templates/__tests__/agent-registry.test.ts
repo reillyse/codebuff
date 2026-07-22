@@ -237,6 +237,105 @@ describe('Agent Registry', () => {
   })
 
   describe('getAgentTemplate priority order', () => {
+    it('should prefer bundled agent over DB when looked up by qualified ID (codebuff/bare-id)', async () => {
+      const bundledAgent: AgentTemplate = {
+        id: 'file-lister',
+        displayName: 'Local Bundled File Lister',
+        systemPrompt: 'Test',
+        instructionsPrompt: 'Test',
+        stepPrompt: 'Test',
+        mcpServers: {},
+        toolNames: ['end_turn'],
+        spawnableAgents: [],
+        outputMode: 'last_message',
+        includeMessageHistory: true,
+        inheritParentSystemPrompt: false,
+        model: 'anthropic/claude-haiku-4.5',
+        spawnerPrompt: 'Test',
+        inputSchema: {},
+      }
+
+      const staleDbAgent: AgentTemplate = {
+        id: 'codebuff/file-lister',
+        displayName: 'Stale DB File Lister',
+        systemPrompt: 'Test',
+        instructionsPrompt: 'Test',
+        stepPrompt: 'Test',
+        mcpServers: {},
+        toolNames: ['end_turn'],
+        spawnableAgents: [],
+        outputMode: 'last_message',
+        includeMessageHistory: true,
+        inheritParentSystemPrompt: false,
+        model: 'x-ai/grok-4.1-fast',
+        spawnerPrompt: 'Test',
+        inputSchema: {},
+      }
+
+      const dbSpy = mock(async () => staleDbAgent)
+      agentRuntimeImpl = { ...agentRuntimeImpl, fetchAgentFromDatabase: dbSpy }
+
+      // Looking up 'codebuff/file-lister' should find the local bundled 'file-lister',
+      // not the stale DB agent — even though the exact key doesn't match.
+      const result = await getAgentTemplate({
+        ...agentRuntimeImpl,
+        agentId: 'codebuff/file-lister',
+        localAgentTemplates: { 'file-lister': bundledAgent },
+      })
+      expect(result?.displayName).toBe('Local Bundled File Lister')
+      expect(result?.model).toBe('anthropic/claude-haiku-4.5')
+      expect(dbSpy).not.toHaveBeenCalled()
+    })
+
+    it('should prefer bundled agent over DB when looked up by versioned qualified ID', async () => {
+      const bundledAgent: AgentTemplate = {
+        id: 'file-lister',
+        displayName: 'Local Bundled File Lister',
+        systemPrompt: 'Test',
+        instructionsPrompt: 'Test',
+        stepPrompt: 'Test',
+        mcpServers: {},
+        toolNames: ['end_turn'],
+        spawnableAgents: [],
+        outputMode: 'last_message',
+        includeMessageHistory: true,
+        inheritParentSystemPrompt: false,
+        model: 'anthropic/claude-haiku-4.5',
+        spawnerPrompt: 'Test',
+        inputSchema: {},
+      }
+
+      const staleDbAgent: AgentTemplate = {
+        id: 'codebuff/file-lister@1.0.0',
+        displayName: 'Stale DB File Lister v1',
+        systemPrompt: 'Test',
+        instructionsPrompt: 'Test',
+        stepPrompt: 'Test',
+        mcpServers: {},
+        toolNames: ['end_turn'],
+        spawnableAgents: [],
+        outputMode: 'last_message',
+        includeMessageHistory: true,
+        inheritParentSystemPrompt: false,
+        model: 'x-ai/grok-4.1-fast',
+        spawnerPrompt: 'Test',
+        inputSchema: {},
+      }
+
+      const dbSpy = mock(async () => staleDbAgent)
+      agentRuntimeImpl = { ...agentRuntimeImpl, fetchAgentFromDatabase: dbSpy }
+
+      // Looking up versioned 'codebuff/file-lister@1.0.0' should still prefer the bundled agent.
+      const result = await getAgentTemplate({
+        ...agentRuntimeImpl,
+        agentId: 'codebuff/file-lister@1.0.0',
+        localAgentTemplates: { 'file-lister': bundledAgent },
+      })
+      expect(result?.displayName).toBe('Local Bundled File Lister')
+      expect(result?.model).toBe('anthropic/claude-haiku-4.5')
+      expect(dbSpy).not.toHaveBeenCalled()
+    })
+
     it('should prioritize local agents over database agents', async () => {
       const localAgents = {
         'test-agent': {

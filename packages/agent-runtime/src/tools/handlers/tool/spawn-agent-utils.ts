@@ -312,11 +312,17 @@ export async function validateAndGetAgentTemplate(
   const referencedMcpServers = getReferencedMcpServers(
     agentTemplate.toolNames ?? [],
   )
-  const inheritedMcpServers = Object.fromEntries(
-    Object.entries(parentAgentTemplate.mcpServers ?? {}).filter(
-      ([serverName]) => referencedMcpServers.has(serverName),
-    ),
-  )
+  // Agents with search_mcp_tools need ALL parent MCP servers so they can
+  // search through all available tools. For other agents, only inherit
+  // servers whose tools are explicitly referenced in the child's toolNames.
+  const hasSearchMcpTools = (agentTemplate.toolNames ?? []).includes('search_mcp_tools')
+  const inheritedMcpServers = hasSearchMcpTools
+    ? { ...parentAgentTemplate.mcpServers }
+    : Object.fromEntries(
+        Object.entries(parentAgentTemplate.mcpServers ?? {}).filter(
+          ([serverName]) => referencedMcpServers.has(serverName),
+        ),
+      )
   //
   // spawnableAgents resolution: if the child agent explicitly declares its own
   // spawnableAgents list, use ONLY those. Inheriting the union of parent+child

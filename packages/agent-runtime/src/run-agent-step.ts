@@ -27,6 +27,7 @@ import { cloneDeep, mapValues } from 'lodash'
 import { CACHE_DEBUG_FULL_LOGGING } from './constants'
 import { callTokenCountAPI, MISSING_CODEBUFF_CREDENTIALS_ERROR } from './llm-api/codebuff-web-api'
 import { getMCPToolData } from './mcp'
+import { MCP_TOOL_SEPARATOR } from './mcp-constants'
 import { getAgentStreamFromTemplate } from './prompt-agent-stream'
 import { runProgrammaticStep } from './run-programmatic-step'
 import { additionalSystemPrompts } from './system-prompt/prompts'
@@ -175,9 +176,15 @@ async function additionalToolDefinitions(
 
   const defs = cloneDeep(
     Object.fromEntries(
-      Object.entries(fileContext.customToolDefinitions).filter(([toolName]) =>
-        agentTemplate!.toolNames.includes(toolName),
-      ),
+      Object.entries(fileContext.customToolDefinitions).filter(([toolName]) => {
+        if (agentTemplate!.toolNames.includes(toolName)) return true
+        // MCP tools are stored with MCP_TOOL_SEPARATOR ('__') internally, but
+        // agent toolNames use '/' as separator (e.g. stored as
+        // 'sparrow__sparrow_companies_get', referenced as 'sparrow/sparrow_companies_get').
+        // Normalize for comparison so subagents can inherit parent MCP tools.
+        const normalizedName = toolName.replace(MCP_TOOL_SEPARATOR, '/')
+        return normalizedName !== toolName && agentTemplate!.toolNames.includes(normalizedName)
+      }),
     ),
   )
   return getMCPToolData({
@@ -882,12 +889,13 @@ export async function loopAgentSteps(
   }
   initialAgentState.runId = runId
 
+  const hasSearchMcpTools = agentTemplate.toolNames.includes('search_mcp_tools')
   let cachedAdditionalToolDefinitions: CustomToolDefinitions | undefined
   // Reasons any inherited/configured MCP servers failed to load their tools.
   // Populated lazily by getAdditionalToolDefs and surfaced to the model via a
   // system notice below so it can explain missing MCP tools to the user.
   let cachedMcpLoadErrors: string[] = []
-  const getAdditionalToolDefs = async () => {
+  const getAdditionalToolDefs = async (): Promise<CustomToolDefinitions> => {
     if (!cachedAdditionalToolDefinitions) {
       const result = await additionalToolDefinitions({
         ...params,
@@ -895,7 +903,53 @@ export async function loopAgentSteps(
       })
       cachedAdditionalToolDefinitions = result.customToolDefinitions
       cachedMcpLoadErrors = result.mcpLoadErrors
+
+      // Write all loaded MCP tools to fileContext so subagents can inherit
+      // them via the normalized filter in additionalToolDefinitions.
+      const loadedMcpTools = Object.fromEntries(
+        Object.entries(cachedAdditionalToolDefinitions).filter(
+          ([n]) => n.includes(MCP_TOOL_SEPARATOR),
+        ),
+      )
+      if (Object.keys(loadedMcpTools).length > 0) {
+        Object.assign(fileContext.customToolDefinitions, loadedMcpTools)
+      }
+
+      // For search_mcp_tools agents: pull ALL parent MCP tools from fileContext
+      // into the local cache so the search handler and per-step tool rebuild
+      // can access the full set (including tools from the parent agent that
+      // aren't listed in this subagent's toolNames).
+      if (hasSearchMcpTools) {
+        const parentMcpTools = Object.fromEntries(
+          Object.entries(fileContext.customToolDefinitions).filter(
+            ([n]) => n.includes(MCP_TOOL_SEPARATOR),
+          ),
+        )
+        Object.assign(cachedAdditionalToolDefinitions, parentMcpTools)
+      }
     }
+
+    // For search_mcp_tools agents, only return the currently-active MCP tools
+    // to avoid injecting 400+ tool schemas into every step. The handler
+    // activates tools by setting fileContext.activeMcpToolNames.
+    if (hasSearchMcpTools) {
+      const activeNames = fileContext.activeMcpToolNames
+      if (!activeNames || activeNames.length === 0) {
+        // No tools selected yet — exclude all MCP tools (non-MCP custom tools pass through)
+        return Object.fromEntries(
+          Object.entries(cachedAdditionalToolDefinitions).filter(
+            ([n]) => !n.includes(MCP_TOOL_SEPARATOR),
+          ),
+        )
+      }
+      const activeSet = new Set(activeNames)
+      return Object.fromEntries(
+        Object.entries(cachedAdditionalToolDefinitions).filter(
+          ([n]) => !n.includes(MCP_TOOL_SEPARATOR) || activeSet.has(n),
+        ),
+      )
+    }
+
     return cachedAdditionalToolDefinitions
   }
   // Use parent's tools for prompt caching when inheritParentSystemPrompt is true
@@ -969,7 +1023,7 @@ export async function loopAgentSteps(
         agentTemplates: localAgentTemplates,
       })
 
-  const tools = useParentTools
+  let tools = useParentTools
     ? parentTools
     : await getToolSet({
       toolNames: agentTemplate.toolNames,
@@ -1022,7 +1076,7 @@ export async function loopAgentSteps(
   )
 
   // Convert tools to a serializable format for context-pruner token counting
-  const toolDefinitions = mapValues(tools, (tool) => ({
+  let toolDefinitions = mapValues(tools, (tool) => ({
     description: tool.description,
     inputSchema: tool.inputSchema as {},
   }))
@@ -1056,11 +1110,40 @@ export async function loopAgentSteps(
   // NOT force-ended; we warn and continue.
   let consecutiveContextOverflowSteps = 0
 
+  // For search_mcp_tools agents: track which tools were active on the previous
+  // step so we can detect changes and rebuild the toolset when the handler
+  // activates a new selection.
+  let prevActiveMcpToolNames: string[] | undefined = undefined
+
   try {
     while (true) {
       totalSteps++
       if (signal.aborted) {
         throw new AbortError()
+      }
+
+      // For search_mcp_tools agents: rebuild the toolset when activeMcpToolNames
+      // changes (i.e. the handler activated a new tool selection this step).
+      if (hasSearchMcpTools && !useParentTools) {
+        const currentActiveNames = fileContext.activeMcpToolNames
+        if (JSON.stringify(currentActiveNames) !== JSON.stringify(prevActiveMcpToolNames)) {
+          prevActiveMcpToolNames = currentActiveNames
+          tools = await getToolSet({
+            toolNames: agentTemplate.toolNames,
+            additionalToolDefinitions: getAdditionalToolDefs,
+            agentTools,
+            skills: fileContext.skills ?? {},
+            includeCacheControl: supportsCacheControl(agentTemplate.model),
+          })
+          toolDefinitions = mapValues(tools, (tool) => ({
+            description: tool.description,
+            inputSchema: tool.inputSchema as {},
+          }))
+          currentAgentState = {
+            ...currentAgentState,
+            toolDefinitions,
+          }
+        }
       }
 
       const startTime = new Date()

@@ -1,5 +1,5 @@
 import { validateAgents } from '@codebuff/common/templates/agent-validation'
-import { parsePublishedAgentId } from '@codebuff/common/util/agent-id-parsing'
+import { parseAgentId, parsePublishedAgentId } from '@codebuff/common/util/agent-id-parsing'
 import { DEFAULT_ORG_PREFIX } from '@codebuff/common/util/agent-name-normalization'
 
 import type { DynamicAgentValidationError } from '@codebuff/common/templates/agent-validation'
@@ -35,6 +35,16 @@ export async function getAgentTemplate(
   if (localAgentTemplates[agentId]) {
     return localAgentTemplates[agentId]
   }
+
+  // 1.5. Bundled-agent priority guard: for qualified IDs like 'codebuff/file-lister' or
+  // 'codebuff/file-lister@1.0.0', the exact-match above misses bundled agents stored under
+  // bare IDs (e.g. 'file-lister'). Strip the publisher prefix and version and check again
+  // BEFORE the DB cache, so a locally-bundled agent always beats a stale published DB record.
+  const { agentId: bareAgentId } = parseAgentId(agentId)
+  if (bareAgentId && bareAgentId !== agentId && localAgentTemplates[bareAgentId]) {
+    return localAgentTemplates[bareAgentId]
+  }
+
   // 2. Check database cache
   if (databaseAgentCache.has(agentId)) {
     return databaseAgentCache.get(agentId) || null

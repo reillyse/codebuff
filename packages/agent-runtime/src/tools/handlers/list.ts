@@ -29,6 +29,7 @@ import { handleThinkDeeply } from './tool/think-deeply'
 import { handleUpdateSubgoal } from './tool/update-subgoal'
 import { handleWebSearch } from './tool/web-search'
 import { handleWriteFile } from './tool/write-file'
+import { handleSearchMcpTools } from './tool/search-mcp-tools'
 import { handleWriteTodos } from './tool/write-todos'
 
 import type { CodebuffToolHandlerFunction } from './handler-function-type'
@@ -75,6 +76,7 @@ export const codebuffToolHandlers = {
   update_subgoal: handleUpdateSubgoal,
   web_search: handleWebSearch,
   write_file: handleWriteFile,
+  search_mcp_tools: handleSearchMcpTools,
   write_todos: handleWriteTodos,
 } satisfies {
   [K in ToolName]: CodebuffToolHandlerFunction<K>

@@ -72,6 +72,10 @@ export const ProjectFileContextSchema = z.object({
   userKnowledgeFiles: z.record(z.string(), z.string()).optional(),
   agentTemplates: z.record(z.string(), z.any()).default(() => ({})),
   customToolDefinitions: customToolDefinitionsSchema,
+  // Tool names (in internal 'server__tool' format) selected via the
+  // search_mcp_tools tool. When set, agents using search_mcp_tools load ONLY
+  // these MCP tools into context instead of all tools from every server.
+  activeMcpToolNames: z.array(z.string()).optional(),
   skills: z.record(z.string(), z.any()).optional(),
   gitChanges: z.object({
     status: z.string(),
@@ -104,6 +108,7 @@ export type ProjectFileContext = {
   userKnowledgeFiles?: Record<string, string>
   agentTemplates: Record<string, any>
   customToolDefinitions: CustomToolDefinitions
+  activeMcpToolNames?: string[]
   skills?: SkillsMap
   gitChanges: {
     status: string
