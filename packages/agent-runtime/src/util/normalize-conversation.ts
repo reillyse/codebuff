@@ -243,54 +243,54 @@ export function normalizeConversation(
   // preserves downstream invariants for pass 2/3 — e.g., if two unmerged
   // assistants each carry a tool_use whose results follow them both, only the
   // merged form has both tool_results correctly preceded by their assistant.
+  //
+  // We scan runs of consecutive assistants and emit ONE debug log per run
+  // (with the group size) rather than one log per pair — N back-to-back
+  // assistants previously produced N-1 identical log lines at the same stepIndex.
   {
     const out: Message[] = []
-    for (const msg of repaired) {
-      const prev = out[out.length - 1]
-      if (prev && prev.role === 'assistant' && msg.role === 'assistant') {
-        emitRepair(
-          'consecutive_same_role',
-          `Consecutive assistant-role messages (agent=${agentId} step=${stepIndex}): merging into a single message.`,
-        )
-        const prevAssistant = prev as AssistantMessage
-        const curAssistant = msg as AssistantMessage
-        const prevContent =
-          typeof prevAssistant.content === 'string'
-            ? [
-                {
-                  type: 'text' as const,
-                  text: prevAssistant.content,
-                } satisfies TextPart,
-              ]
-            : prevAssistant.content
-        const curContent =
-          typeof curAssistant.content === 'string'
-            ? [
-                {
-                  type: 'text' as const,
-                  text: curAssistant.content,
-                } satisfies TextPart,
-              ]
-            : curAssistant.content
-        // Merge semantics: the earlier assistant's metadata wins — tags,
-        // timeToLive, providerOptions, sentAt all come from `prev`. Any such
-        // metadata on the second assistant is intentionally dropped, since
-        // the merged turn is semantically a continuation of the first. For
-        // organic runtime shapes (back-to-back `end_turn` with
-        // `excludeToolFromMessageHistory: true`) neither assistant carries
-        // meaningful metadata, so this is a no-op in practice.
-        const merged: AssistantMessage = {
-          ...prevAssistant,
-          role: 'assistant',
-          content: [
-            ...(prevContent as AssistantMessage['content']),
-            ...(curContent as AssistantMessage['content']),
-          ],
-        }
-        out[out.length - 1] = merged
+    let i = 0
+    while (i < repaired.length) {
+      const msg = repaired[i]
+      if (msg.role !== 'assistant') {
+        out.push(msg)
+        i++
         continue
       }
-      out.push(msg)
+      // Collect the full run of consecutive assistant messages starting at i.
+      const run: AssistantMessage[] = [msg as AssistantMessage]
+      while (i + 1 < repaired.length && repaired[i + 1].role === 'assistant') {
+        i++
+        run.push(repaired[i] as AssistantMessage)
+      }
+      if (run.length > 1) {
+        // Emit once for the entire run — one event per occurrence, not per pair.
+        emitRepair(
+          'consecutive_same_role',
+          `Merged ${run.length} consecutive assistant messages into one (agent=${agentId} step=${stepIndex}).`,
+        )
+        // Merge semantics: the first assistant's metadata wins — tags,
+        // timeToLive, providerOptions, sentAt all come from run[0]. Any such
+        // metadata on later assistants is intentionally dropped, since the
+        // merged turn is semantically a continuation of the first. For organic
+        // runtime shapes (back-to-back `end_turn` with
+        // `excludeToolFromMessageHistory: true`) none carry meaningful metadata,
+        // so this is a no-op in practice.
+        const mergedContent = run.flatMap((a) =>
+          typeof a.content === 'string'
+            ? [{ type: 'text' as const, text: a.content } satisfies TextPart]
+            : (a.content as AssistantMessage['content']),
+        )
+        const merged: AssistantMessage = {
+          ...run[0],
+          role: 'assistant',
+          content: mergedContent,
+        }
+        out.push(merged)
+      } else {
+        out.push(run[0])
+      }
+      i++
     }
     repaired = out
   }
