@@ -32,6 +32,7 @@ import { createMarkdownStream } from './markdown'
 import { writeOut, writeErr } from './tty'
 
 import type { AgentMode } from './hippo'
+import type { Logger } from '@codebuff/common/types/contracts/logger'
 import type { PrintModeEvent, RunState } from '@codebuff/sdk'
 
 interface ReplOptions {
@@ -60,9 +61,37 @@ function getDefaultMode(): AgentMode {
 export const DEFAULT_AGENT_MODE: AgentMode = getDefaultMode()
 
 const AGENT_MODE_TO_ID: Partial<Record<AgentMode, string>> & Record<'DEFAULT' | 'MAX' | 'PLAN', string> = {
-  DEFAULT: 'codebuff/base2@latest',
-  MAX: 'codebuff/base2-max@latest',
-  PLAN: 'codebuff/base2-plan@latest',
+  DEFAULT: 'base2',
+  MAX: 'base2-max',
+  PLAN: 'base2-plan',
+}
+
+/**
+ * Formats logger arguments (pino-style `(obj, msg)` or plain strings) into a
+ * single human-readable line for stderr output.
+ */
+function formatLogArgs(args: unknown[]): string {
+  return args
+    .map((arg) =>
+      typeof arg === 'string'
+        ? arg
+        : arg instanceof Error
+          ? arg.message
+          : JSON.stringify(arg),
+    )
+    .join(' ')
+}
+
+/**
+ * Minimal logger passed to the CodebuffClient so MCP load failures (and other
+ * SDK warnings/errors) surface on stderr instead of being silently swallowed.
+ * debug/info are no-ops to keep the REPL output clean.
+ */
+const cliLogger: Logger = {
+  debug: () => {},
+  info: () => {},
+  warn: (...args: unknown[]) => writeErr(`[warn] ${formatLogArgs(args)}\n`),
+  error: (...args: unknown[]) => writeErr(`[error] ${formatLogArgs(args)}\n`),
 }
 
 const WEBSITE_URL = process.env.NEXT_PUBLIC_CODEBUFF_APP_URL ?? 'https://www.codebuff.com'
@@ -211,6 +240,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const client = new CodebuffClient({
     apiKey, cwd, agentDefinitions,
     terminalColumns: termSize.columns, terminalRows: termSize.rows,
+    logger: cliLogger,
     overrideTools: {
       ask_user: createAskUserHandler(askUserReadLine),
     },
@@ -649,6 +679,7 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
   const client = new CodebuffClient({
     apiKey, cwd, agentDefinitions,
     terminalColumns: columns, terminalRows: rows,
+    logger: cliLogger,
     overrideTools: {
       ask_user: createAskUserHandler(runOnceReadLine),
     },

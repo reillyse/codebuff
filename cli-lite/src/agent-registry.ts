@@ -4,6 +4,7 @@ import {
   loadMCPConfigSync,
 } from '@codebuff/sdk'
 
+import type { MCPConfig } from '@codebuff/common/types/mcp'
 import type { AgentDefinition } from '@codebuff/sdk'
 
 // ---------------------------------------------------------------------------
@@ -11,8 +12,7 @@ import type { AgentDefinition } from '@codebuff/sdk'
 // ---------------------------------------------------------------------------
 
 let userAgentsCache: Record<string, AgentDefinition> = {}
-// eslint-disable-next-line -- typed loosely since loadMCPConfigSync returns opaque server configs
-let mcpServersCache: Record<string, unknown> = {}
+let mcpServersCache: Record<string, MCPConfig> = {}
 let bundledAgentsCache: Record<string, AgentDefinition> = {}
 let initialized = false
 
@@ -137,7 +137,7 @@ export function getAgentDefinitions(): AgentDefinition[] {
         if (!def.mcpServers) {
           def.mcpServers = {}
         }
-        def.mcpServers = { ...def.mcpServers, ...(mcpServersCache as typeof def.mcpServers) }
+        def.mcpServers = { ...def.mcpServers, ...mcpServersCache }
       }
     }
   }
