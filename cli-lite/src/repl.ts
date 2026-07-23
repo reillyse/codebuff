@@ -1,7 +1,8 @@
 import { createInterface } from 'readline'
 
+import { CHATGPT_OAUTH_ENABLED } from '@codebuff/common/constants/chatgpt-oauth'
 import { clearMCPClient, getMCPClient, isMCPClientConnected } from '@codebuff/common/mcp/client'
-import { CodebuffClient, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, loadMCPConfig, loadMCPConfigSync, setClaudeOAuthFallbackEnabled } from '@codebuff/sdk'
+import { CodebuffClient, getChatGptOAuthCredentials, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, loadMCPConfig, loadMCPConfigSync, setChatGptOAuthFallbackEnabled, setClaudeOAuthFallbackEnabled, setNonOAuthModelsEnabled } from '@codebuff/sdk'
 import { clearMcpOAuthCredentials, getMcpOAuthStatus, McpOAuthProvider } from '@codebuff/sdk/mcp/oauth-provider'
 
 import {
@@ -205,11 +206,24 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     writeErr(`Prompt logging: ${getPromptLogPath()}\n`)
   }
 
+  // Only allow Claude and OpenAI models (both routed via OAuth subscriptions)
+  setNonOAuthModelsEnabled(false)
+
   const claude = await checkClaudeSubscription()
   if (!claude.valid) process.exit(1)
   if (claude.configured) {
     setClaudeOAuthFallbackEnabled(false)
     writeErr('Claude subscription: connected\n')
+  }
+
+  // ChatGPT OAuth: disable fallback if credentials are connected, so requests
+  // never silently fall back to the server OPENAI_API_KEY.
+  if (CHATGPT_OAUTH_ENABLED) {
+    const chatGptCredentials = getChatGptOAuthCredentials()
+    if (chatGptCredentials) {
+      setChatGptOAuthFallbackEnabled(false)
+      writeErr('ChatGPT subscription: connected\n')
+    }
   }
 
   writeErr('\n')
@@ -647,10 +661,22 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
   await initializeAgentRegistry()
   const agentDefinitions = getAgentDefinitions()
 
+  // Only allow Claude and OpenAI models (both routed via OAuth subscriptions)
+  setNonOAuthModelsEnabled(false)
+
   const claude = await checkClaudeSubscription()
   if (!claude.valid) process.exit(1)
   if (claude.configured) {
     setClaudeOAuthFallbackEnabled(false)
+  }
+
+  // ChatGPT OAuth: disable fallback if credentials are connected, so requests
+  // never silently fall back to the server OPENAI_API_KEY.
+  if (CHATGPT_OAUTH_ENABLED) {
+    const chatGptCredentials = getChatGptOAuthCredentials()
+    if (chatGptCredentials) {
+      setChatGptOAuthFallbackEnabled(false)
+    }
   }
 
   const { columns, rows } = getTerminalSize()

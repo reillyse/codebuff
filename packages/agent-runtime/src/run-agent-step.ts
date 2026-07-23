@@ -1200,10 +1200,29 @@ export async function loopAgentSteps(
       // negligible for context-budget purposes, and counting the real history
       // here is what lets us short-circuit the remote call on huge sessions.
       const tokenCountStart = Date.now()
-      const localTokenEstimate =
-        countTokensJson(currentAgentState.messageHistory) +
-        countTokensJson(system) +
-        countTokensJson(toolDefinitions)
+      const systemTokenEst = countTokensJson(system)
+      const toolTokenEst = countTokensJson(toolDefinitions)
+      const messageTokenEst = countTokensJson(currentAgentState.messageHistory)
+      const toolCount = Object.keys(tools ?? {}).length
+      const localTokenEstimate = systemTokenEst + toolTokenEst + messageTokenEst
+      // Log per-part token breakdown every step so we can diagnose
+      // AI_NoOutputGeneratedError (too many tools / oversized history) without
+      // having to parse api-request-log.txt.
+      logger.debug(
+        {
+          agentType,
+          agentId: currentAgentState.agentId,
+          runId,
+          totalSteps,
+          systemTokenEst,
+          toolTokenEst,
+          toolCount,
+          messageTokenEst,
+          localTokenEstimate,
+        },
+        'Token budget breakdown for this step',
+      )
+
       if (localTokenEstimate >= TOKEN_COUNT_REMOTE_SKIP_THRESHOLD) {
         currentAgentState.contextTokenCount = localTokenEstimate
         logger.warn(
@@ -1213,6 +1232,10 @@ export async function loopAgentSteps(
             runId,
             totalSteps,
             localTokenEstimate,
+            systemTokenEst,
+            toolTokenEst,
+            toolCount,
+            messageTokenEst,
             threshold: TOKEN_COUNT_REMOTE_SKIP_THRESHOLD,
           },
           'Skipping remote token count: local estimate exceeds threshold (history is very large); using local estimate to avoid an expensive round-trip on a bloated history',
@@ -1288,9 +1311,10 @@ export async function loopAgentSteps(
             warningThreshold: CONTEXT_BUDGET_WARN_TOKENS,
             errorThreshold: CONTEXT_BUDGET_ERROR_TOKENS,
             consecutiveContextOverflowSteps,
-            systemTokens: countTokensJson(system),
-            toolTokens: countTokensJson(toolDefinitions),
-            messageTokens: countTokensJson(currentAgentState.messageHistory),
+            systemTokenEst,
+            toolTokenEst,
+            toolCount,
+            messageTokenEst,
           },
           '🚨 Context budget CRITICAL: estimated tokens likely exceed safe input budget (200k − 64k output = 136k). Expect empty response / context-overflow loop on this step.',
         )
@@ -1327,6 +1351,10 @@ export async function loopAgentSteps(
             localTokenEstimate,
             warningThreshold: CONTEXT_BUDGET_WARN_TOKENS,
             errorThreshold: CONTEXT_BUDGET_ERROR_TOKENS,
+            systemTokenEst,
+            toolTokenEst,
+            toolCount,
+            messageTokenEst,
           },
           '⚠️ Context budget WARNING: approaching safe input budget limit (200k − 64k output = 136k). Pruning may not be sufficient.',
         )
@@ -1544,6 +1572,14 @@ export async function loopAgentSteps(
                 // token-count API, or a local estimate fallback). Compare
                 // against the model's context window to judge overflow.
                 contextTokenCount: currentAgentState.contextTokenCount,
+                // Per-part breakdown so we can see exactly what made the
+                // request large (too many tools, oversized history, etc.)
+                // without needing to parse api-request-log.txt.
+                systemTokenEst,
+                toolTokenEst,
+                toolCount,
+                messageTokenEst,
+                localTokenEstimate,
                 // True when the error/cause chain contains an explicit
                 // context-length message — strong evidence the failure was an
                 // oversized request rather than a transient overload.

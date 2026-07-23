@@ -228,7 +228,7 @@ describe('Agent Validation', () => {
             version: '0.0.1',
             displayName: 'Git Committer',
             spawnerPrompt: 'A git committer agent',
-            model: 'google/gemini-2.5-pro',
+            model: 'anthropic/claude-4-sonnet-20250522',
             systemPrompt: 'You are an expert software developer.',
             instructionsPrompt: 'Create a commit message.',
             stepPrompt: 'Make sure to end your response.',
@@ -550,7 +550,7 @@ describe('Agent Validation', () => {
               displayName: 'Git Committer',
               spawnerPrompt:
                 'A git committer agent specialized to commit current changes with an appropriate commit message.',
-              model: 'google/gemini-2.5-pro',
+              model: 'anthropic/claude-4-sonnet-20250522',
               systemPrompt: 'Test system prompt',
               instructionsPrompt: 'Test user prompt',
               stepPrompt: 'Test step prompt',

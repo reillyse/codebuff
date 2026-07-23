@@ -211,8 +211,8 @@ export const baseAgentUserInputPrompt = (
   model: Model,
   mode: 'lite' | 'normal' | 'max' | 'experimental',
 ) => {
-  const isFlash = model === models.openrouter_gemini2_5_flash
-  const isGeminiPro = model === models.openrouter_gemini2_5_pro_preview
+  const isFlash = model === 'google/gemini-3.1-flash-lite-preview'
+  const isGeminiPro = model === 'google/gemini-2.5-pro'
   const isGPT5 =
     model === models.openrouter_gpt5 || model === models.openrouter_gpt5_chat
   const isLite = mode === 'lite'

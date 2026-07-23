@@ -5,7 +5,9 @@ import {
   getClaudeOAuthCredentials,
   getValidChatGptOAuthCredentials,
   getValidClaudeOAuthCredentials,
+  setChatGptOAuthFallbackEnabled,
   setClaudeOAuthFallbackEnabled,
+  setNonOAuthModelsEnabled,
 } from '@codebuff/sdk'
 import { enableMapSet } from 'immer'
 
@@ -33,6 +35,21 @@ export async function initializeApp(params: { cwd?: string }): Promise<{ claudeO
   // Never fall back to Codebuff backend credits for Claude models
   setClaudeOAuthFallbackEnabled(false)
 
+  // Only allow Claude and OpenAI models (both routed via OAuth subscriptions)
+  setNonOAuthModelsEnabled(false)
+
+  // ChatGPT OAuth: disable fallback if credentials are configured, so requests
+  // never silently fall back to the server OPENAI_API_KEY when the user is set
+  // up for OAuth.
+  if (CHATGPT_OAUTH_ENABLED) {
+    const chatGptCredentials = getChatGptOAuthCredentials()
+    if (chatGptCredentials) {
+      setChatGptOAuthFallbackEnabled(false)
+      // Best-effort background token refresh.
+      getValidChatGptOAuthCredentials().catch(() => {})
+    }
+  }
+
   // Validate Claude OAuth credentials on startup
   const claudeCredentials = getClaudeOAuthCredentials()
   if (!claudeCredentials) {
@@ -47,14 +64,5 @@ export async function initializeApp(params: { cwd?: string }): Promise<{ claudeO
   } catch (error) {
     console.debug('Failed to refresh Claude OAuth credentials:', error)
     return { claudeOAuthExpired: true }
-  }
-
-  if (CHATGPT_OAUTH_ENABLED) {
-    const chatGptCredentials = getChatGptOAuthCredentials()
-    if (chatGptCredentials) {
-      getValidChatGptOAuthCredentials().catch(() => {
-        // Best-effort background refresh.
-      })
-    }
   }
 }

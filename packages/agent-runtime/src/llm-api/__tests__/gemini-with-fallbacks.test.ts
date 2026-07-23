@@ -1,4 +1,3 @@
-import { openrouterModels } from '@codebuff/common/old-constants'
 import { TEST_AGENT_RUNTIME_IMPL } from '@codebuff/common/testing/impl/agent-runtime'
 import {
   ABORT_ERROR_MESSAGE,
@@ -18,7 +17,7 @@ describe('promptFlashWithFallbacks', () => {
   let agentRuntimeImpl: AgentRuntimeDeps & AgentRuntimeScopedDeps
 
   const baseParams = {
-    model: openrouterModels.openrouter_gemini2_5_flash,
+    model: 'google/gemini-3.1-flash-lite-preview',
     runId: 'test-run-id',
     clientSessionId: 'test-client-session',
     fingerprintId: 'test-fingerprint',

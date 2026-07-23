@@ -24,6 +24,7 @@ export type ToolName =
   | 'spawn_agents'
   | 'str_replace'
   | 'suggest_followups'
+  | 'search_mcp_tools'
   | 'task_completed'
   | 'think_deeply'
   | 'web_search'
@@ -56,6 +57,7 @@ export interface ToolParamsMap {
   spawn_agents: SpawnAgentsParams
   str_replace: StrReplaceParams
   suggest_followups: SuggestFollowupsParams
+  search_mcp_tools: SearchMcpToolsParams
   task_completed: TaskCompletedParams
   think_deeply: ThinkDeeplyParams
   web_search: WebSearchParams
@@ -333,6 +335,16 @@ export interface TaskCompletedParams {}
 export interface ThinkDeeplyParams {
   /** Detailed step-by-step analysis. Initially keep each step concise (max ~5-7 words per step). */
   thought: string
+}
+
+/**
+ * Search for MCP tools by keyword and activate matching tools for use in subsequent steps.
+ */
+export interface SearchMcpToolsParams {
+  /** Keywords to search for in tool names and descriptions */
+  query: string
+  /** Maximum number of tools to activate (default: 20) */
+  limit?: number
 }
 
 /**

@@ -29,6 +29,7 @@ import {
 import {
   fetchClaudeOAuthResetTime,
   getModelForRequest,
+  isChatGptOAuthFallbackEnabled,
   isClaudeOAuthFallbackEnabled,
   markChatGptOAuthRateLimited,
   markClaudeOAuthRateLimited,
@@ -851,13 +852,14 @@ export async function* promptAiSdkStream(
           error: 'chatgpt_oauth_rate_limited',
         })
 
-        // In free mode, don't fall back to Codebuff backend — fail instead
-        if (isFreeMode(params.costMode)) {
-          const freeModeErr = new Error(
+        // In free mode OR when fallback is disabled, don't fall back to the
+        // Codebuff backend (which would use the server OPENAI_API_KEY) — fail instead.
+        if (isFreeMode(params.costMode) || !isChatGptOAuthFallbackEnabled()) {
+          const err = new Error(
             `ChatGPT rate limit reached. Please wait a few minutes and try again. (${rateLimitErrorDetails})`,
           )
-          if (sparrowIsTopLevel) sparrowHandle.end(freeModeErr)
-          throw freeModeErr
+          if (sparrowIsTopLevel) sparrowHandle.end(err)
+          throw err
         }
 
         const fallbackResult = yield* promptAiSdkStream({
@@ -973,13 +975,14 @@ export async function* promptAiSdkStream(
         }
 
         // Refresh failed or already retried
-        // In free mode, don't fall back to Codebuff backend — fail instead
-        if (isFreeMode(params.costMode)) {
-          const freeModeErr = new Error(
+        // In free mode OR when fallback is disabled, don't fall back to the
+        // Codebuff backend (which would use the server OPENAI_API_KEY) — fail instead.
+        if (isFreeMode(params.costMode) || !isChatGptOAuthFallbackEnabled()) {
+          const err = new Error(
             'ChatGPT OAuth authentication failed. Please reconnect with /connect:chatgpt and try again.',
           )
-          if (sparrowIsTopLevel) sparrowHandle.end(freeModeErr)
-          throw freeModeErr
+          if (sparrowIsTopLevel) sparrowHandle.end(err)
+          throw err
         }
 
         // Fall back to Codebuff backend
@@ -1278,13 +1281,32 @@ export async function promptAiSdk(
   const modelParams: ModelRequestParams = {
     apiKey: params.apiKey,
     model: params.model,
-    skipClaudeOAuth: true, // Always use Codebuff backend for non-streaming
-    skipChatGptOAuth: true, // Always use Codebuff backend for non-streaming
+    skipClaudeOAuth: true, // Claude OAuth is streaming-only; non-streaming callers use the backend
+    // Allow ChatGPT OAuth: when connected, we handle it via the streaming path below
+    // (the ChatGPT backend is streaming-only), so non-streaming calls no longer
+    // silently use the server-side OPENAI_API_KEY.
   }
-  const { model: aiSDKModel } = await getModelForRequest(modelParams)
+  const { model: aiSDKModel, isChatGptOAuth } =
+    await getModelForRequest(modelParams)
+
+  if (isChatGptOAuth) {
+    // ChatGPT backend is streaming-only (Responses API). Collect the stream
+    // internally, reusing all OAuth error handling, telemetry, and fallback
+    // logic from promptAiSdkStream. getModelForRequest will be called again
+    // inside promptAiSdkStream — cheap, credentials are cached.
+    let content = ''
+    for await (const chunk of promptAiSdkStream({
+      ...params,
+      skipClaudeOAuth: true,
+    })) {
+      if (chunk.type === 'text') content += chunk.text
+    }
+    return promptSuccess(content)
+  }
 
   // SPARROW: open a gen_ai.chat span around the generateText call. Route is
-  // always codebuff_backend because skip*OAuth are forced true above.
+  // codebuff_backend here — the ChatGPT OAuth route returned above, and Claude
+  // OAuth is skipped for non-streaming callers.
   const sparrowRoute: RouteValue = classifyLlmRoute({
     viaCodebuffBackend: true,
   })
@@ -1398,7 +1420,11 @@ export async function promptAiSdkStructured<T>(
     apiKey: params.apiKey,
     model: params.model,
     skipClaudeOAuth: true, // Always use Codebuff backend for non-streaming
-    skipChatGptOAuth: true, // Always use Codebuff backend for non-streaming
+    // Always use Codebuff backend: generateObject calls doGenerate() which
+    // expects a JSON response, but the ChatGPT backend is streaming-only
+    // (Responses API). Structured output via streamed text is unreliable, so
+    // structured calls intentionally do NOT use ChatGPT OAuth.
+    skipChatGptOAuth: true,
   }
   const { model: aiSDKModel } = await getModelForRequest(modelParams)
 

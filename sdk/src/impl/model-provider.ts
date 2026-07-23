@@ -113,6 +113,60 @@ export function isClaudeOAuthFallbackEnabled(): boolean {
 }
 
 // ============================================================================
+// ChatGPT OAuth Fallback Configuration
+// ============================================================================
+
+/** Whether to fall back to Codebuff backend when ChatGPT OAuth fails (rate limit or auth error).
+ * Defaults to true so server-side scripts/admin routes that lack OAuth credentials
+ * can still reach the Codebuff backend. The CLI explicitly sets this to false on startup
+ * when ChatGPT credentials are configured, so ChatGPT model requests never silently
+ * burn Codebuff credits / use the server-side OPENAI_API_KEY. */
+let chatGptOAuthFallbackEnabled = true
+
+/**
+ * Enable or disable fallback to Codebuff backend when ChatGPT OAuth fails.
+ * When disabled, ChatGPT OAuth errors (rate limit, auth) will throw instead of
+ * silently falling back to the Codebuff backend (which uses OPENAI_API_KEY).
+ */
+export function setChatGptOAuthFallbackEnabled(enabled: boolean): void {
+  chatGptOAuthFallbackEnabled = enabled
+}
+
+/**
+ * Check if ChatGPT OAuth fallback is enabled.
+ */
+export function isChatGptOAuthFallbackEnabled(): boolean {
+  return chatGptOAuthFallbackEnabled
+}
+
+// ============================================================================
+// Non-OAuth Model Enforcement
+// ============================================================================
+
+/** Whether to allow models that are not Claude or OpenAI (i.e., models with no
+ * OAuth subscription path). Defaults to true so server-side scripts and admin
+ * routes that use Google/Gemini or other models still work. The CLI sets this
+ * to false on startup to ensure only OAuth-backed providers (Anthropic and
+ * OpenAI) are used — no Codebuff credits or OPENAI_API_KEY leakage. */
+let nonOAuthModelsEnabled = true
+
+/**
+ * Enable or disable non-OAuth model providers (e.g. Google Gemini, Grok).
+ * When disabled, any model that is neither anthropic/* nor openai/* will throw
+ * instead of silently routing through the Codebuff backend.
+ */
+export function setNonOAuthModelsEnabled(enabled: boolean): void {
+  nonOAuthModelsEnabled = enabled
+}
+
+/**
+ * Check if non-OAuth model providers are currently allowed.
+ */
+export function isNonOAuthModelsEnabled(): boolean {
+  return nonOAuthModelsEnabled
+}
+
+// ============================================================================
 // ChatGPT OAuth Rate Limit Cache
 // ============================================================================
 
@@ -344,10 +398,11 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
     isOpenAIProviderModel(model) &&
     isChatGptOAuthModelAllowed(model)
   ) {
-    // In free mode, rate-limited ChatGPT OAuth must not silently fall through to
-    // the Codebuff backend — freebuff should only use the direct OpenAI route or fail.
+    // In free mode (or when fallback is disabled), rate-limited ChatGPT OAuth
+    // must not silently fall through to the Codebuff backend — it should only
+    // use the direct OpenAI OAuth route or fail (never the server OPENAI_API_KEY).
     if (isChatGptOAuthRateLimited()) {
-      if (isFreeMode(costMode)) {
+      if (isFreeMode(costMode) || !chatGptOAuthFallbackEnabled) {
         throw new Error(
           'ChatGPT rate limit reached. Please wait a few minutes and try again.',
         )
@@ -365,13 +420,26 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
         }
       }
 
-      // In free mode, if credentials are unavailable, don't fall through to backend.
-      if (isFreeMode(costMode)) {
+      // In free mode (or when fallback is disabled), if credentials are
+      // unavailable, don't fall through to the backend.
+      if (isFreeMode(costMode) || !chatGptOAuthFallbackEnabled) {
         throw new Error(
           'ChatGPT OAuth credentials unavailable. Please reconnect with /connect:chatgpt.',
         )
       }
     }
+  }
+
+  // Enforce OAuth-only mode: if non-OAuth models are disabled and this model
+  // has no OAuth subscription path (not anthropic/* or openai/*), throw.
+  if (
+    !nonOAuthModelsEnabled &&
+    !isClaudeModel(model) &&
+    !isOpenAIProviderModel(model)
+  ) {
+    throw new Error(
+      `Model "${model}" is not available — only Claude (anthropic/*) and OpenAI (openai/*) models are supported via OAuth subscriptions.`,
+    )
   }
 
   // Default: use Codebuff backend

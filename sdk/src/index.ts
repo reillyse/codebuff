@@ -107,4 +107,8 @@ export {
   resetChatGptOAuthRateLimit,
   resetClaudeOAuthRateLimit,
   setClaudeOAuthFallbackEnabled,
+  setChatGptOAuthFallbackEnabled,
+  isChatGptOAuthFallbackEnabled,
+  setNonOAuthModelsEnabled,
+  isNonOAuthModelsEnabled,
 } from './impl/model-provider'

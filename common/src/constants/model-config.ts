@@ -41,11 +41,6 @@ export const openrouterModels = {
   openrouter_gpt4o_mini: 'openai/gpt-4o-mini-2024-07-18',
   openrouter_gpt4_1_nano: 'openai/gpt-4.1-nano',
   openrouter_o3_mini: 'openai/o3-mini-2025-01-31',
-  openrouter_gemini2_5_pro_preview: 'google/gemini-2.5-pro',
-  // Migrated from gemini-2.5-flash (deprecated June 1, 2026)
-  openrouter_gemini2_5_flash: 'google/gemini-3.1-flash-lite-preview',
-  openrouter_gemini2_5_flash_thinking:
-    'google/gemini-2.5-flash-preview:thinking',
 } as const
 export type openrouterModel =
   (typeof openrouterModels)[keyof typeof openrouterModels]
@@ -115,9 +110,6 @@ export const CURRENT_GPT5_MINI_MODEL = 'openai/gpt-5-mini' as const
 export const CURRENT_HAIKU_MODEL = 'anthropic/claude-haiku-4.5' as const
 
 export const shortModelNames = {
-  'gemini-2.5-pro': models.openrouter_gemini2_5_pro_preview,
-  'flash-3.1': models.openrouter_gemini2_5_flash,
-  'flash-2.5': models.openrouter_gemini2_5_flash, // deprecated alias
   'opus-4': models.openrouter_claude_opus_4,
   'sonnet-5': models.openrouter_claude_sonnet_5,
   'sonnet-4.6': models.openrouter_claude_sonnet_4_6,

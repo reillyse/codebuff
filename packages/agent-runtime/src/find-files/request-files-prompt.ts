@@ -221,7 +221,10 @@ async function getRelevantFiles(
   let response = await promptFlashWithFallbacks({
     ...params,
     messages: codebuffMessages,
-    model: models.openrouter_gemini2_5_flash,
+    // Server-side file picker still uses Gemini Flash via OpenRouter (only the
+    // CLI restricts non-OAuth providers). Hardcoded since the shared model
+    // constant was removed from openrouterModels.
+    model: 'google/gemini-3.1-flash-lite-preview',
     useFinetunedModel: finetunedModel,
   })
   const end = performance.now()

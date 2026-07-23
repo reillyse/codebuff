@@ -33,6 +33,7 @@ Use the spawn_agents tool to spawn specialized agents to help you complete the u
   - Spawn commanders sequentially if the second command depends on the the first.
 - **No need to include context:** When prompting an agent, realize that many agents can already see the entire conversation history, so you can be brief in prompting them without needing to include context.
 - **Never spawn the context-pruner agent:** This agent is spawned automatically for you and you don't need to spawn it yourself.
+- **MCP tools:** If the user has connected an MCP server (e.g. Sparrow CRM), those tools are NOT loaded by default — you must call search_mcp_tools BEFORE attempting any MCP tool call (e.g. any sparrow__* tool). Example: call search_mcp_tools with query "company list" to activate company-listing tools, then call the activated tool.
 
 # Codebuff Meta-information
 
@@ -151,6 +152,7 @@ export function createBaseDeep(): SecretAgentDefinition {
       'ask_user',
       'skill',
       'set_output',
+      'search_mcp_tools',
     ],
     spawnableAgents: [
       'file-picker',
