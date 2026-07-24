@@ -29,6 +29,11 @@ export const CHATGPT_OAUTH_TOKEN_ENV_VAR = 'CODEBUFF_CHATGPT_OAUTH_TOKEN'
  * This includes optimistic aliases requested by the user.
  */
 export const OPENROUTER_TO_OPENAI_MODEL_MAP: Record<string, string> = {
+  // GPT-5.6 family (Sol = flagship, Terra = balanced, Luna = fast/affordable).
+  'openai/gpt-5.6-sol': 'gpt-5.6-sol',
+  'openai/gpt-5.6-terra': 'gpt-5.6-terra',
+  'openai/gpt-5.6-luna': 'gpt-5.6-luna',
+
   'openai/gpt-5.3': 'gpt-5.3',
   'openai/gpt-5.3-codex': 'gpt-5.3-codex',
   'openai/gpt-5.2': 'gpt-5.2',

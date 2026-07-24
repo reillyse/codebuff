@@ -282,13 +282,13 @@ export function convertCbToModelMessages({
     return aggregated
   }
 
-  // Add cache control to specific messages (max of 4 can be marked for caching!):
-  // - The message right before the three tagged messages
-  // - Last message
+  // Add cache control to specific messages. Anthropic allows max 4 cache breakpoints across
+  // ALL content (system, tools, messages). Since getToolSet adds 1 breakpoint on the last tool,
+  // we can only use 3 here. STEP_PROMPT is intentionally dropped — it's a tiny ephemeral message
+  // whose preceding context nearly duplicates the USER_PROMPT or last-message breakpoint.
   for (const tag of [
     'LAST_ASSISTANT_MESSAGE',
     'USER_PROMPT',
-    'STEP_PROMPT',
     undefined, // Last message
   ] as const) {
     let index =

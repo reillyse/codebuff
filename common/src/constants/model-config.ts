@@ -41,6 +41,10 @@ export const openrouterModels = {
   openrouter_gpt4o_mini: 'openai/gpt-4o-mini-2024-07-18',
   openrouter_gpt4_1_nano: 'openai/gpt-4.1-nano',
   openrouter_o3_mini: 'openai/o3-mini-2025-01-31',
+  // GPT-5.6 family (routed via ChatGPT OAuth subscription)
+  openrouter_gpt56_sol: 'openai/gpt-5.6-sol',
+  openrouter_gpt56_terra: 'openai/gpt-5.6-terra',
+  openrouter_gpt56_luna: 'openai/gpt-5.6-luna',
 } as const
 export type openrouterModel =
   (typeof openrouterModels)[keyof typeof openrouterModels]
@@ -100,16 +104,23 @@ export const CURRENT_SONNET_MODEL = 'anthropic/claude-sonnet-4.6' as const
  */
 export const CURRENT_FABLE_MODEL = (process.env.CODEBUFF_FABLE_MODEL ?? 'anthropic/claude-fable-5') as 'anthropic/claude-fable-5'
 
-/** The current GPT-5 model version used by agents. Update this single constant when upgrading. */
-export const CURRENT_GPT5_MODEL = 'openai/gpt-5.2' as const
+/** The current GPT-5 flagship model (GPT-5.6 Sol) used by agents. Update this single constant when upgrading. */
+export const CURRENT_GPT5_MODEL = 'openai/gpt-5.6-sol' as const
 
-/** The current lightweight GPT-5 model used by reasoning/research utility agents (routed via ChatGPT OAuth). */
-export const CURRENT_GPT5_MINI_MODEL = 'openai/gpt-5-mini' as const
+/** GPT-5.6 Terra — balanced mid-tier model, routed via ChatGPT OAuth. */
+export const CURRENT_TERRA_MODEL = 'openai/gpt-5.6-terra' as const
+
+/** The current lightweight model used by reasoning/research utility agents (GPT-5.6 Luna, routed via ChatGPT OAuth). */
+export const CURRENT_GPT5_MINI_MODEL = 'openai/gpt-5.6-luna' as const
 
 /** The current Haiku model used by lightweight utility agents (routed via Claude OAuth). */
 export const CURRENT_HAIKU_MODEL = 'anthropic/claude-haiku-4.5' as const
 
 export const shortModelNames = {
+  sol: models.openrouter_gpt56_sol,
+  terra: models.openrouter_gpt56_terra,
+  luna: models.openrouter_gpt56_luna,
+  'gpt-5.2': models.openrouter_gpt5,
   'opus-4': models.openrouter_claude_opus_4,
   'sonnet-5': models.openrouter_claude_sonnet_5,
   'sonnet-4.6': models.openrouter_claude_sonnet_4_6,
@@ -156,8 +167,9 @@ export const shouldCacheModels = [
 ]
 const nonCacheableModels: string[] = []
 export function supportsCacheControl(model: Model): boolean {
+  // OpenAI caches automatically — no explicit Anthropic-style cache_control markers needed/supported.
   if (model.startsWith('openai/')) {
-    return true
+    return false
   }
   if (model.startsWith('anthropic/')) {
     return true

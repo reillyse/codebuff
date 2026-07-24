@@ -82,7 +82,13 @@ export function createBase2(
       'researcher-docs',
       isFree ? 'commander-lite' : 'commander',
       isDefault && 'thinker',
-      (isDefault || isMax) && ['opus-agent', 'gpt-5-agent', 'fable-agent'],
+      (isDefault || isMax) && [
+        'opus-agent',
+        'gpt-5-agent',
+        'terra-agent',
+        'luna-agent',
+        'fable-agent',
+      ],
       isMax && 'thinker-best-of-n-opus',
       (isDefault || isMax) && 'fable',
       isDefault && 'editor',
@@ -162,6 +168,7 @@ Use the spawn_agents tool to spawn specialized agents to help you complete the u
       ).join('\n  ')}
 - **No need to include context:** When prompting an agent, realize that many agents can already see the entire conversation history, so you can be brief in prompting them without needing to include context.
 - **Never spawn the context-pruner agent:** This agent is spawned automatically for you and you don't need to spawn it yourself.
+- **OpenAI GPT-5.6 agents:** Besides the Anthropic-backed agents, you can spawn OpenAI GPT-5.6 agents: gpt-5-agent (flagship Sol, for hard reasoning/second opinions), terra-agent (balanced Terra, everyday problems), and luna-agent (fast/cheap Luna, quick tasks & summaries). Prefer these OpenAI-backed agents when you want a different model's perspective or a fast/cheap answer.
 - **MCP tools:** If the user has connected an MCP server (e.g. Sparrow CRM), those tools are NOT loaded by default — you must call search_mcp_tools BEFORE attempting any MCP tool call (e.g. any sparrow__* tool). Example: call search_mcp_tools with query "company list" to activate company-listing tools, then call the activated tool.
 
 # Codebuff Meta-information
