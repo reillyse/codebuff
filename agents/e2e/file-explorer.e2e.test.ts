@@ -22,7 +22,8 @@ describe('File Lister Agent Integration - read_subtree tool', () => {
   it(
     'should find relevant files using read_subtree tool',
     async () => {
-      const apiKey = process.env[API_KEY_ENV_VAR]!
+      const apiKey = process.env[API_KEY_ENV_VAR]
+      if (!apiKey) return
 
       // Create mock project files that the file-lister should be able to find
       const projectFiles: Record<string, string> = {
@@ -139,7 +140,8 @@ export interface User {
   it(
     'should use the file tree from session state',
     async () => {
-      const apiKey = process.env[API_KEY_ENV_VAR]!
+      const apiKey = process.env[API_KEY_ENV_VAR]
+      if (!apiKey) return
 
       // Create a different set of project files with a specific structure
       const projectFiles: Record<string, string> = {
@@ -190,7 +192,8 @@ export interface User {
   it(
     'should respect directories parameter',
     async () => {
-      const apiKey = process.env[API_KEY_ENV_VAR]!
+      const apiKey = process.env[API_KEY_ENV_VAR]
+      if (!apiKey) return
 
       // Create project with multiple top-level directories
       const projectFiles: Record<string, string> = {

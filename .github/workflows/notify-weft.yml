@@ -49,6 +49,16 @@ jobs:
         env:
           SECRETS_CONTEXT: ${{ toJSON(secrets) }}
         run: |
+          # Placeholder defaults so common/src/env.ts doesn't crash on forks
+          # that lack NEXT_PUBLIC_* secrets. Real secrets (on the main repo)
+          # are appended by the jq block below and override these defaults.
+          echo "NEXT_PUBLIC_CODEBUFF_APP_URL=https://codebuff.com" >> $GITHUB_ENV
+          echo "NEXT_PUBLIC_SUPPORT_EMAIL=support@codebuff.com" >> $GITHUB_ENV
+          echo "NEXT_PUBLIC_POSTHOG_API_KEY=placeholder" >> $GITHUB_ENV
+          echo "NEXT_PUBLIC_POSTHOG_HOST_URL=https://app.posthog.com" >> $GITHUB_ENV
+          echo "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_placeholder" >> $GITHUB_ENV
+          echo "NEXT_PUBLIC_STRIPE_CUSTOMER_PORTAL=https://billing.stripe.com" >> $GITHUB_ENV
+          echo "NEXT_PUBLIC_WEB_PORT=3000" >> $GITHUB_ENV
           VAR_NAMES=$(bun scripts/generate-ci-env.ts)
           echo "$SECRETS_CONTEXT" | jq -r --argjson vars "$VAR_NAMES" '
             to_entries | .[] | select(.key as $k | $vars | index($k)) | .key + "=" + .value
