@@ -5,7 +5,7 @@ import type { SecretAgentDefinition } from '../types/secret-agent-definition'
 const definition: SecretAgentDefinition = {
   ...thinker,
   id: 'thinker-codex',
-  model: 'openai/gpt-5.3-codex',
+  model: 'openai/gpt-5.6-sol',
   outputSchema: undefined,
   outputMode: 'last_message',
   instructionsPrompt: `You are the thinker-codex agent. Think deeply about the user request and when satisfied, write out your response.

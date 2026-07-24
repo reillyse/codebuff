@@ -67,8 +67,8 @@ jobs:
       - name: Run .agents unit tests
         run: cd .agents && bun run test
 
-      - name: Run .agents e2e tests
-        run: cd .agents && bun run test:e2e --timeout=120000
+      - name: Run agents e2e tests
+        run: cd agents && bun run test:e2e --timeout=120000
 
       - name: Cleanup e2e database
         if: always()
