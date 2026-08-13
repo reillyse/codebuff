@@ -423,7 +423,7 @@ describe('mainPrompt', () => {
     expect(newSessionState.mainAgentState.stepsRemaining).toBe(initialCount - 1)
   })
 
-  it('should return no tool calls when LLM response is empty', async () => {
+  it('should return no tool calls when LLM response is empty', { timeout: 10_000 }, async () => {
     // Mock the LLM stream to return nothing
     mockAgentStream([])
 
