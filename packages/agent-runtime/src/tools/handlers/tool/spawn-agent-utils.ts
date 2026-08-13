@@ -302,20 +302,16 @@ export async function validateAndGetAgentTemplate(
   // never use. Top-level agents get their mcpServers from the mcp.json merge
   // (not this inheritance path), so they still receive all tools.
   //
-  // The child's OWN directly-declared mcpServers are always kept (and win on key
-  // conflicts). We only filter the servers INHERITED from the parent.
+  // The child’s OWN directly-declared mcpServers are always kept (and win on key
+  // conflicts). Only inherit servers whose tools the child can use.
   //
   // The agent-runtime tool path is non-interactive (getMcpOAuthOptions in the
   // SDK returns interactive:false): subagents reuse the parent's on-disk tokens
   // and never launch a browser. We clone rather than mutate because
   // getAgentTemplate may return a cached template shared across runs.
-  const referencedMcpServers = getReferencedMcpServers(
-    agentTemplate.toolNames ?? [],
-  )
-  // Agents with search_mcp_tools need ALL parent MCP servers so they can
-  // search through all available tools. For other agents, only inherit
-  // servers whose tools are explicitly referenced in the child's toolNames.
-  const hasSearchMcpTools = (agentTemplate.toolNames ?? []).includes('search_mcp_tools')
+  const childToolNames = agentTemplate.toolNames ?? []
+  const referencedMcpServers = getReferencedMcpServers(childToolNames)
+  const hasSearchMcpTools = childToolNames.includes('search_mcp_tools')
   const inheritedMcpServers = hasSearchMcpTools
     ? { ...parentAgentTemplate.mcpServers }
     : Object.fromEntries(

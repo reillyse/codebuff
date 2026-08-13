@@ -730,7 +730,7 @@ describe('convertCbToModelMessages', () => {
       ])
     })
 
-    test('should add cache control before STEP_PROMPT tag', () => {
+    test('should not add a redundant cache control before STEP_PROMPT tag', () => {
       const messages: Message[] = [
         systemMessage('System'),
         userMessage('Context'),
@@ -748,23 +748,7 @@ describe('convertCbToModelMessages', () => {
         expect.objectContaining({ role: 'system' }),
         expect.objectContaining({ role: 'user' }),
         expect.objectContaining({ role: 'assistant' }),
-        {
-          role: 'user',
-          sentAt: expect.any(Number),
-          content: [
-            {
-              type: 'text',
-              text: 'More context',
-              providerOptions: expect.objectContaining({
-                openaiCompatible: {
-                  cache_control: {
-                    type: 'ephemeral',
-                  },
-                },
-              }),
-            },
-          ],
-        },
+        expect.objectContaining({ role: 'user' }),
         expect.objectContaining({ role: 'user' }),
       ])
     })

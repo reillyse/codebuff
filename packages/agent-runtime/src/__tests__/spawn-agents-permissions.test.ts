@@ -573,6 +573,7 @@ describe('Spawn Agents Permissions', () => {
       const parentAgent = createMockAgent('parent', ['thinker'])
       parentAgent.mcpServers = { sparrow: sparrowConfig }
       const childAgent = createMockAgent('thinker') // no mcpServers of its own
+      childAgent.toolNames = ['search_mcp_tools']
       const sessionState = getInitialSessionState(mockFileContext)
 
       await handleSpawnAgents({

@@ -74,7 +74,7 @@ describe('gen_ai.chat: chatgpt_oauth_eligible attribute', () => {
     expect(getGenAiSpan().attributes[Attr.CHATGPT_OAUTH_ELIGIBLE]).toBe(true)
   })
 
-  it('sets eligible=false for an OpenAI model NOT on the allowlist (gpt-5-nano)', async () => {
+  it('sets eligible=true for any OpenAI model (gpt-5-nano)', async () => {
     await withPromptSpan({ sessionId: 's' }, async () => {
       const llm = recordLlmCall({
         requestModel: 'openai/gpt-5-nano',
@@ -83,10 +83,10 @@ describe('gen_ai.chat: chatgpt_oauth_eligible attribute', () => {
       llm.finalize({ inputTokens: 10, outputTokens: 5 })
       llm.end()
     })
-    expect(getGenAiSpan().attributes[Attr.CHATGPT_OAUTH_ELIGIBLE]).toBe(false)
+    expect(getGenAiSpan().attributes[Attr.CHATGPT_OAUTH_ELIGIBLE]).toBe(true)
   })
 
-  it('sets eligible=false for openai/gpt-5-mini (not on allowlist)', async () => {
+  it('sets eligible=true for openai/gpt-5-mini', async () => {
     await withPromptSpan({ sessionId: 's' }, async () => {
       const llm = recordLlmCall({
         requestModel: 'openai/gpt-5-mini',
@@ -95,7 +95,7 @@ describe('gen_ai.chat: chatgpt_oauth_eligible attribute', () => {
       llm.finalize({ inputTokens: 10, outputTokens: 5 })
       llm.end()
     })
-    expect(getGenAiSpan().attributes[Attr.CHATGPT_OAUTH_ELIGIBLE]).toBe(false)
+    expect(getGenAiSpan().attributes[Attr.CHATGPT_OAUTH_ELIGIBLE]).toBe(true)
   })
 
   it('omits the attribute for an Anthropic model', async () => {

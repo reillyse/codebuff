@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFil
 import path from 'path'
 
 import { getProjectRoot } from '../project-files'
+import { getCliEnv } from './env'
 
 import type { AgentMode } from './constants'
 
@@ -35,7 +36,7 @@ export interface LogResponseParams {
  *  - any other value        → treated as a custom file path
  */
 export const getPromptLogPath = (): string | null => {
-  const val = process.env.CODEBUFF_PROMPT_LOG
+  const val = getCliEnv().CODEBUFF_PROMPT_LOG
   if (!val || val === '0' || val === 'false') return null
   if (val === '1' || val === 'true') {
     try {
