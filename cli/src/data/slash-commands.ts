@@ -1,7 +1,6 @@
 import { CHATGPT_OAUTH_ENABLED } from '@codebuff/common/constants/chatgpt-oauth'
 import { CLAUDE_OAUTH_ENABLED } from '@codebuff/common/constants/claude-oauth'
 import { AGENT_MODES, IS_FREEBUFF } from '../utils/constants'
-import { CREDITS_REFERRAL_BONUS } from '@codebuff/common/old-constants'
 
 import type { SkillsMap } from '@codebuff/common/types/skill'
 
@@ -32,14 +31,8 @@ const MODE_COMMANDS: SlashCommand[] = AGENT_MODES.map((mode) => ({
 
 const FREEBUFF_REMOVED_COMMAND_IDS = new Set([
   'connect:claude',
-  'ads:enable',
-  'ads:disable',
-  'refer-friends',
-  'usage',
-  'subscribe',
   'agent:gpt-5',
   'image',
-  'publish',
   'init',
 ])
 
@@ -74,22 +67,6 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
       ]
     : []),
 
-  {
-    id: 'ads:enable',
-    label: 'ads:enable',
-    description: 'Enable contextual ads and earn credits',
-  },
-  {
-    id: 'ads:disable',
-    label: 'ads:disable',
-    description: 'Disable contextual ads and stop earning credits',
-  },
-  {
-    id: 'refer-friends',
-    label: 'refer-friends',
-    description: `Refer friends for ${CREDITS_REFERRAL_BONUS} bonus credits each`,
-    aliases: ['referral'],
-  },
   {
     id: 'hippo:toggle',
     label: 'hippo:toggle',
@@ -128,18 +105,6 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
   //   description: 'Redo the most recent undone change',
   // },
   {
-    id: 'usage',
-    label: 'usage',
-    description: 'View credits and subscription quota',
-    aliases: ['credits'],
-  },
-  {
-    id: 'subscribe',
-    label: 'subscribe',
-    description: 'Subscribe to get more usage',
-    aliases: ['strong', 'sub', 'buy-credits'],
-  },
-  {
     id: 'new',
     label: 'new',
     description: 'Clear the conversation history and start a new chat',
@@ -170,11 +135,6 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
   //   insertText: '@Opus Agent ',
   // },
   {
-    id: 'feedback',
-    label: 'feedback',
-    description: 'Share general feedback about Codebuff',
-  },
-  {
     id: 'bash',
     label: 'bash',
     description: 'Enter bash mode ("!" at beginning enters bash mode)',
@@ -187,11 +147,6 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
     aliases: ['img', 'attach'],
   },
   ...MODE_COMMANDS,
-  // {
-  //   id: 'publish',
-  //   label: 'publish',
-  //   description: 'Publish agents to the agent store',
-  // },
   {
     id: 'logs:clear',
     label: 'logs:clear',
@@ -202,13 +157,6 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
     id: 'theme:toggle',
     label: 'theme:toggle',
     description: 'Toggle between light and dark mode',
-  },
-  {
-    id: 'logout',
-    label: 'logout',
-    description: 'Sign out of your session',
-    aliases: ['signout'],
-    implicitCommand: true,
   },
   {
     id: 'exit',

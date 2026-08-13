@@ -31,6 +31,7 @@ const INPUT_TOKEN_COSTS: Record<string, number> = {
   'gpt-5.3-codex': 1.25,
   'gpt-5.4': 1.25,
   'gpt-5.4-codex': 1.25,
+  'gpt-5.5': 1.25,
   'gpt-4o-2024-11-20': 2.50,
   'gpt-4o-mini-2024-07-18': 0.15,
 }
@@ -45,6 +46,7 @@ const CACHED_INPUT_TOKEN_COSTS: Record<string, number> = {
   'gpt-5.3-codex': 0.125,
   'gpt-5.4': 0.125,
   'gpt-5.4-codex': 0.125,
+  'gpt-5.5': 0.125,
   'gpt-4o-2024-11-20': 1.25,
   'gpt-4o-mini-2024-07-18': 0.075,
 }
@@ -59,6 +61,7 @@ const OUTPUT_TOKEN_COSTS: Record<string, number> = {
   'gpt-5.3-codex': 10,
   'gpt-5.4': 10,
   'gpt-5.4-codex': 10,
+  'gpt-5.5': 10,
   'gpt-4o-2024-11-20': 10,
   'gpt-4o-mini-2024-07-18': 0.60,
 }

@@ -1,3 +1,5 @@
+import { randomUUID } from 'crypto'
+
 import { trackEvent } from '@codebuff/common/analytics'
 import { env as clientEnvDefault } from '@codebuff/common/env'
 import { getCiEnv } from '@codebuff/common/env-ci'
@@ -16,16 +18,42 @@ import type {
   AgentRuntimeDeps,
   AgentRuntimeScopedDeps,
 } from '@codebuff/common/types/contracts/agent-runtime'
-import type { DatabaseAgentCache } from '@codebuff/common/types/contracts/database'
+import type {
+  DatabaseAgentCache,
+  GetUserInfoFromApiKeyFn,
+  StartAgentRunFn,
+  FinishAgentRunFn,
+  AddAgentStepFn,
+  FetchAgentFromDatabaseFn,
+} from '@codebuff/common/types/contracts/database'
 import type { ClientEnv } from '@codebuff/common/types/contracts/env'
 import type { Logger } from '@codebuff/common/types/contracts/logger'
 
 const databaseAgentCache: DatabaseAgentCache = new Map()
 
+// No-network fallbacks used when there's no Codebuff API key (e.g. OAuth/BYOK-only
+// setups). Run/step IDs are opaque strings used only for logging and hierarchy
+// bookkeeping downstream, so a locally generated UUID substitutes cleanly for the
+// server-issued one.
+const getUserInfoFromApiKeyLocal: GetUserInfoFromApiKeyFn = async ({ fields }) =>
+  Object.fromEntries(
+    fields.map((field) => [field, field === 'id' ? 'local-user' : null]),
+  ) as any
+
+const startAgentRunLocal: StartAgentRunFn = async () => randomUUID()
+
+const finishAgentRunLocal: FinishAgentRunFn = async () => {}
+
+const addAgentStepLocal: AddAgentStepFn = async () => randomUUID()
+
+// Fetching a non-bundled marketplace agent inherently requires a Codebuff
+// account; without one, "agent not found" is the correct behavior.
+const fetchAgentFromDatabaseLocal: FetchAgentFromDatabaseFn = async () => null
+
 export function getAgentRuntimeImpl(
   params: {
     logger?: Logger
-    apiKey: string
+    apiKey?: string
     clientEnv?: ClientEnv
   } & Pick<AgentRuntimeDeps, 'onBeforeSubagentPrompt' | 'onAfterSubagentComplete'>
   & Pick<
@@ -60,11 +88,11 @@ export function getAgentRuntimeImpl(
     ciEnv: getCiEnv(),
 
     // Database
-    getUserInfoFromApiKey,
-    fetchAgentFromDatabase,
-    startAgentRun,
-    finishAgentRun,
-    addAgentStep,
+    getUserInfoFromApiKey: apiKey ? getUserInfoFromApiKey : getUserInfoFromApiKeyLocal,
+    fetchAgentFromDatabase: apiKey ? fetchAgentFromDatabase : fetchAgentFromDatabaseLocal,
+    startAgentRun: apiKey ? startAgentRun : startAgentRunLocal,
+    finishAgentRun: apiKey ? finishAgentRun : finishAgentRunLocal,
+    addAgentStep: apiKey ? addAgentStep : addAgentStepLocal,
 
     // Billing
     consumeCreditsWithFallback: async () =>

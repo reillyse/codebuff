@@ -1,8 +1,9 @@
 import { createInterface } from 'readline'
 
 import { CHATGPT_OAUTH_ENABLED } from '@codebuff/common/constants/chatgpt-oauth'
+import { isClaudeModel } from '@codebuff/common/constants/claude-oauth'
 import { clearMCPClient, getMCPClient, isMCPClientConnected } from '@codebuff/common/mcp/client'
-import { CodebuffClient, getChatGptOAuthCredentials, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, loadMCPConfig, loadMCPConfigSync, setChatGptOAuthFallbackEnabled, setClaudeOAuthFallbackEnabled, setNonOAuthModelsEnabled } from '@codebuff/sdk'
+import { CodebuffClient, getChatGptOAuthCredentials, getClaudeOAuthCredentials, getValidClaudeOAuthCredentials, hasByokOpenRouterCredentials, hasDirectModelCredentialsForModel, loadMCPConfig, loadMCPConfigSync, setChatGptOAuthFallbackEnabled, setClaudeOAuthFallbackEnabled, setNonOAuthModelsEnabled } from '@codebuff/sdk'
 import { clearMcpOAuthCredentials, getMcpOAuthStatus, McpOAuthProvider } from '@codebuff/sdk/mcp/oauth-provider'
 
 import {
@@ -37,7 +38,6 @@ import type { Logger } from '@codebuff/common/types/contracts/logger'
 import type { PrintModeEvent, RunState } from '@codebuff/sdk'
 
 interface ReplOptions {
-  apiKey: string
   agent: string
   cwd: string
   verbose: boolean
@@ -95,8 +95,6 @@ const cliLogger: Logger = {
   error: (...args: unknown[]) => writeErr(`[error] ${formatLogArgs(args)}\n`),
 }
 
-const WEBSITE_URL = process.env.NEXT_PUBLIC_CODEBUFF_APP_URL ?? 'https://www.codebuff.com'
-
 export function getAgentForMode(mode: AgentMode): string {
   return AGENT_MODE_TO_ID[mode] ?? AGENT_MODE_TO_ID.DEFAULT
 }
@@ -150,6 +148,30 @@ async function checkClaudeSubscription(): Promise<{ configured: boolean; valid: 
   return { configured: true, valid: false }
 }
 
+async function validateAgentCredentials(agentId: string): Promise<boolean> {
+  const agent = getAgentById(agentId)
+  if (!agent) return true
+
+  if (!hasDirectModelCredentialsForModel(agent.model)) {
+    const connectionHelp = isClaudeModel(agent.model)
+      ? 'Connect Claude using /connect:claude in the main Codebuff CLI'
+      : agent.model.startsWith('openai/')
+        ? 'Connect ChatGPT using /connect:chatgpt in the main Codebuff CLI'
+        : 'Configure a provider credential'
+    printError(
+      `${connectionHelp}, or set CODEBUFF_BYOK_OPENROUTER to run ${agent.model}.`,
+    )
+    return false
+  }
+
+  if (isClaudeModel(agent.model) && !hasByokOpenRouterCredentials()) {
+    const claude = await checkClaudeSubscription()
+    return claude.valid
+  }
+
+  return true
+}
+
 /**
  * Fetch hippo context for a prompt and return the enriched prompt.
  * Shows a "Searching memory..." indicator on stderr while fetching.
@@ -178,7 +200,7 @@ async function enrichPromptWithHippo(
 }
 
 export async function startRepl(options: ReplOptions): Promise<void> {
-  const { apiKey, cwd, verbose } = options
+  const { cwd, verbose } = options
 
   // Initialize agent registry (loads bundled + user agents, MCP, skills)
   await initializeAgentRegistry()
@@ -209,11 +231,10 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   // Only allow Claude and OpenAI models (both routed via OAuth subscriptions)
   setNonOAuthModelsEnabled(false)
 
-  const claude = await checkClaudeSubscription()
-  if (!claude.valid) process.exit(1)
-  if (claude.configured) {
+  const claudeCredentials = getClaudeOAuthCredentials()
+  if (claudeCredentials) {
     setClaudeOAuthFallbackEnabled(false)
-    writeErr('Claude subscription: connected\n')
+    writeErr('Claude subscription: configured\n')
   }
 
   // ChatGPT OAuth: disable fallback if credentials are connected, so requests
@@ -252,7 +273,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   let queuedMessage: string | undefined
 
   const client = new CodebuffClient({
-    apiKey, cwd, agentDefinitions,
+    cwd, agentDefinitions,
     terminalColumns: termSize.columns, terminalRows: termSize.rows,
     logger: cliLogger,
     overrideTools: {
@@ -266,9 +287,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
     running = true
 
-    // Per-prompt credential check: validate Claude OAuth before each prompt
-    const claudeCheck = await checkClaudeSubscription()
-    if (!claudeCheck.valid) {
+    const agentId = getAgentForMode(currentMode)
+    if (!(await validateAgentCredentials(agentId))) {
       running = false
       return
     }
@@ -300,7 +320,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
       const { columns, rows } = getTerminalSize()
       const result = await client.run({
-        agent: getAgentForMode(currentMode),
+        agent: agentId,
         prompt: enrichedPrompt,
         previousRun,
         signal: abortController.signal,
@@ -498,13 +518,6 @@ export async function startRepl(options: ReplOptions): Promise<void> {
       return
     }
 
-    // Usage command
-    if (trimmed === '/usage') {
-      await handleUsageCommand(apiKey)
-      rl.prompt()
-      return
-    }
-
     // Review command
     if (trimmed === '/review' || trimmed.startsWith('/review ')) {
       const reviewArgs = trimmed.slice('/review'.length).trim()
@@ -656,7 +669,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 }
 
 export async function runOnce(options: ReplOptions & { prompt: string }): Promise<void> {
-  const { apiKey, agent, cwd, verbose, prompt } = options
+  const { agent, cwd, verbose, prompt } = options
 
   await initializeAgentRegistry()
   const agentDefinitions = getAgentDefinitions()
@@ -664,9 +677,8 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
   // Only allow Claude and OpenAI models (both routed via OAuth subscriptions)
   setNonOAuthModelsEnabled(false)
 
-  const claude = await checkClaudeSubscription()
-  if (!claude.valid) process.exit(1)
-  if (claude.configured) {
+  const claudeCredentials = getClaudeOAuthCredentials()
+  if (claudeCredentials) {
     setClaudeOAuthFallbackEnabled(false)
   }
 
@@ -677,6 +689,11 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
     if (chatGptCredentials) {
       setChatGptOAuthFallbackEnabled(false)
     }
+  }
+
+  if (!(await validateAgentCredentials(agent))) {
+    process.exitCode = 1
+    return
   }
 
   const { columns, rows } = getTerminalSize()
@@ -703,7 +720,7 @@ export async function runOnce(options: ReplOptions & { prompt: string }): Promis
 
   const sessionId = generateHippoSessionId(DEFAULT_AGENT_MODE)
   const client = new CodebuffClient({
-    apiKey, cwd, agentDefinitions,
+    cwd, agentDefinitions,
     terminalColumns: columns, terminalRows: rows,
     logger: cliLogger,
     overrideTools: {
@@ -986,63 +1003,6 @@ function printAgentDetail(id: string): void {
   writeErr('\n')
 }
 
-async function handleUsageCommand(apiKey: string): Promise<void> {
-  writeErr('Fetching usage...\n')
-
-  try {
-    const res = await fetch(`${WEBSITE_URL}/api/v1/usage`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({}),
-      signal: AbortSignal.timeout(10_000),
-    })
-
-    if (!res.ok) {
-      writeErr(`Failed to fetch usage (HTTP ${res.status})\n\n`)
-      return
-    }
-
-    const data = (await res.json()) as {
-      usage?: number
-      remainingBalance?: number | null
-      balanceBreakdown?: Record<string, number>
-      next_quota_reset?: string | null
-    }
-
-    writeErr('\n')
-    writeErr('Credit Usage\n')
-    writeErr(`${'-'.repeat(40)}\n`)
-
-    if (typeof data.usage === 'number') {
-      writeErr(`  Session credits used:  ${data.usage.toLocaleString()}\n`)
-    }
-
-    if (data.remainingBalance != null) {
-      writeErr(`  Remaining balance:    ${data.remainingBalance.toLocaleString()}\n`)
-    }
-
-    if (data.balanceBreakdown && Object.keys(data.balanceBreakdown).length > 0) {
-      writeErr('\n  Balance breakdown:\n')
-      for (const [source, amount] of Object.entries(data.balanceBreakdown)) {
-        writeErr(`    ${source}:  ${amount.toLocaleString()}\n`)
-      }
-    }
-
-    if (data.next_quota_reset) {
-      const resetDate = new Date(data.next_quota_reset)
-      writeErr(`\n  Next reset:           ${resetDate.toLocaleDateString()}\n`)
-    }
-
-    writeErr('\n')
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    writeErr(`Failed to fetch usage: ${message}\n\n`)
-  }
-}
-
 async function handleConnectMcp(serverName: string): Promise<void> {
   if (!serverName) {
     const connections = getMcpOAuthStatus()
@@ -1170,9 +1130,8 @@ Commands
   /new, /clear       Clear conversation and start fresh
   /mode              Show current agent mode
   /mode:default      Switch to DEFAULT mode
-  /mode:max          Switch to MAX mode (more powerful, costs more)
+  /mode:max          Switch to MAX mode (more powerful)
   /mode:plan         Switch to PLAN mode
-  /usage             Show credit usage and remaining balance
   /review [text]     Review code (defaults to uncommitted changes)
   /agents            List all loaded agents
   /agent:<id>        Show detailed info about an agent

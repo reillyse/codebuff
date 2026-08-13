@@ -1,8 +1,6 @@
-import { API_KEY_ENV_VAR } from '@codebuff/common/old-constants'
 import { AskUserBridge } from '@codebuff/common/utils/ask-user-bridge'
 import { CodebuffClient } from '@codebuff/sdk'
 
-import { getAuthTokenDetails } from './auth'
 import { getCliEnv, getSystemProcessEnv } from './env'
 import { buildHippoSubagentHooks } from './hippo-hooks'
 import { loadAgentDefinitions } from './local-agent-registry'
@@ -48,16 +46,6 @@ export function resetCodebuffClient(): void {
 
 export async function getCodebuffClient(): Promise<CodebuffClient | null> {
   if (!clientInstance) {
-    const { token: apiKey } = getAuthTokenDetails()
-
-    if (!apiKey) {
-      logger.warn(
-        {},
-        `No authentication token found. Please run the login flow or set ${API_KEY_ENV_VAR}.`,
-      )
-      return null
-    }
-
     const projectRoot = getProjectRoot()
 
     // Set up ripgrep path for SDK to use
@@ -75,7 +63,6 @@ export async function getCodebuffClient(): Promise<CodebuffClient | null> {
     try {
       const agentDefinitions = loadAgentDefinitions()
       clientInstance = new CodebuffClient({
-        apiKey,
         cwd: projectRoot,
         agentDefinitions,
         logger,

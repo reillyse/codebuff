@@ -2,19 +2,13 @@
  * Chat streaming hook - connection status, timer, queue management, and exit handling.
  */
 
-import { RECONNECTION_MESSAGE_DURATION_MS } from '@codebuff/sdk'
-import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useState, useTransition } from 'react'
+import { useEffect } from 'react'
 
-
-import { authQueryKeys } from './use-auth-query'
-import { useConnectionStatus } from './use-connection-status'
 import { useElapsedTime } from './use-elapsed-time'
 import { useExitHandler } from './use-exit-handler'
 import { useMessageQueue, type QueuedMessage, type StreamStatus } from './use-message-queue'
 import { useQueueControls } from './use-queue-controls'
 import { useQueueUi } from './use-queue-ui'
-import { useTimeout } from './use-timeout'
 import { useChatStore } from '../state/chat-store'
 
 import type { ElapsedTimeTracker } from './use-elapsed-time'
@@ -85,38 +79,11 @@ export function useChatStreaming({
   activeAgentStreamsRef,
   sendMessageRef,
 }: UseChatStreamingOptions): UseChatStreamingReturn {
-  const queryClient = useQueryClient()
-  const [, startUiTransition] = useTransition()
-
-  // Reconnection state
-  const [showReconnectionMessage, setShowReconnectionMessage] = useState(false)
-  const reconnectionTimeout = useTimeout()
-
-  // Reconnection handler
-  const handleReconnection = useCallback(
-    (isInitialConnection: boolean) => {
-      queryClient.invalidateQueries({ queryKey: authQueryKeys.all })
-
-      startUiTransition(() => {
-        if (!isInitialConnection) {
-          setShowReconnectionMessage(true)
-          reconnectionTimeout.setTimeout(
-            'reconnection-message',
-            () => {
-              startUiTransition(() => {
-                setShowReconnectionMessage(false)
-              })
-            },
-            RECONNECTION_MESSAGE_DURATION_MS,
-          )
-        }
-      })
-    },
-    [queryClient, reconnectionTimeout, startUiTransition],
-  )
-
-  // Connection status
-  const isConnected = useConnectionStatus(handleReconnection)
+  // Connection status: the CLI no longer depends on reachability of the
+  // Codebuff backend (OAuth/BYOK models are called directly), so there is no
+  // health check to poll and the connection is always considered up.
+  const isConnected = true
+  const showReconnectionMessage = false
 
   // Timer
   const mainAgentTimer = useElapsedTime()

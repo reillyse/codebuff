@@ -14,7 +14,7 @@ export const handleWebSearch = (async (params: {
   previousToolCallFinished: Promise<void>
   toolCall: CodebuffToolCall<'web_search'>
   logger: Logger
-  apiKey: string
+  apiKey?: string
 
   agentStepId: string
   clientSessionId: string

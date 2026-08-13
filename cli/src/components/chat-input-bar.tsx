@@ -2,11 +2,8 @@ import React from 'react'
 
 import { AgentModeToggle } from './agent-mode-toggle'
 import { MultipleChoiceForm } from './ask-user'
-import { FeedbackContainer } from './feedback-container'
 import { InputModeBanner } from './input-mode-banner'
 import { MultilineInput, type MultilineInputHandle } from './multiline-input'
-import { OutOfCreditsBanner } from './out-of-credits-banner'
-import { PublishContainer } from './publish-container'
 import { SuggestionMenu, type SuggestionItem } from './suggestion-menu'
 import { useAskUserBridge } from '../hooks/use-ask-user-bridge'
 import { useEvent } from '../hooks/use-event'
@@ -58,15 +55,6 @@ interface ChatInputBarProps {
   isCompactHeight: boolean
   isNarrowWidth: boolean
 
-  // Feedback mode
-  feedbackMode: boolean
-  handleExitFeedback: () => void
-
-  // Publish mode
-  publishMode: boolean
-  handleExitPublish: () => void
-  handlePublish: (agentIds: string[]) => Promise<void>
-
   // Handlers
   handleSubmit: () => Promise<void>
   onPaste: (fallbackText?: string) => void
@@ -100,11 +88,6 @@ export const ChatInputBar = ({
   inputBoxTitle,
   isCompactHeight,
   isNarrowWidth,
-  feedbackMode,
-  handleExitFeedback,
-  publishMode,
-  handleExitPublish,
-  handlePublish,
   handleSubmit,
   onPaste,
 }: ChatInputBarProps) => {
@@ -163,42 +146,6 @@ export const ChatInputBar = ({
       return false
     },
   )
-
-  if (feedbackMode) {
-    return (
-      <FeedbackContainer
-        inputRef={inputRef}
-        onExitFeedback={handleExitFeedback}
-        width={separatorWidth}
-      />
-    )
-  }
-
-  if (publishMode) {
-    return (
-      <PublishContainer
-        inputRef={inputRef}
-        onExitPublish={handleExitPublish}
-        onPublish={handlePublish}
-        width={separatorWidth}
-      />
-    )
-  }
-
-  // Out of credits mode: replace entire input with out-of-credits banner
-  if (inputMode === 'outOfCredits') {
-    return <OutOfCreditsBanner />
-  }
-
-  // Subscription limit mode: show only the limit banner (no input box)
-  if (inputMode === 'subscriptionLimit') {
-    return <InputModeBanner />
-  }
-
-  // Referral mode: show only the referral banner (no input box)
-  if (inputMode === 'referral') {
-    return <InputModeBanner />
-  }
 
   // ChatGPT connect mode: show only the connect panel (no input box)
   if (inputMode === 'connect:chatgpt') {
@@ -367,7 +314,7 @@ export const ChatInputBar = ({
             onPaste={onPaste}
             onKeyIntercept={handleKeyIntercept}
             placeholder={effectivePlaceholder}
-            focused={inputFocused && !feedbackMode}
+            focused={inputFocused}
             maxHeight={compactMaxHeight}
             ref={inputRef}
             cursorPosition={cursorPosition}
@@ -451,7 +398,7 @@ export const ChatInputBar = ({
                 onPaste={onPaste}
                 onKeyIntercept={handleKeyIntercept}
                 placeholder={effectivePlaceholder}
-                focused={inputFocused && !feedbackMode}
+                focused={inputFocused}
                 maxHeight={Math.floor(terminalHeight / 2)}
                 ref={inputRef}
                 cursorPosition={cursorPosition}

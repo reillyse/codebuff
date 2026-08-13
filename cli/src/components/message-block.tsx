@@ -15,8 +15,6 @@ import { getCliEnv } from '../utils/env'
 import { type MarkdownPalette } from '../utils/markdown-renderer'
 import { formatCwd } from '../utils/path-helpers'
 
-import type { FeedbackCategory } from '@codebuff/common/constants/feedback'
-
 import type {
   ContentBlock,
   ImageAttachment,
@@ -46,16 +44,9 @@ interface MessageBlockProps {
   onBuildFast: () => void
   onBuildMax: () => void
   onBuildFree: () => void
-  onFeedback?: (messageId: string) => void
-  onCloseFeedback?: () => void
   validationErrors?: Array<{ id: string; message: string }>
   /** Runtime error to display in UI but NOT send to LLM */
   userError?: string
-  onOpenFeedback?: (options?: {
-    category?: FeedbackCategory
-    footerMessage?: string
-    errors?: Array<{ id: string; message: string }>
-  }) => void
   attachments?: ImageAttachment[]
   textAttachments?: TextAttachment[]
   metadata?: ChatMessageMetadata
@@ -120,11 +111,8 @@ export const MessageBlock = memo(({
   onBuildFast,
   onBuildMax,
   onBuildFree,
-  onFeedback,
-  onCloseFeedback,
   validationErrors,
   userError,
-  onOpenFeedback,
   attachments,
   textAttachments,
   metadata,
@@ -158,10 +146,7 @@ export const MessageBlock = memo(({
       onBuildFast,
       onBuildMax,
       onBuildFree,
-      onFeedback,
-      onCloseFeedback,
       validationErrors,
-      onOpenFeedback,
       metadata,
       isLastMessage,
     },
@@ -253,7 +238,6 @@ export const MessageBlock = memo(({
           <box style={{ paddingTop: 1, paddingBottom: 1 }}>
             <ValidationErrorPopover
               errors={validationErrors}
-              onOpenFeedback={onOpenFeedback}
               onClose={() => setShowValidationPopover(false)}
             />
           </box>
@@ -315,7 +299,6 @@ export const MessageBlock = memo(({
 
       {isAi && (
         <MessageFooter
-          messageId={messageId}
           blocks={blocks}
           content={content}
           isLoading={isLoading}
@@ -323,8 +306,6 @@ export const MessageBlock = memo(({
           completionTime={completionTime}
           credits={credits}
           timerStartTime={timerStartTime}
-          onFeedback={onFeedback}
-          onCloseFeedback={onCloseFeedback}
         />
       )}
     </box>

@@ -3,16 +3,19 @@ import path from 'node:path'
 
 import {
   CHATGPT_OAUTH_CLIENT_ID,
+  CHATGPT_OAUTH_ENABLED,
   CHATGPT_OAUTH_TOKEN_URL,
+  isChatGptOAuthModelAllowed,
+  isOpenAIProviderModel,
 } from '@codebuff/common/constants/chatgpt-oauth'
-import { CLAUDE_OAUTH_CLIENT_ID } from '@codebuff/common/constants/claude-oauth'
+import { CLAUDE_OAUTH_CLIENT_ID, isClaudeModel } from '@codebuff/common/constants/claude-oauth'
 import { env } from '@codebuff/common/env'
 import { getConfigDir } from '@codebuff/common/util/config-dir'
 import { userSchema } from '@codebuff/common/util/credentials'
 import { atomicWriteFileSync, withCredentialFileLock } from '@codebuff/common/util/fs'
 import { z } from 'zod/v4'
 
-import { getChatGptOAuthTokenFromEnv, getClaudeOAuthRefreshTokenFromEnv, getClaudeOAuthTokenFromEnv } from './env'
+import { getByokOpenrouterApiKeyFromEnv, getChatGptOAuthTokenFromEnv, getClaudeOAuthRefreshTokenFromEnv, getClaudeOAuthTokenFromEnv } from './env'
 
 import type { ClientEnv } from '@codebuff/common/types/contracts/env'
 import type { User } from '@codebuff/common/util/credentials'
@@ -549,4 +552,36 @@ export const getValidChatGptOAuthCredentials = async (
   }
 
   return refreshChatGptOAuthToken(clientEnv)
+}
+
+/**
+ * Whether the user has any credential that lets Codebuff talk to an LLM
+ * provider directly, without needing a Codebuff API key: Claude OAuth,
+ * ChatGPT OAuth, or a BYOK OpenRouter key.
+ */
+export const hasDirectModelCredentials = (clientEnv: ClientEnv = env): boolean =>
+  getClaudeOAuthCredentials(clientEnv) !== null ||
+  getChatGptOAuthCredentials(clientEnv) !== null ||
+  getByokOpenrouterApiKeyFromEnv() !== undefined
+
+export const hasByokOpenRouterCredentials = (): boolean =>
+  Boolean(getByokOpenrouterApiKeyFromEnv())
+
+/** Whether the configured direct credentials can run a specific model. */
+export const hasDirectModelCredentialsForModel = (
+  model: string,
+  clientEnv: ClientEnv = env,
+): boolean => {
+  if (hasByokOpenRouterCredentials()) return true
+  if (isClaudeModel(model)) {
+    return getClaudeOAuthCredentials(clientEnv) !== null
+  }
+  if (isOpenAIProviderModel(model)) {
+    return (
+      CHATGPT_OAUTH_ENABLED &&
+      isChatGptOAuthModelAllowed(model) &&
+      getChatGptOAuthCredentials(clientEnv) !== null
+    )
+  }
+  return false
 }

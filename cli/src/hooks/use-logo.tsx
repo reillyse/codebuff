@@ -1,7 +1,11 @@
 import React, { useMemo } from 'react'
 
-import { LOGO, LOGO_SMALL, SHADOW_CHARS } from '../login/constants'
-import { parseLogoLines } from '../login/utils'
+import {
+  LOGO,
+  LOGO_SMALL,
+  SHADOW_CHARS,
+  parseLogoLines,
+} from '../utils/ascii-art-constants'
 
 interface UseLogoOptions {
   /**

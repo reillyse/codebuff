@@ -1,4 +1,4 @@
-import { CURRENT_OPUS_MODEL, CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_GPT5_MODEL, CURRENT_OPUS_MODEL, CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
 
 import { publisher } from '../../constants'
 import {
@@ -19,7 +19,7 @@ export const createBestOfNSelector2 = (options: {
       ? CURRENT_SONNET_MODEL
       : isOpus
         ? CURRENT_OPUS_MODEL
-        : 'openai/gpt-5.2',
+        : CURRENT_GPT5_MODEL,
     ...(isGpt5 && {
       reasoningOptions: {
         effort: 'high',

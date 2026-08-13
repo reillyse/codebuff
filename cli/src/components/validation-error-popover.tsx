@@ -10,26 +10,17 @@ import { formatValidationError } from '../utils/validation-error-formatting'
 import { NETWORK_ERROR_ID } from '../utils/validation-error-helpers'
 
 import type { LocalAgentInfo } from '../utils/local-agent-registry'
-import type { FeedbackCategory } from '@codebuff/common/constants/feedback'
-
 
 interface ValidationErrorPopoverProps {
   errors: Array<{ id: string; message: string }>
-  onOpenFeedback?: (options: {
-    category: FeedbackCategory
-    footerMessage: string
-    errors: Array<{ id: string; message: string }>
-  }) => void
   onClose?: () => void
 }
 
 export const ValidationErrorPopover: React.FC<ValidationErrorPopoverProps> = ({
   errors,
-  onOpenFeedback,
   onClose,
 }) => {
   const theme = useTheme()
-  const [isReportHovered, setIsReportHovered] = useState(false)
   const [isCloseHovered, setIsCloseHovered] = useState(false)
   const loadedAgentsData = getLoadedAgentsData()
 
@@ -160,32 +151,6 @@ export const ValidationErrorPopover: React.FC<ValidationErrorPopoverProps> = ({
             </text>
           )}
         </box>
-
-        {onOpenFeedback && (
-          <box style={{ paddingTop: 1, justifyContent: 'flex-end' }}>
-            <Button
-              onClick={() =>
-                onOpenFeedback({
-                  category: 'app_bug',
-                  footerMessage: 'Validation errors are auto-attached',
-                  errors,
-                })
-              }
-              onMouseOver={() => setIsReportHovered(true)}
-              onMouseOut={() => setIsReportHovered(false)}
-            >
-              <text style={{ wrapMode: 'none' }}>
-                {isReportHovered ? (
-                  <u>
-                    <span fg={theme.info}>Report issue</span>
-                  </u>
-                ) : (
-                  <span fg={theme.info}>Report issue</span>
-                )}
-              </text>
-            </Button>
-          </box>
-        )}
       </box>
     </box>
   )

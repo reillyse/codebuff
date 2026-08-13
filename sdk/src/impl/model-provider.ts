@@ -30,6 +30,7 @@ import {
   OpenAICompatibleChatLanguageModel,
   VERSION,
 } from '@codebuff/internal/openai-compatible/index'
+import { createOpenRouter } from '@codebuff/internal/openrouter-ai-sdk'
 
 import { WEBSITE_URL } from '../constants'
 import {
@@ -272,7 +273,7 @@ export async function fetchClaudeOAuthResetTime(accessToken: string): Promise<Da
  */
 export interface ModelRequestParams {
   /** Codebuff API key for backend authentication */
-  apiKey: string
+  apiKey?: string
   /** Model ID (OpenRouter format, e.g., "anthropic/claude-sonnet-4") */
   model: string
   /** If true, skip Claude OAuth and use Codebuff backend (for fallback after rate limit) */
@@ -293,6 +294,8 @@ export interface ModelResult {
   isClaudeOAuth: boolean
   /** Whether this model uses ChatGPT OAuth direct (affects cost tracking) */
   isChatGptOAuth: boolean
+  /** Direct non-OAuth provider, when bypassing the Codebuff backend. */
+  directProvider?: 'openrouter'
   /**
    * SPARROW (telemetry): Stable per-OAuth-account identifier when the call
    * is routed via claude_oauth or chatgpt_oauth. Undefined for the Codebuff
@@ -355,12 +358,13 @@ type OpenRouterUsageAccounting = {
  */
 export async function getModelForRequest(params: ModelRequestParams): Promise<ModelResult> {
   const { apiKey, model, skipClaudeOAuth, skipChatGptOAuth, costMode } = params
+  const openrouterApiKey = getByokOpenrouterApiKeyFromEnv()
 
   // Check if we should use Claude OAuth direct
   // Skip if explicitly requested or if not a Claude model
   if (!skipClaudeOAuth && isClaudeModel(model)) {
     if (isClaudeOAuthRateLimited()) {
-      if (!claudeOAuthFallbackEnabled) {
+      if (!claudeOAuthFallbackEnabled && !openrouterApiKey) {
         throw new Error('Claude subscription rate limited. Please wait and try again.')
       }
     } else {
@@ -379,7 +383,7 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
           oauthAccountId: deriveOAuthAccountId(claudeOAuthCredentials),
         }
       }
-      if (!claudeOAuthFallbackEnabled) {
+      if (!claudeOAuthFallbackEnabled && !openrouterApiKey) {
         const hasCredentials = getClaudeOAuthCredentials() !== null
         throw new Error(
           hasCredentials
@@ -402,7 +406,10 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
     // must not silently fall through to the Codebuff backend — it should only
     // use the direct OpenAI OAuth route or fail (never the server OPENAI_API_KEY).
     if (isChatGptOAuthRateLimited()) {
-      if (isFreeMode(costMode) || !chatGptOAuthFallbackEnabled) {
+      if (
+        (isFreeMode(costMode) || !chatGptOAuthFallbackEnabled) &&
+        !openrouterApiKey
+      ) {
         throw new Error(
           'ChatGPT rate limit reached. Please wait a few minutes and try again.',
         )
@@ -422,11 +429,26 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
 
       // In free mode (or when fallback is disabled), if credentials are
       // unavailable, don't fall through to the backend.
-      if (isFreeMode(costMode) || !chatGptOAuthFallbackEnabled) {
+      if (
+        (isFreeMode(costMode) || !chatGptOAuthFallbackEnabled) &&
+        !openrouterApiKey
+      ) {
         throw new Error(
           'ChatGPT OAuth credentials unavailable. Please reconnect with /connect:chatgpt.',
         )
       }
+    }
+  }
+
+  if (openrouterApiKey) {
+    return {
+      model: createOpenRouter({
+        apiKey: openrouterApiKey,
+        compatibility: 'strict',
+      })(model) as unknown as LanguageModel,
+      isClaudeOAuth: false,
+      isChatGptOAuth: false,
+      directProvider: 'openrouter',
     }
   }
 
@@ -443,6 +465,11 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
   }
 
   // Default: use Codebuff backend
+  if (!apiKey) {
+    throw new Error(
+      `Model "${model}" requires a Codebuff API key, and none was provided. Connect a direct provider instead via /connect:claude, /connect:chatgpt, or a BYOK OpenRouter key.`,
+    )
+  }
   return {
     model: createCodebuffBackendModel(apiKey, model),
     isClaudeOAuth: false,

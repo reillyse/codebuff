@@ -7,19 +7,19 @@ import { getAgentForMode, DEFAULT_AGENT_MODE } from '../repl'
 describe('repl', () => {
   describe('getAgentForMode', () => {
     test('DEFAULT maps to base2', () => {
-      expect(getAgentForMode('DEFAULT')).toBe('codebuff/base2@latest')
+      expect(getAgentForMode('DEFAULT')).toBe('base2')
     })
 
     test('MAX maps to base2-max', () => {
-      expect(getAgentForMode('MAX')).toBe('codebuff/base2-max@latest')
+      expect(getAgentForMode('MAX')).toBe('base2-max')
     })
 
     test('PLAN maps to base2-plan', () => {
-      expect(getAgentForMode('PLAN')).toBe('codebuff/base2-plan@latest')
+      expect(getAgentForMode('PLAN')).toBe('base2-plan')
     })
 
     test('FREE falls back to base2 (DEFAULT)', () => {
-      expect(getAgentForMode('FREE')).toBe('codebuff/base2@latest')
+      expect(getAgentForMode('FREE')).toBe('base2')
     })
   })
 

@@ -1,7 +1,12 @@
+import { enableMapSet } from 'immer'
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 
-import type { FeedbackCategory } from '@codebuff/common/constants/feedback'
+// This store keeps a Map in its Immer-managed state (messageTree below), which
+// requires the MapSet plugin. Enable it here rather than relying on app
+// bootstrap (init/init-app.ts) having run first — that ordering is only
+// guaranteed for the real app, not for tests that import this store directly.
+enableMapSet()
 
 import type { ChatMessage } from '../types/chat'
 import type { ChatTheme } from '../types/theme-system'
@@ -35,15 +40,6 @@ export interface MessageBlockCallbacks {
   onBuildFast: () => void
   onBuildMax: () => void
   onBuildFree: () => void
-  onFeedback: (
-    messageId: string,
-    options?: {
-      category?: FeedbackCategory
-      footerMessage?: string
-      errors?: Array<{ id: string; message: string }>
-    },
-  ) => void
-  onCloseFeedback: () => void
 }
 
 interface MessageBlockStoreState {
@@ -73,7 +69,6 @@ interface MessageBlockStoreActions {
 type MessageBlockStore = MessageBlockStoreState & MessageBlockStoreActions
 
 const noop = () => {}
-const noopFeedback: MessageBlockCallbacks['onFeedback'] = () => {}
 
 const initialContext: MessageBlockContext = {
   theme: null,
@@ -89,8 +84,6 @@ const initialCallbacks: MessageBlockCallbacks = {
   onBuildFast: noop,
   onBuildMax: noop,
   onBuildFree: noop,
-  onFeedback: noopFeedback,
-  onCloseFeedback: noop,
 }
 
 const initialState: MessageBlockStoreState = {

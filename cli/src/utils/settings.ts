@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 
-import { getConfigDir } from './auth'
+import { getConfigDir } from './config-dir'
 import { AGENT_MODES } from './constants'
 import { logger } from './logger'
 

@@ -1,6 +1,4 @@
 import { AnalyticsEvent } from '@codebuff/common/constants/analytics-events'
-import type { FeedbackCategory } from '@codebuff/common/constants/feedback'
-import open from 'open'
 import {
   useCallback,
   useEffect,
@@ -12,16 +10,13 @@ import {
 import fs from 'fs'
 import { useShallow } from 'zustand/react/shallow'
 
-import { getAdsEnabled, handleAdsDisable } from './commands/ads'
 import { routeUserPrompt, addBashMessageToHistory } from './commands/router'
-import { AdBanner } from './components/ad-banner'
 import { BottomStatusLine } from './components/bottom-status-line'
 import { ChatInputBar } from './components/chat-input-bar'
 import { InFlightToolsBox } from './components/in-flight-tools-box'
 import { LoadPreviousButton } from './components/load-previous-button'
 import { ReviewScreen } from './components/review-screen'
 import { MessageWithAgents } from './components/message-with-agents'
-import { areCreditsRestored } from './components/out-of-credits-banner'
 import { PendingBashMessage } from './components/pending-bash-message'
 import { StatusBar } from './components/status-bar'
 import { TopBanner } from './components/top-banner'
@@ -38,29 +33,21 @@ import { useChatState } from './hooks/use-chat-state'
 import { useChatStreaming } from './hooks/use-chat-streaming'
 import { useChatUI } from './hooks/use-chat-ui'
 import { useClaudeQuotaQuery } from './hooks/use-claude-quota-query'
-import { useSubscriptionQuery } from './hooks/use-subscription-query'
 import { useClipboard } from './hooks/use-clipboard'
 import { useEvent } from './hooks/use-event'
-import { useGravityAd } from './hooks/use-gravity-ad'
 import { useInputHistory } from './hooks/use-input-history'
-import { usePublishMutation } from './hooks/use-publish-mutation'
 import { useSendMessage } from './hooks/use-send-message'
 import { useSuggestionEngine } from './hooks/use-suggestion-engine'
-import { useUsageMonitor } from './hooks/use-usage-monitor'
-import { WEBSITE_URL } from './login/constants'
 import { getProjectRoot } from './project-files'
 import { useChatHistoryStore } from './state/chat-history-store'
 import { useChatStore } from './state/chat-store'
 import { useReviewStore } from './state/review-store'
-import { useFeedbackStore } from './state/feedback-store'
 import { useMessageBlockStore } from './state/message-block-store'
-import { usePublishStore } from './state/publish-store'
 import { reportActivity } from './utils/activity-tracker'
 import { trackEvent } from './utils/analytics'
 import { getClaudeOAuthStatus } from './utils/claude-oauth'
 import { showClipboardMessage } from './utils/clipboard'
 import { readClipboardImage } from './utils/clipboard-image'
-import { IS_FREEBUFF } from './utils/constants'
 import { HIPPO_BINARY, checkHippoConnection, getHippoSessionStats } from './utils/hippo-hooks'
 import { getInputModeConfig } from './utils/input-modes'
 
@@ -93,13 +80,10 @@ import { computeInputLayoutMetrics } from './utils/text-layout'
 import type { CommandResult } from './commands/command-registry'
 import type { MultilineInputHandle } from './components/multiline-input'
 import type { MatchedSlashCommand } from './hooks/use-suggestion-engine'
-import type { User } from './utils/auth'
 import type { AgentMode } from './utils/constants'
 import type { HippoSessionStats } from './utils/hippo-hooks'
 import type { FileTreeNode } from '@codebuff/common/util/file'
 import type { ScrollBoxRenderable } from '@opentui/core'
-import type { UseMutationResult } from '@tanstack/react-query'
-import type { Dispatch, SetStateAction } from 'react'
 
 export const Chat = ({
   headerContent,
@@ -107,9 +91,6 @@ export const Chat = ({
   agentId,
   fileTree,
   inputRef,
-  setIsAuthenticated,
-  setUser,
-  logoutMutation,
   continueChat,
   continueChatId,
   authStatus,
@@ -122,9 +103,6 @@ export const Chat = ({
   agentId?: string
   fileTree: FileTreeNode[]
   inputRef: React.MutableRefObject<MultilineInputHandle | null>
-  setIsAuthenticated: Dispatch<SetStateAction<boolean | null>>
-  setUser: Dispatch<SetStateAction<User | null>>
-  logoutMutation: UseMutationResult<boolean, Error, void, unknown>
   continueChat: boolean
   continueChatId?: string
   authStatus: AuthStatus
@@ -138,9 +116,6 @@ export const Chat = ({
 
   // Subscribe to ask_user bridge to trigger form display
   useAskUserBridge()
-
-  // Monitor usage data and auto-show banner when thresholds are crossed
-  useUsageMonitor()
 
   // Get chat state from extracted hook
   const {
@@ -174,20 +149,6 @@ export const Chat = ({
   } = useChatState()
 
   const { statusMessage } = useClipboard()
-
-  // Fetch subscription data early - needed for session credits tracking and ad gating
-  const { data: subscriptionData } = useSubscriptionQuery({
-    refetchInterval: 60 * 1000,
-  })
-  const hasSubscription = subscriptionData?.hasSubscription ?? false
-
-  const { ad } = useGravityAd({ enabled: !hasSubscription })
-  const [adsManuallyDisabled, setAdsManuallyDisabled] = useState(false)
-
-  const handleDisableAds = useCallback(() => {
-    handleAdsDisable()
-    setAdsManuallyDisabled(true)
-  }, [])
 
   // Set initial mode from CLI flag on mount
   useEffect(() => {
@@ -234,18 +195,10 @@ export const Chat = ({
   // Get loaded skills for slash commands
   const loadedSkills = useMemo(() => getLoadedSkills(), [])
 
-  // Filter slash commands based on current ads state - only show the option that changes state
-  // Hide both ads commands entirely for subscribers
-  // Also merge in skill commands
+  // Merge slash commands with skill commands.
   const filteredSlashCommands = useMemo(() => {
-    const adsEnabled = getAdsEnabled()
-    const allCommands = getSlashCommandsWithSkills(loadedSkills)
-    return allCommands.filter((cmd) => {
-      if (cmd.id === 'ads:enable') return !hasSubscription && !adsEnabled
-      if (cmd.id === 'ads:disable') return !hasSubscription && adsEnabled
-      return true
-    })
-  }, [inputValue, loadedSkills, hasSubscription]) // Re-evaluate when input changes (user may have just toggled)
+    return getSlashCommandsWithSkills(loadedSkills)
+  }, [loadedSkills])
 
   const {
     slashContext,
@@ -454,7 +407,6 @@ export const Chat = ({
     resumeQueue,
     continueChat,
     continueChatId,
-    subscriptionData,
   })
 
   sendMessageRef.current = sendMessage
@@ -499,7 +451,6 @@ export const Chat = ({
           inputValue: content,
           isChainInProgressRef,
           isStreaming,
-          logoutMutation,
           streamMessageIdRef,
           addToQueue,
           clearMessages,
@@ -509,9 +460,7 @@ export const Chat = ({
           setCanProcessQueue,
           setInputFocused,
           setInputValue,
-          setIsAuthenticated,
           setMessages,
-          setUser,
           stopStreaming,
         })
 
@@ -588,8 +537,6 @@ export const Chat = ({
     }
   }, [onSubmitPrompt, agentMode])
 
-  // handleSlashItemClick is defined later after feedback/publish stores are available
-
   const handleMentionItemClick = useCallback(
     (index: number) => {
       if (mentionContext.startIndex < 0) return
@@ -637,36 +584,6 @@ export const Chat = ({
     isNarrowWidth,
   })
 
-  const {
-    feedbackMode,
-    feedbackText,
-    openFeedbackForMessage,
-    closeFeedback,
-    saveCurrentInput,
-    restoreSavedInput,
-    setFeedbackText,
-  } = useFeedbackStore(
-    useShallow((state) => ({
-      feedbackMode: state.feedbackMode,
-      feedbackText: state.feedbackText,
-      openFeedbackForMessage: state.openFeedbackForMessage,
-      closeFeedback: state.closeFeedback,
-      saveCurrentInput: state.saveCurrentInput,
-      restoreSavedInput: state.restoreSavedInput,
-      setFeedbackText: state.setFeedbackText,
-    })),
-  )
-
-  const { publishMode, openPublishMode, closePublish, preSelectAgents } =
-    usePublishStore(
-      useShallow((state) => ({
-        publishMode: state.publishMode,
-        openPublishMode: state.openPublishMode,
-        closePublish: state.closePublish,
-        preSelectAgents: state.preSelectAgents,
-      })),
-    )
-
   const { reviewMode, closeReviewScreen } = useReviewStore(
     useShallow((state) => ({
       reviewMode: state.reviewMode,
@@ -674,49 +591,17 @@ export const Chat = ({
     })),
   )
 
-  const publishMutation = usePublishMutation()
+  const handleCommandResult = useCallback((result?: CommandResult) => {
+    if (!result) return
 
-  const handleCommandResult = useCallback(
-    (result?: CommandResult) => {
-      if (!result) return
+    if (result.openChatHistory) {
+      useChatHistoryStore.getState().openChatHistory()
+    }
 
-      if (result.openFeedbackMode) {
-        // Save the feedback text that was set by the command handler before opening feedback mode
-        const { feedbackText, feedbackCursor } = useFeedbackStore.getState()
-        saveCurrentInput('', 0)
-        openFeedbackForMessage(null)
-        // Restore the prefilled text after openFeedbackForMessage resets it
-        if (feedbackText) {
-          useFeedbackStore.getState().setFeedbackText(feedbackText)
-          useFeedbackStore.getState().setFeedbackCursor(feedbackCursor)
-        }
-      }
-
-      if (result.openPublishMode) {
-        if (result.preSelectAgents && result.preSelectAgents.length > 0) {
-          // preSelectAgents already sets publishMode: true, so don't call openPublishMode
-          // which would reset the selectedAgentIds
-          preSelectAgents(result.preSelectAgents)
-        } else {
-          openPublishMode()
-        }
-      }
-
-      if (result.openChatHistory) {
-        useChatHistoryStore.getState().openChatHistory()
-      }
-
-      if (result.openReviewScreen) {
-        useReviewStore.getState().openReviewScreen()
-      }
-    },
-    [
-      saveCurrentInput,
-      openFeedbackForMessage,
-      openPublishMode,
-      preSelectAgents,
-    ],
-  )
+    if (result.openReviewScreen) {
+      useReviewStore.getState().openReviewScreen()
+    }
+  }, [])
 
   // Helper to apply insertText for slash commands - returns true if handled
   const applySlashInsertText = useCallback(
@@ -771,7 +656,7 @@ export const Chat = ({
     inputValueRef.current = inputValue
   }, [inputValue])
 
-  // Report activity on input changes for ad rotation (debounced via separate effect)
+  // Report activity on input changes (debounced via separate effect)
   const lastReportedActivityRef = useRef<number>(0)
   useEffect(() => {
     const now = Date.now()
@@ -784,56 +669,6 @@ export const Chat = ({
   useEffect(() => {
     cursorPositionRef.current = cursorPosition
   }, [cursorPosition])
-
-  const handleOpenFeedbackForMessage = useCallback(
-    (
-      id: string | null,
-      options?: {
-        category?: FeedbackCategory
-        footerMessage?: string
-        errors?: Array<{ id: string; message: string }>
-      },
-    ) => {
-      saveCurrentInput(inputValueRef.current, cursorPositionRef.current)
-      openFeedbackForMessage(id, options)
-    },
-    [saveCurrentInput, openFeedbackForMessage],
-  )
-
-  const handleMessageFeedback = useCallback(
-    (
-      id: string,
-      options?: {
-        category?: FeedbackCategory
-        footerMessage?: string
-        errors?: Array<{ id: string; message: string }>
-      },
-    ) => {
-      handleOpenFeedbackForMessage(id, options)
-    },
-    [handleOpenFeedbackForMessage],
-  )
-
-  const handleExitFeedback = useCallback(() => {
-    const { value, cursor } = restoreSavedInput()
-    setInputValue({
-      text: value,
-      cursorPosition: cursor,
-      lastEditDueToNav: false,
-    })
-    setInputFocused(true)
-    resetHistoryNavigation()
-  }, [restoreSavedInput, setInputValue, setInputFocused, resetHistoryNavigation])
-
-  const handleCloseFeedback = useCallback(() => {
-    closeFeedback()
-    handleExitFeedback()
-  }, [closeFeedback, handleExitFeedback])
-
-  const handleExitPublish = useCallback(() => {
-    closePublish()
-    setInputFocused(true)
-  }, [closePublish, setInputFocused])
 
   const handleReviewOptionSelect = useCallback(
     (reviewText: string) => {
@@ -855,26 +690,14 @@ export const Chat = ({
     setInputFocused(true)
   }, [closeReviewScreen, setInputFocused])
 
-  const handlePublish = useCallback(
-    async (agentIds: string[]) => {
-      await publishMutation.mutateAsync(agentIds)
-    },
-    [publishMutation],
-  )
-
   // Ensure bracketed paste events target the active chat input
   useEffect(() => {
-    if (feedbackMode) {
-      inputRef.current?.focus()
-      return
-    }
     if (!askUserState) {
       inputRef.current?.focus()
     }
-  }, [feedbackMode, askUserState, inputRef])
+  }, [askUserState, inputRef])
 
   const handleSubmit = useCallback(async () => {
-    // Report activity for ad rotation
     reportActivity()
     // Update terminal title with truncated user input
     if (inputValue.trim()) {
@@ -905,11 +728,10 @@ export const Chat = ({
     () => ({
       ...createDefaultChatKeyboardState(),
       inputMode,
-      inputValue: feedbackMode ? feedbackText : inputValue,
+      inputValue,
       cursorPosition,
       isStreaming,
       isWaitingForResponse,
-      feedbackMode,
       focusedAgentId,
       slashMenuActive: slashContext.active,
       mentionMenuActive: mentionContext.active,
@@ -928,11 +750,9 @@ export const Chat = ({
     [
       inputMode,
       inputValue,
-      feedbackText,
       cursorPosition,
       isStreaming,
       isWaitingForResponse,
-      feedbackMode,
       focusedAgentId,
       slashContext.active,
       mentionContext.active,
@@ -953,11 +773,6 @@ export const Chat = ({
   const chatKeyboardHandlers: ChatKeyboardHandlers = useMemo(
     () => ({
       onExitInputMode: () => setInputMode('default'),
-      onExitFeedbackMode: handleCloseFeedback,
-      onClearFeedbackInput: () => {
-        setFeedbackText('')
-        useFeedbackStore.getState().setFeedbackCursor(0)
-      },
       onClearInput: () =>
         setInputValue({ text: '', cursorPosition: 0, lastEditDueToNav: false }),
       onBackspaceExitMode: () => setInputMode('default'),
@@ -1155,20 +970,9 @@ export const Chat = ({
       onScrollUp: scrollUp,
       onScrollDown: scrollDown,
       onToggleAll: handleToggleAll,
-      onOpenBuyCredits: () => {
-        // If credits have been restored, just return to default mode
-        if (areCreditsRestored()) {
-          setInputMode('default')
-          return
-        }
-        // Otherwise open the buy credits page
-        open(WEBSITE_URL + '/usage')
-      },
     }),
     [
       setInputMode,
-      handleCloseFeedback,
-      setFeedbackText,
       setInputValue,
       abortControllerRef,
       queuedMessages.length,
@@ -1246,16 +1050,12 @@ export const Chat = ({
       onBuildFast: handleBuildFast,
       onBuildMax: handleBuildMax,
       onBuildFree: handleBuildFree,
-      onFeedback: handleMessageFeedback,
-      onCloseFeedback: handleCloseFeedback,
     })
   }, [
     handleCollapseToggle,
     handleBuildFast,
     handleBuildMax,
     handleBuildFree,
-    handleMessageFeedback,
-    handleCloseFeedback,
     setMessageBlockCallbacks,
   ])
 
@@ -1400,25 +1200,6 @@ export const Chat = ({
     refetchInterval: 60 * 1000, // Refetch every 60 seconds
   })
 
-  // Auto-show subscription limit banner when rate limit becomes active
-  const subscriptionLimitShownRef = useRef(false)
-  const subscriptionRateLimit = subscriptionData?.hasSubscription ? subscriptionData.rateLimit : undefined
-  const fallbackToALaCarte = subscriptionData?.fallbackToALaCarte ?? false
-  useEffect(() => {
-    const isLimited = subscriptionRateLimit?.limited === true
-    if (isLimited && !subscriptionLimitShownRef.current) {
-      subscriptionLimitShownRef.current = true
-      // Skip showing the banner if user prefers to always fall back to a-la-carte
-      if (!fallbackToALaCarte) {
-        useChatStore.getState().setInputMode('subscriptionLimit')
-      }
-    } else if (!isLimited) {
-      subscriptionLimitShownRef.current = false
-      if (useChatStore.getState().inputMode === 'subscriptionLimit') {
-        useChatStore.getState().setInputMode('default')
-      }
-    }
-  }, [subscriptionRateLimit?.limited, fallbackToALaCarte])
 
   const inputBoxTitle = useMemo(() => {
     const segments: string[] = []
@@ -1440,10 +1221,8 @@ export const Chat = ({
   const isClaudeActive = isStreaming || isWaitingForResponse
 
   const shouldShowStatusLine =
-    !feedbackMode &&
-    (hasStatusIndicatorContent || shouldShowQueuePreview || !isAtBottom)
+    hasStatusIndicatorContent || shouldShowQueuePreview || !isAtBottom
 
-  // Track mouse movement for ad activity (throttled)
   const lastMouseActivityRef = useRef<number>(0)
   const handleMouseActivity = useCallback(() => {
     const now = Date.now()
@@ -1548,14 +1327,6 @@ export const Chat = ({
           />
         )}
 
-        {ad && !adsManuallyDisabled && getAdsEnabled() && (
-          <AdBanner
-            ad={ad}
-            onDisableAds={handleDisableAds}
-            isFreeMode={agentMode === 'FREE'}
-          />
-        )}
-
         {reviewMode ? (
           <ReviewScreen
             onSelectOption={handleReviewOptionSelect}
@@ -1590,11 +1361,6 @@ export const Chat = ({
             inputBoxTitle={inputBoxTitle}
             isCompactHeight={isCompactHeight}
             isNarrowWidth={isNarrowWidth}
-            feedbackMode={feedbackMode}
-            handleExitFeedback={handleExitFeedback}
-            publishMode={publishMode}
-            handleExitPublish={handleExitPublish}
-            handlePublish={handlePublish}
             handleSubmit={handleSubmit}
             onPaste={createPasteHandler({
               text: inputValue,

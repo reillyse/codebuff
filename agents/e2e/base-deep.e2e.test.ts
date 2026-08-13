@@ -8,10 +8,17 @@ import { CodebuffClient, getUserCredentials } from '@codebuff/sdk'
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { $ } from 'bun'
 
-import baseDeep from '../base2/base-deep'
-import thinkerCodex from '../thinker/thinker-codex'
+import baseDeepDef from '../base2/base-deep'
+import thinkerCodexDef from '../thinker/thinker-codex'
 
+import type { AgentDefinition } from '@codebuff/common/templates/initial-agents-dir/types/agent-definition'
 import type { PrintModeEvent } from '@codebuff/common/types/print-mode'
+
+// Cast once at module scope: SecretAgentDefinition's handleSteps Generator yield
+// type is invariant-incompatible with the SDK's AgentDefinition (different local
+// ToolName unions), so a direct cast is rejected; go through `unknown`.
+const baseDeep = baseDeepDef as unknown as AgentDefinition
+const thinkerCodex = thinkerCodexDef as unknown as AgentDefinition
 
 describe('Base Deep Agent Integration', () => {
   const repoRoot = path.resolve(

@@ -54,58 +54,14 @@ describe('resolveChatKeyboardAction', () => {
       })
     })
 
-    test('escape in referral mode exits mode even while streaming', () => {
+    test('escape in interview mode exits mode even while streaming', () => {
       const state: ChatKeyboardState = {
         ...defaultState,
-        inputMode: 'referral',
+        inputMode: 'interview',
         isStreaming: true,
       }
       expect(resolveChatKeyboardAction(escapeKey, state)).toEqual({
         type: 'exit-input-mode',
-      })
-    })
-
-    test('escape in usage mode exits mode', () => {
-      const state: ChatKeyboardState = {
-        ...defaultState,
-        inputMode: 'usage',
-      }
-      expect(resolveChatKeyboardAction(escapeKey, state)).toEqual({
-        type: 'exit-input-mode',
-      })
-    })
-  })
-
-  describe('feedback mode', () => {
-    test('escape in feedback mode exits feedback', () => {
-      const state: ChatKeyboardState = {
-        ...defaultState,
-        feedbackMode: true,
-      }
-      expect(resolveChatKeyboardAction(escapeKey, state)).toEqual({
-        type: 'exit-feedback-mode',
-      })
-    })
-
-    test('ctrl-c in feedback mode with empty input exits feedback', () => {
-      const state: ChatKeyboardState = {
-        ...defaultState,
-        feedbackMode: true,
-        inputValue: '',
-      }
-      expect(resolveChatKeyboardAction(ctrlC, state)).toEqual({
-        type: 'exit-feedback-mode',
-      })
-    })
-
-    test('ctrl-c in feedback mode with text clears input', () => {
-      const state: ChatKeyboardState = {
-        ...defaultState,
-        feedbackMode: true,
-        inputValue: 'some feedback',
-      }
-      expect(resolveChatKeyboardAction(ctrlC, state)).toEqual({
-        type: 'clear-feedback-input',
       })
     })
   })
@@ -608,24 +564,5 @@ describe('resolveChatKeyboardAction', () => {
       })
     })
 
-    test('Ctrl+T blocked in feedback mode', () => {
-      const state: ChatKeyboardState = {
-        ...defaultState,
-        feedbackMode: true,
-      }
-      expect(resolveChatKeyboardAction(ctrlT, state)).toEqual({
-        type: 'none',
-      })
-    })
-
-    test('Ctrl+T blocked in outOfCredits mode', () => {
-      const state: ChatKeyboardState = {
-        ...defaultState,
-        inputMode: 'outOfCredits',
-      }
-      expect(resolveChatKeyboardAction(ctrlT, state)).toEqual({
-        type: 'none',
-      })
-    })
   })
 })

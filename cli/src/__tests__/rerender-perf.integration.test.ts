@@ -39,12 +39,10 @@ const RERENDER_THRESHOLDS = {
    * If these appear, it means callbacks are not properly memoized.
    */
   forbiddenChangedProps: [
-    'onOpenFeedback',
     'onToggleCollapsed',
     'onBuildFast',
     'onBuildMax',
     'onBuildFree',
-    'onCloseFeedback',
   ],
 
   /**

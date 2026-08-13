@@ -675,7 +675,10 @@ describe('handleRunError', () => {
     expect(timerController.stopCalls).toContain('error')
   })
 
-  test('Payment required error (402) uses setError, invalidates queries, and switches input mode', () => {
+  test('Payment required error (402) uses setError like any other error', () => {
+    // The CLI no longer talks to the Codebuff billing backend, so a 402
+    // response is handled the same as any other error (no special
+    // "outOfCredits" input mode).
     let messages: ChatMessage[] = [
       {
         id: 'ai-1',
@@ -689,12 +692,6 @@ describe('handleRunError', () => {
     const timerController = createMockTimerController()
     const updater = createBatchedMessageUpdater('ai-1', (fn: any) => {
       messages = fn(messages)
-    })
-
-    const setInputModeMock = mock(() => {})
-    useChatStore.getState = () => ({
-      ...originalGetState(),
-      setInputMode: setInputModeMock,
     })
 
     const paymentError = createPaymentRequiredError('Out of credits')
@@ -722,9 +719,6 @@ describe('handleRunError', () => {
 
     // Message should be marked complete
     expect(aiMessage!.isComplete).toBe(true)
-
-    // Input mode should switch to outOfCredits
-    expect(setInputModeMock).toHaveBeenCalledWith('outOfCredits')
 
     // Timer should still be stopped with error
     expect(timerController.stopCalls).toContain('error')

@@ -1,3 +1,5 @@
+import { CURRENT_GPT5_MODEL } from '@codebuff/common/constants/model-config'
+
 import { publisher } from '../constants'
 import {
   PLACEHOLDER,
@@ -39,15 +41,11 @@ Use the spawn_agents tool to spawn specialized agents to help you complete the u
 
 Users send prompts to you in one of a few user-selected modes, like DEFAULT, MAX, or PLAN.
 
-Every prompt sent consumes the user's credits, which is calculated based on the API cost of the models used.
-
-The user can use the "/usage" command to see how many credits they have used and have left, so you can tell them to check their usage this way.
-
 For other questions, you can direct them to codebuff.com, or especially codebuff.com/docs for detailed information about the product.
 
 # Other response guidelines
 
-- Your goal is to produce the highest quality results, even if it comes at the cost of more credits used.
+- Your goal is to produce the highest quality results.
 - Speed is important, but a secondary goal.
 
 # Response examples
@@ -121,7 +119,7 @@ export function createBaseDeep(): SecretAgentDefinition {
   return {
     id: 'base-deep',
     publisher,
-    model: 'openai/gpt-5.3-codex',
+    model: CURRENT_GPT5_MODEL,
     displayName: 'Buffy the Codex Orchestrator',
     spawnerPrompt:
       'Advanced base agent that orchestrates planning, editing, and reviewing for complex coding tasks',

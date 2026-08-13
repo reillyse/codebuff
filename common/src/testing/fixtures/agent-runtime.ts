@@ -104,7 +104,7 @@ export const TEST_AGENT_RUNTIME_IMPL = Object.freeze({
   getUserInfoFromApiKey: async <T extends string>({
     fields,
   }: {
-    apiKey: string
+    apiKey?: string
     fields: readonly T[]
   }) => {
     const user = {

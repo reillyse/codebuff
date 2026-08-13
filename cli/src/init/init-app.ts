@@ -32,7 +32,7 @@ export async function initializeApp(params: { cwd?: string }): Promise<{ claudeO
   enableManualThemeRefresh()
   initTimestampFormatter()
 
-  // Never fall back to Codebuff backend credits for Claude models
+  // Never fall back to the Codebuff backend for Claude models
   setClaudeOAuthFallbackEnabled(false)
 
   // Only allow Claude and OpenAI models (both routed via OAuth subscriptions)

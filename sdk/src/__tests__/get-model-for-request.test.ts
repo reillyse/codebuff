@@ -9,16 +9,20 @@ import {
 
 const OAUTH_TOKEN_ENV = 'CODEBUFF_CLAUDE_OAUTH_TOKEN'
 const OAUTH_REFRESH_TOKEN_ENV = 'CODEBUFF_CLAUDE_OAUTH_REFRESH_TOKEN'
+const BYOK_OPENROUTER_ENV = 'CODEBUFF_BYOK_OPENROUTER'
 
 describe('getModelForRequest', () => {
   let savedEnvToken: string | undefined
   let savedRefreshToken: string | undefined
+  let savedByokOpenRouter: string | undefined
 
   beforeEach(() => {
     savedEnvToken = process.env[OAUTH_TOKEN_ENV]
     savedRefreshToken = process.env[OAUTH_REFRESH_TOKEN_ENV]
+    savedByokOpenRouter = process.env[BYOK_OPENROUTER_ENV]
     delete process.env[OAUTH_TOKEN_ENV]
     delete process.env[OAUTH_REFRESH_TOKEN_ENV]
+    delete process.env[BYOK_OPENROUTER_ENV]
     resetClaudeOAuthRateLimit()
     setClaudeOAuthFallbackEnabled(true)
   })
@@ -33,6 +37,11 @@ describe('getModelForRequest', () => {
       process.env[OAUTH_REFRESH_TOKEN_ENV] = savedRefreshToken
     } else {
       delete process.env[OAUTH_REFRESH_TOKEN_ENV]
+    }
+    if (savedByokOpenRouter !== undefined) {
+      process.env[BYOK_OPENROUTER_ENV] = savedByokOpenRouter
+    } else {
+      delete process.env[BYOK_OPENROUTER_ENV]
     }
   })
 
@@ -80,5 +89,33 @@ describe('getModelForRequest', () => {
         model: 'anthropic/claude-sonnet-4',
       }),
     ).rejects.toThrow('rate limited')
+  })
+
+  test('uses BYOK OpenRouter directly without a Codebuff API key', async () => {
+    process.env[BYOK_OPENROUTER_ENV] = 'test-openrouter-key'
+
+    const result = await getModelForRequest({
+      model: 'anthropic/claude-sonnet-4',
+      skipClaudeOAuth: true,
+    })
+
+    expect(result.directProvider).toBe('openrouter')
+    expect(result.isClaudeOAuth).toBe(false)
+    expect(result.isChatGptOAuth).toBe(false)
+    expect((result.model as { provider: string }).provider).toBe(
+      'openrouter',
+    )
+  })
+
+  test('falls back to BYOK OpenRouter when Claude OAuth is rate limited', async () => {
+    process.env[BYOK_OPENROUTER_ENV] = 'test-openrouter-key'
+    markClaudeOAuthRateLimited()
+    setClaudeOAuthFallbackEnabled(false)
+
+    const result = await getModelForRequest({
+      model: 'anthropic/claude-sonnet-4',
+    })
+
+    expect(result.directProvider).toBe('openrouter')
   })
 })

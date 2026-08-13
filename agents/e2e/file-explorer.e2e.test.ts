@@ -286,9 +286,14 @@ export class AuthService {
         }),
       }
 
-      // Use local agent definitions to test the updated handleSteps
-      const localFilePickerDef = filePickerDefinition
-      const localFileListerDef = fileListerDefinition
+      // Use local agent definitions to test the updated handleSteps.
+      // Cast through `unknown`: SecretAgentDefinition's handleSteps Generator yield
+      // type is invariant-incompatible with the SDK's AgentDefinition (different
+      // local ToolName unions).
+      const localFilePickerDef =
+        filePickerDefinition as unknown as import('@codebuff/common/templates/initial-agents-dir/types/agent-definition').AgentDefinition
+      const localFileListerDef =
+        fileListerDefinition as unknown as import('@codebuff/common/templates/initial-agents-dir/types/agent-definition').AgentDefinition
 
       const client = new CodebuffClient({
         apiKey,

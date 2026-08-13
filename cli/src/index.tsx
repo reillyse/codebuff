@@ -16,18 +16,13 @@ import {
   focusManager,
 } from '@tanstack/react-query'
 import { Command } from 'commander'
-import { cyan, green, red, yellow } from 'picocolors'
 import React from 'react'
 
 import { App } from './app'
-import { handlePublish } from './commands/publish'
-import { runPlainLogin } from './login/plain-login'
 import { initializeApp } from './init/init-app'
 import { getProjectRoot, setProjectRoot } from './project-files'
 import { initAnalytics, trackEvent } from './utils/analytics'
-import { getAuthToken, getAuthTokenDetails } from './utils/auth'
 import { resetCodebuffClient } from './utils/codebuff-client'
-import { setApiClientAuthToken } from './utils/codebuff-api'
 import { getCliEnv } from './utils/env'
 import {
   getAgentLoadErrors,
@@ -200,8 +195,6 @@ async function main(): Promise<void> {
     initialMode,
   } = parseArgs()
 
-  const isLoginCommand = process.argv[2] === 'login'
-  const isPublishCommand = process.argv[2] === 'publish'
   const hasAgentOverride = Boolean(agent?.trim())
 
   const { claudeOAuthExpired } = await initializeApp({ cwd })
@@ -231,15 +224,6 @@ async function main(): Promise<void> {
   const sparrowTelemetryBeforeExit = async (): Promise<void> => {
     await sparrowFlushTelemetry(1_500)
     await sparrowShutdownTelemetry()
-  }
-
-  // Set the auth token for the API client
-  setApiClientAuthToken(getAuthToken())
-
-  // Handle login command before rendering the app
-  if (isLoginCommand) {
-    await runPlainLogin()
-    return
   }
 
   // Show project picker only when user starts at the home directory or an ancestor
@@ -273,38 +257,13 @@ async function main(): Promise<void> {
   // Capture any agent files that failed to load so we can surface a loud
   // banner at startup (fires on both fresh start and --continue).
   let agentLoadErrors: AgentLoadError[] = []
-  if (isPublishCommand || !hasAgentOverride) {
+  if (!hasAgentOverride) {
     await initializeAgentRegistry()
     agentLoadErrors = getAgentLoadErrors()
   }
 
   // Initialize skill registry (loads skills from .agents/skills)
   await initializeSkillRegistry()
-
-  // Handle publish command before rendering the app
-  if (isPublishCommand) {
-    const publishIndex = process.argv.indexOf('publish')
-    const agentIds = process.argv.slice(publishIndex + 1)
-    const result = await handlePublish(agentIds)
-
-    if (result.success && result.publisherId && result.agents) {
-      logger.info(green('✅ Successfully published:'))
-      for (const agent of result.agents) {
-        logger.info(
-          cyan(
-            `  - ${agent.displayName} (${result.publisherId}/${agent.id}@${agent.version})`,
-          ),
-        )
-      }
-      process.exit(0)
-    } else {
-      logger.error(red('❌ Publish failed'))
-      if (result.error) logger.error(red(`Error: ${result.error}`))
-      if (result.details) logger.error(red(result.details))
-      if (result.hint) logger.warn(yellow(`Hint: ${result.hint}`))
-      process.exit(1)
-    }
-  }
 
   if (clearLogs) {
     clearLogFile()
@@ -313,27 +272,11 @@ async function main(): Promise<void> {
   const queryClient = createQueryClient()
 
   const AppWithAsyncAuth = () => {
-    const [requireAuth, setRequireAuth] = React.useState<boolean | null>(null)
-    const [hasInvalidCredentials, setHasInvalidCredentials] =
-      React.useState(false)
     const [fileTree, setFileTree] = React.useState<FileTreeNode[]>([])
     const [currentProjectRoot, setCurrentProjectRoot] =
       React.useState(projectRoot)
     const [showProjectPickerScreen, setShowProjectPickerScreen] =
       React.useState(showProjectPicker)
-
-    React.useEffect(() => {
-      const apiKey = getAuthTokenDetails().token ?? ''
-
-      if (!apiKey) {
-        setRequireAuth(true)
-        setHasInvalidCredentials(false)
-        return
-      }
-
-      setHasInvalidCredentials(true)
-      setRequireAuth(false)
-    }, [])
 
     const loadFileTree = React.useCallback(async (root: string) => {
       try {
@@ -387,8 +330,6 @@ async function main(): Promise<void> {
       <App
         initialPrompt={initialPrompt}
         agentId={agent}
-        requireAuth={requireAuth}
-        hasInvalidCredentials={hasInvalidCredentials}
         fileTree={fileTree}
         continueChat={continueChat}
         continueChatId={continueId ?? undefined}

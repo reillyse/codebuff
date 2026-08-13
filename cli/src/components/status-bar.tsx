@@ -69,10 +69,8 @@ export const StatusBar = ({
         return <span fg={theme.secondary}>Press Ctrl-C again to exit</span>
       
       case 'clipboard':
-        // Use green color for feedback success messages
-        const isFeedbackSuccess = statusIndicatorState.message.includes('Feedback sent')
         return (
-          <span fg={isFeedbackSuccess ? theme.success : theme.primary}>
+          <span fg={theme.primary}>
             {statusIndicatorState.message}
           </span>
         )

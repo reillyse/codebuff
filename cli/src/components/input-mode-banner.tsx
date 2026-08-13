@@ -8,9 +8,6 @@ import { ChatGptConnectBanner } from './chatgpt-connect-banner'
 import { ClaudeConnectBanner } from './claude-connect-banner'
 import { HelpBanner } from './help-banner'
 import { PendingAttachmentsBanner } from './pending-attachments-banner'
-import { ReferralBanner } from './referral-banner'
-import { SubscriptionLimitBanner } from './subscription-limit-banner'
-import { UsageBanner } from './usage-banner'
 import { useChatStore } from '../state/chat-store'
 
 /**
@@ -19,22 +16,14 @@ import { useChatStore } from '../state/chat-store'
  * To add a new banner:
  * 1. Create the banner component using BottomBanner
  * 2. Add an entry here mapping the input mode to a render function
- *
- * Render functions receive context (like showTime) and return the component.
  */
-const BANNER_REGISTRY: Record<
-  string,
-  (ctx: { showTime: number }) => React.ReactNode
-> = {
+const BANNER_REGISTRY: Record<string, () => React.ReactNode> = {
   default: () => <PendingAttachmentsBanner />,
   image: () => <PendingAttachmentsBanner />,
-  usage: ({ showTime }) => <UsageBanner showTime={showTime} />,
-  referral: () => <ReferralBanner />,
   help: () => <HelpBanner />,
   ...(CLAUDE_OAUTH_ENABLED && !IS_FREEBUFF
     ? { 'connect:claude': () => <ClaudeConnectBanner /> }
     : {}),
-  ...(IS_FREEBUFF ? {} : { subscriptionLimit: () => <SubscriptionLimitBanner /> }),
   ...(CHATGPT_OAUTH_ENABLED
     ? { 'connect:chatgpt': () => <ChatGptConnectBanner /> }
     : {}),
@@ -50,21 +39,11 @@ const BANNER_REGISTRY: Record<
 export const InputModeBanner = () => {
   const inputMode = useChatStore((state) => state.inputMode)
 
-  const [usageBannerShowTime, setUsageBannerShowTime] = React.useState(() =>
-    Date.now(),
-  )
-
-  React.useEffect(() => {
-    if (inputMode === 'usage') {
-      setUsageBannerShowTime(Date.now())
-    }
-  }, [inputMode])
-
   const renderBanner = BANNER_REGISTRY[inputMode]
 
   if (!renderBanner) {
     return null
   }
 
-  return <>{renderBanner({ showTime: usageBannerShowTime })}</>
+  return <>{renderBanner()}</>
 }

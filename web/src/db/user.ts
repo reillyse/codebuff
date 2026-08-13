@@ -21,6 +21,8 @@ export async function getUserInfoFromApiKey<T extends UserColumn>({
   apiKey,
   fields,
 }: GetUserInfoFromApiKeyInput<T>): GetUserInfoFromApiKeyOutput<T> {
+  if (!apiKey) return null
+
   // Build a typed selection object for user columns
   const userSelection = Object.fromEntries(
     fields.map((field) => [field, schema.user[field]]),

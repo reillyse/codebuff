@@ -1,5 +1,3 @@
-import { API_KEY_ENV_VAR } from '@codebuff/common/constants/paths'
-
 import { WEBSITE_URL } from './constants'
 import { getCodebuffApiKeyFromEnv } from './env'
 import { run } from './run'
@@ -9,17 +7,12 @@ import type { RunState } from './run-state'
 
 export class CodebuffClient {
   public options: CodebuffClientOptions & {
-    apiKey: string
+    apiKey?: string
     fingerprintId: string
   }
 
   constructor(options: CodebuffClientOptions) {
     const foundApiKey = options.apiKey ?? getCodebuffApiKeyFromEnv()
-    if (!foundApiKey) {
-      throw new Error(
-        `Codebuff API key not found. Please provide an apiKey in the constructor of CodebuffClient or set the ${API_KEY_ENV_VAR} environment variable.`,
-      )
-    }
 
     this.options = {
       apiKey: foundApiKey,

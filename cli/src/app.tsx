@@ -1,14 +1,10 @@
-import { isRetryableStatusCode, getErrorStatusCode } from '@codebuff/sdk'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
 import { Chat } from './chat'
 import { ChatHistoryScreen } from './components/chat-history-screen'
-import { LoginModal } from './components/login-modal'
 import { ProjectPickerScreen } from './components/project-picker-screen'
 import { TerminalLink } from './components/terminal-link'
-import { useAuthQuery } from './hooks/use-auth-query'
-import { useAuthState } from './hooks/use-auth-state'
 import { useLogo } from './hooks/use-logo'
 import { useSheenAnimation } from './hooks/use-sheen-animation'
 import { useTerminalDimensions } from './hooks/use-terminal-dimensions'
@@ -32,8 +28,6 @@ import type { FileTreeNode } from '@codebuff/common/util/file'
 interface AppProps {
   initialPrompt: string | null
   agentId?: string
-  requireAuth: boolean | null
-  hasInvalidCredentials: boolean
   fileTree: FileTreeNode[]
   continueChat: boolean
   continueChatId?: string
@@ -48,8 +42,6 @@ interface AppProps {
 export const App = ({
   initialPrompt,
   agentId,
-  requireAuth,
-  hasInvalidCredentials,
   fileTree,
   continueChat,
   continueChatId,
@@ -111,22 +103,6 @@ export const App = ({
   useTerminalFocus({
     onFocusChange: setInputFocused,
     onSupportDetected: handleSupportDetected,
-  })
-
-  // Get auth query for network status tracking
-  const authQuery = useAuthQuery()
-
-  const {
-    isAuthenticated,
-    setIsAuthenticated,
-    setUser,
-    handleLoginSuccess,
-    logoutMutation,
-  } = useAuthState({
-    requireAuth,
-    inputRef,
-    setInputFocused,
-    resetChatStore,
   })
 
   const projectRoot = getProjectRoot()
@@ -268,36 +244,10 @@ export const App = ({
     )
   }, [logoComponent, projectRoot, theme])
 
-  // Derive auth reachability + retrying state from authQuery error
-  const authError = authQuery.error
-  const authErrorStatusCode = authError ? getErrorStatusCode(authError) : undefined
-
-  let authStatus: AuthStatus = 'ok'
-  if (authQuery.isError && authErrorStatusCode !== undefined) {
-    if (isRetryableStatusCode(authErrorStatusCode)) {
-      // Retryable errors (408 timeout, 429 rate limit, 5xx server errors)
-      authStatus = 'retrying'
-    } else if (authErrorStatusCode >= 500) {
-      // Non-retryable server errors (unlikely but possible future codes)
-      authStatus = 'unreachable'
-    }
-    // 4xx client errors (401, 403, etc.) keep 'ok' - network is fine, just auth failed
-  }
-
-  // Render login modal when not authenticated AND auth service is reachable
-  // Don't show login modal during network outages OR while retrying
-  if (
-    requireAuth !== null &&
-    isAuthenticated === false &&
-    authStatus === 'ok'
-  ) {
-    return (
-      <LoginModal
-        onLoginSuccess={handleLoginSuccess}
-        hasInvalidCredentials={hasInvalidCredentials}
-      />
-    )
-  }
+  // The CLI no longer depends on the Codebuff backend for auth (OAuth/BYOK
+  // credentials are validated at startup before the app renders), so there is
+  // no reachability/retry state to derive here.
+  const authStatus: AuthStatus = 'ok'
 
   // Render project picker when at home directory or outside a project
   if (showProjectPicker) {
@@ -331,9 +281,6 @@ export const App = ({
       agentId={agentId}
       fileTree={fileTree}
       inputRef={inputRef}
-      setIsAuthenticated={setIsAuthenticated}
-      setUser={setUser}
-      logoutMutation={logoutMutation}
       continueChat={effectiveContinueChat}
       continueChatId={effectiveContinueChatId}
       authStatus={authStatus}

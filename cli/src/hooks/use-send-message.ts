@@ -42,15 +42,14 @@ import type { SendMessageTimerEvent } from '../utils/send-message-timer'
 import {
   getClaudeOAuthCredentials,
   getValidClaudeOAuthCredentials,
+  hasByokOpenRouterCredentials,
+  hasDirectModelCredentialsForModel,
 } from '@codebuff/sdk'
 import type {
   AgentDefinition,
   MessageContent,
   RunState,
 } from '@codebuff/sdk'
-import { isCoveredBySubscription } from '../utils/subscription'
-
-import type { SubscriptionResponse } from './use-subscription-query'
 
 interface UseSendMessageOptions {
   inputRef: React.MutableRefObject<any>
@@ -72,7 +71,6 @@ interface UseSendMessageOptions {
   resumeQueue?: () => void
   continueChat: boolean
   continueChatId?: string
-  subscriptionData?: SubscriptionResponse | null
 }
 
 // Choose the agent definition by explicit selection or mode-based fallback.
@@ -123,7 +121,6 @@ export const useSendMessage = ({
   resumeQueue,
   continueChat,
   continueChatId,
-  subscriptionData,
 }: UseSendMessageOptions): {
   sendMessage: SendMessageFn
   clearMessages: () => void
@@ -139,7 +136,6 @@ export const useSendMessage = ({
     setIsChainInProgress,
     setHasReceivedPlanResponse,
     setLastMessageMode,
-    addSessionCredits,
     setRunState,
     setIsRetrying,
     setIsSearchingMemory,
@@ -261,10 +257,43 @@ export const useSendMessage = ({
       })
       setIsRetrying(false)
 
+      const agentDefinitions = loadAgentDefinitions()
+      const resolvedAgent = resolveAgent(agentMode, agentId, agentDefinitions)
+      if (
+        typeof resolvedAgent !== 'string' &&
+        !hasDirectModelCredentialsForModel(resolvedAgent.model)
+      ) {
+        const connectionHelp = resolvedAgent.model.startsWith('anthropic/')
+          ? 'Connect Claude with /connect:claude'
+          : resolvedAgent.model.startsWith('openai/')
+            ? 'Connect ChatGPT with /connect:chatgpt'
+            : 'Configure a provider credential'
+        setMessages((prev) => [
+          ...prev,
+          createErrorChatMessage(
+            `${connectionHelp}, or set CODEBUFF_BYOK_OPENROUTER to run ${resolvedAgent.model}.`,
+          ),
+        ])
+        await yieldToEventLoop()
+        setTimeout(() => scrollToLatest(), 0)
+        resetEarlyReturnState({
+          setCanProcessQueue,
+          updateChainInProgress,
+          isProcessingQueueRef,
+          isQueuePausedRef,
+        })
+        return
+      }
+
       // Pre-flight Claude OAuth credential check
       // Validates credentials can be refreshed before sending, matching cli-lite's checkClaudeSubscription behavior
       const claudeCredentials = getClaudeOAuthCredentials()
-      if (claudeCredentials) {
+      if (
+        typeof resolvedAgent !== 'string' &&
+        resolvedAgent.model.startsWith('anthropic/') &&
+        claudeCredentials &&
+        !hasByokOpenRouterCredentials()
+      ) {
         let credentialsValid = false
         try {
           const validCredentials = await Promise.race([
@@ -402,9 +431,6 @@ export const useSendMessage = ({
       inputRef.current?.focus()
 
       // Build effective prompt
-      const agentDefinitions = loadAgentDefinitions()
-      const resolvedAgent = resolveAgent(agentMode, agentId, agentDefinitions)
-
       const promptWithBashContext = bashContextForPrompt
         ? bashContextForPrompt + finalContent
         : finalContent
@@ -517,11 +543,6 @@ export const useSendMessage = ({
           setIsRetrying,
           onTotalCost: (cost: number) => {
             actualCredits = cost
-            // Only add to session credits if not covered by subscription
-            // (subscription credits are shown separately in the UI)
-            if (!isCoveredBySubscription(subscriptionData)) {
-              addSessionCredits(cost)
-            }
           },
         })
 
@@ -627,7 +648,6 @@ export const useSendMessage = ({
     },
     [
       addActiveSubagent,
-      addSessionCredits,
       agentId,
       inputRef,
       isChainInProgressRef,

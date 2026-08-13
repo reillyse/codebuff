@@ -19,7 +19,7 @@ export const userColumns = [
 ] as const
 export type UserColumn = keyof User
 export type GetUserInfoFromApiKeyInput<T extends UserColumn> = {
-  apiKey: string
+  apiKey?: string
   fields: readonly T[]
   logger: Logger
 }
@@ -57,7 +57,7 @@ export type GetAgentRunFromIdFn = <T extends AgentRunColumn>(
  * Fetch and validate an agent from the database by `publisher/agent-id[@version]` format
  */
 export type FetchAgentFromDatabaseFn = (params: {
-  apiKey: string
+  apiKey?: string
   parsedAgentId: {
     publisherId: string
     agentId: string
@@ -67,7 +67,7 @@ export type FetchAgentFromDatabaseFn = (params: {
 }) => Promise<AgentTemplate | null>
 
 export type StartAgentRunFn = (params: {
-  apiKey: string
+  apiKey?: string
   userId?: string
   agentId: string
   ancestorRunIds: string[]
@@ -75,7 +75,7 @@ export type StartAgentRunFn = (params: {
 }) => Promise<string | null>
 
 export type FinishAgentRunFn = (params: {
-  apiKey: string
+  apiKey?: string
   userId: string | undefined
   runId: string
   status: 'completed' | 'failed' | 'cancelled'
@@ -87,7 +87,7 @@ export type FinishAgentRunFn = (params: {
 }) => Promise<void>
 
 export type AddAgentStepFn = (params: {
-  apiKey: string
+  apiKey?: string
   userId: string | undefined
   agentRunId: string
   stepNumber: number

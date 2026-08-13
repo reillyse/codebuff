@@ -2538,7 +2538,7 @@ describe('context-pruner nonPrunableFloor fix — first-prune regression', () =>
     // nonPrunableFloor = 10k + 5k = 15k
     // rawAvailable = 200k − 15k − 15k = 170k → normal summarization
     const systemPrompt = 'S'.repeat(30_000) // ~10k tokens
-    const toolDef = { someTool: { description: 'T'.repeat(15_000) } } // ~5k tokens
+    const toolDef = { someTool: { description: 'T'.repeat(15_000), inputSchema: {} } } // ~5k tokens
 
     const messages = [
       createMessage('user', 'Start the task'),

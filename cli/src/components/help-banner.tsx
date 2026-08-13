@@ -1,7 +1,6 @@
 import React from 'react'
 
 import { BottomBanner } from './bottom-banner'
-import { useSubscriptionQuery } from '../hooks/use-subscription-query'
 import { useTheme } from '../hooks/use-theme'
 import { useChatStore } from '../state/chat-store'
 import { getChatGptOAuthStatus } from '../utils/chatgpt-oauth'
@@ -36,8 +35,6 @@ const Shortcut = ({
 export const HelpBanner = () => {
   const setInputMode = useChatStore((state) => state.setInputMode)
   const theme = useTheme()
-  const { data: subscriptionData } = useSubscriptionQuery()
-  const hasSubscription = subscriptionData?.hasSubscription ?? false
   const chatGptOAuth = getChatGptOAuthStatus()
 
   // Auto-hide after timeout
@@ -76,25 +73,10 @@ export const HelpBanner = () => {
           </box>
         </box>
 
-        {/* Credits Section */}
+        {/* Other Section */}
         <box style={{ flexDirection: 'column', gap: 0 }}>
-          <SectionHeader>Credits</SectionHeader>
+          <SectionHeader>Other</SectionHeader>
           <box style={{ flexDirection: 'column', paddingLeft: 2 }}>
-            {!IS_FREEBUFF && (
-              <box style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 1 }}>
-                <text style={{ fg: theme.foreground }}>1 credit = 1 cent</text>
-                <text style={{ fg: theme.muted }}>·</text>
-                <text style={{ fg: theme.foreground }}>/subscribe</text>
-                <text style={{ fg: theme.muted }}>·</text>
-                <text style={{ fg: theme.foreground }}>/usage</text>
-                {!hasSubscription && (
-                  <>
-                    <text style={{ fg: theme.muted }}>·</text>
-                    <text style={{ fg: theme.foreground }}>/ads:enable</text>
-                  </>
-                )}
-              </box>
-            )}
             <box style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: 1 }}>
               <text style={{ fg: theme.foreground }}>/logs:clear</text>
               <text style={{ fg: theme.muted }}>wipe debug/ log files</text>
@@ -109,9 +91,6 @@ export const HelpBanner = () => {
                 Try workflow: /interview → /plan → implement → /review
               </text>
             )}
-            <text style={{ fg: theme.muted }}>
-              Subscribe for the best credit rates — /subscribe
-            </text>
           </box>
         </box>
       </box>

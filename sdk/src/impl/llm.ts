@@ -34,7 +34,7 @@ import {
   markChatGptOAuthRateLimited,
   markClaudeOAuthRateLimited,
 } from './model-provider'
-import { getValidClaudeOAuthCredentials, refreshClaudeOAuthToken, refreshChatGptOAuthToken } from '../credentials'
+import { getValidClaudeOAuthCredentials, hasByokOpenRouterCredentials, refreshClaudeOAuthToken, refreshChatGptOAuthToken } from '../credentials'
 import { getErrorStatusCode } from '../error-utils'
 
 import type { ModelRequestParams } from './model-provider'
@@ -47,9 +47,10 @@ import type {
 } from '@codebuff/common/types/contracts/llm'
 import type { ParamsOf } from '@codebuff/common/types/function-params'
 import type { JSONObject } from '@codebuff/common/types/json'
+import type { Message } from '@codebuff/common/types/messages/codebuff-message'
 import type { OpenRouterProviderOptions } from '@codebuff/internal/openrouter-ai-sdk'
 import type { LanguageModel } from 'ai'
-import type z from 'zod/v4'
+import z from 'zod/v4'
 
 // Provider routing documentation: https://openrouter.ai/docs/features/provider-routing
 const providerOrder = {
@@ -151,7 +152,8 @@ function getProviderOptions(params: {
   n?: number
   costMode?: string
   cacheDebugCorrelation?: string
-}): { codebuff: JSONObject } {
+  directProvider?: 'openrouter'
+}): Record<string, JSONObject> {
   const {
     model,
     runId,
@@ -161,6 +163,7 @@ function getProviderOptions(params: {
     n,
     costMode,
     cacheDebugCorrelation,
+    directProvider,
   } = params
 
   let providerConfig: Record<string, any>
@@ -178,9 +181,18 @@ function getProviderOptions(params: {
     }
   }
 
+  if (directProvider === 'openrouter') {
+    return {
+      ...providerOptions,
+      openrouter: {
+        ...providerOptions?.openrouter,
+        provider: providerConfig,
+      },
+    }
+  }
+
   return {
     ...providerOptions,
-    // Could either be "codebuff" or "openaiCompatible"
     codebuff: {
       ...providerOptions?.codebuff,
       // All values here get appended to the request body
@@ -283,13 +295,15 @@ function getModelProvider(model: LanguageModel): string {
 function extractUpstreamCostUsd(
   providerMetadata: Record<string, unknown> | undefined,
 ): number | undefined {
-  const cbMeta = (providerMetadata?.codebuff ?? {}) as {
+  const providerMeta = (providerMetadata?.codebuff ??
+    providerMetadata?.openrouter ??
+    {}) as {
     usage?: OpenRouterUsageAccounting
   }
-  if (!cbMeta.usage) return undefined
+  if (!providerMeta.usage) return undefined
   return (
-    (cbMeta.usage.cost ?? 0) +
-    (cbMeta.usage.costDetails?.upstreamInferenceCost ?? 0)
+    (providerMeta.usage.cost ?? 0) +
+    (providerMeta.usage.costDetails?.upstreamInferenceCost ?? 0)
   )
 }
 
@@ -492,10 +506,11 @@ export async function* promptAiSdkStream(
     skipChatGptOAuth: params.skipChatGptOAuth,
     costMode: params.costMode,
   }
-  const {
-    model: aiSDKModel,
-    isClaudeOAuth,
-    isChatGptOAuth,
+    const {
+      model: aiSDKModel,
+      isClaudeOAuth,
+      isChatGptOAuth,
+      directProvider,
     // SPARROW (telemetry): stable per-OAuth-account hash, only set on the
     // OAuth routes. Forwarded into the gen_ai.chat span at finalize() so
     // multi-subscription users can be distinguished in Honeycomb.
@@ -503,10 +518,11 @@ export async function* promptAiSdkStream(
   } = await getModelForRequest(modelParams)
 
   // SPARROW: classify route for this attempt (may change across fallbacks).
-  const sparrowRoute: RouteValue = classifyLlmRoute({
-    isClaudeOAuth,
-    isChatGptOAuth,
-    viaCodebuffBackend: !isClaudeOAuth && !isChatGptOAuth,
+    const sparrowRoute: RouteValue = classifyLlmRoute({
+      isClaudeOAuth,
+      isChatGptOAuth,
+      viaCodebuffBackend: !isClaudeOAuth && !isChatGptOAuth && !directProvider,
+      directProvider,
   })
 
   // Track and notify about Claude OAuth usage
@@ -545,8 +561,8 @@ export async function* promptAiSdkStream(
     // When using Claude/ChatGPT OAuth, disable retries so errors surface immediately
     // (allowing fast fallback to Codebuff backend) instead of retrying 4 times first
     ...((isClaudeOAuth || isChatGptOAuth) && { maxRetries: 0 }),
-    // For ChatGPT OAuth direct, don't send codebuff metadata/provider options to OpenAI
-    ...(isChatGptOAuth
+    // OAuth providers do not understand Codebuff/OpenRouter provider options.
+    ...(isClaudeOAuth || isChatGptOAuth
       ? {}
       : {
           providerOptions: getProviderOptions({
@@ -554,6 +570,7 @@ export async function* promptAiSdkStream(
             providerOptions: originalProviderOptions,
             agentProviderOptions: params.agentProviderOptions,
             cacheDebugCorrelation: params.cacheDebugCorrelation,
+            directProvider,
           }),
         }),
     // Handle tool call errors gracefully by passing them through to our validation layer
@@ -794,7 +811,10 @@ export async function* promptAiSdkStream(
           succeeded: false,
           error: 'claude_oauth_rate_limited',
         })
-        if (!isClaudeOAuthFallbackEnabled()) {
+        if (
+          !isClaudeOAuthFallbackEnabled() &&
+          !hasByokOpenRouterCredentials()
+        ) {
           throw chunkValue.error
         }
         // Try to get the actual reset time from the quota API, fall back to default cooldown
@@ -807,7 +827,7 @@ export async function* promptAiSdkStream(
         if (params.onClaudeOAuthStatusChange) {
           params.onClaudeOAuthStatusChange(false)
         }
-        // Retry with Codebuff backend
+        // Retry with BYOK OpenRouter or the Codebuff backend.
         const fallbackResult = yield* promptAiSdkStream({
           ...params,
           skipClaudeOAuth: true,
@@ -852,9 +872,13 @@ export async function* promptAiSdkStream(
           error: 'chatgpt_oauth_rate_limited',
         })
 
-        // In free mode OR when fallback is disabled, don't fall back to the
-        // Codebuff backend (which would use the server OPENAI_API_KEY) — fail instead.
-        if (isFreeMode(params.costMode) || !isChatGptOAuthFallbackEnabled()) {
+        // Never fall back to the Codebuff backend in free/disabled-fallback
+        // mode, but a configured BYOK OpenRouter route is still safe.
+        if (
+          (isFreeMode(params.costMode) ||
+            !isChatGptOAuthFallbackEnabled()) &&
+          !hasByokOpenRouterCredentials()
+        ) {
           const err = new Error(
             `ChatGPT rate limit reached. Please wait a few minutes and try again. (${rateLimitErrorDetails})`,
           )
@@ -916,8 +940,11 @@ export async function* promptAiSdkStream(
           }
         }
 
-        // Refresh failed or already retried — fall back to Codebuff backend (if enabled)
-        if (!isClaudeOAuthFallbackEnabled()) {
+        // Refresh failed or already retried — use a configured safe fallback.
+        if (
+          !isClaudeOAuthFallbackEnabled() &&
+          !hasByokOpenRouterCredentials()
+        ) {
           throw chunkValue.error
         }
         logger.info({ model: requestedModel }, 'Claude OAuth token refresh unsuccessful, falling back to Codebuff backend')
@@ -975,9 +1002,13 @@ export async function* promptAiSdkStream(
         }
 
         // Refresh failed or already retried
-        // In free mode OR when fallback is disabled, don't fall back to the
-        // Codebuff backend (which would use the server OPENAI_API_KEY) — fail instead.
-        if (isFreeMode(params.costMode) || !isChatGptOAuthFallbackEnabled()) {
+        // Never fall back to the Codebuff backend in free/disabled-fallback
+        // mode, but a configured BYOK OpenRouter route is still safe.
+        if (
+          (isFreeMode(params.costMode) ||
+            !isChatGptOAuthFallbackEnabled()) &&
+          !hasByokOpenRouterCredentials()
+        ) {
           const err = new Error(
             'ChatGPT OAuth authentication failed. Please reconnect with /connect:chatgpt and try again.',
           )
@@ -985,7 +1016,7 @@ export async function* promptAiSdkStream(
           throw err
         }
 
-        // Fall back to Codebuff backend
+        // Fall back to BYOK OpenRouter or the Codebuff backend.
         const fallbackResult = yield* promptAiSdkStream({
           ...params,
           skipChatGptOAuth: true,
@@ -1152,8 +1183,8 @@ export async function* promptAiSdkStream(
       ? calculateUsedCredits({ costDollars: sparrowCostUsd })
       : undefined
 
-  // Skip cost tracking for Claude OAuth (user is on their own subscription)
-  if (!isClaudeOAuth && !isChatGptOAuth) {
+  // Direct-provider users pay their provider, not Codebuff credits.
+  if (!isClaudeOAuth && !isChatGptOAuth && !directProvider) {
     // Call the cost callback if provided
     if (params.onCostCalculated && sparrowCostUsd) {
       await params.onCostCalculated(
@@ -1191,7 +1222,9 @@ export async function* promptAiSdkStream(
     ),
     costUsd: isClaudeOAuth || isChatGptOAuth ? undefined : sparrowCostUsd,
     costCredits:
-      isClaudeOAuth || isChatGptOAuth ? undefined : sparrowCostCredits,
+      isClaudeOAuth || isChatGptOAuth || directProvider
+        ? undefined
+        : sparrowCostCredits,
     // SPARROW (telemetry): only set on OAuth routes; undefined for
     // codebuff_backend (deriveOAuthAccountId returned undefined).
     oauthAccountId: sparrowOAuthAccountId,
@@ -1281,34 +1314,34 @@ export async function promptAiSdk(
   const modelParams: ModelRequestParams = {
     apiKey: params.apiKey,
     model: params.model,
-    skipClaudeOAuth: true, // Claude OAuth is streaming-only; non-streaming callers use the backend
-    // Allow ChatGPT OAuth: when connected, we handle it via the streaming path below
-    // (the ChatGPT backend is streaming-only), so non-streaming calls no longer
-    // silently use the server-side OPENAI_API_KEY.
+    // Both Claude OAuth and ChatGPT OAuth backends are streaming-only (no
+    // non-streaming doGenerate()/generateText() support), so we handle them
+    // via the streaming path below instead of silently falling back to the
+    // Codebuff backend / server-side API key.
   }
-  const { model: aiSDKModel, isChatGptOAuth } =
-    await getModelForRequest(modelParams)
+  const {
+    model: aiSDKModel,
+    isClaudeOAuth,
+    isChatGptOAuth,
+    directProvider,
+  } = await getModelForRequest(modelParams)
 
-  if (isChatGptOAuth) {
-    // ChatGPT backend is streaming-only (Responses API). Collect the stream
-    // internally, reusing all OAuth error handling, telemetry, and fallback
-    // logic from promptAiSdkStream. getModelForRequest will be called again
-    // inside promptAiSdkStream — cheap, credentials are cached.
+  if (isClaudeOAuth || isChatGptOAuth) {
+    // Collect the stream internally, reusing all OAuth error handling,
+    // telemetry, and fallback logic from promptAiSdkStream. getModelForRequest
+    // will be called again inside promptAiSdkStream — cheap, credentials are
+    // cached.
     let content = ''
-    for await (const chunk of promptAiSdkStream({
-      ...params,
-      skipClaudeOAuth: true,
-    })) {
+    for await (const chunk of promptAiSdkStream(params)) {
       if (chunk.type === 'text') content += chunk.text
     }
     return promptSuccess(content)
   }
 
-  // SPARROW: open a gen_ai.chat span around the generateText call. Route is
-  // codebuff_backend here — the ChatGPT OAuth route returned above, and Claude
-  // OAuth is skipped for non-streaming callers.
+  // SPARROW: open a gen_ai.chat span around the generateText call.
   const sparrowRoute: RouteValue = classifyLlmRoute({
-    viaCodebuffBackend: true,
+    viaCodebuffBackend: !directProvider,
+    directProvider,
   })
   const sparrowHandle = recordLlmCall({
     system: 'ai-sdk',
@@ -1337,6 +1370,7 @@ export async function promptAiSdk(
         ...params,
         agentProviderOptions: params.agentProviderOptions,
         cacheDebugCorrelation: params.cacheDebugCorrelation,
+        directProvider,
       }),
     })
   } catch (err) {
@@ -1360,7 +1394,7 @@ export async function promptAiSdk(
   )
 
   // Call the cost callback if provided
-  if (params.onCostCalculated && costOverrideDollars) {
+  if (!directProvider && params.onCostCalculated && costOverrideDollars) {
     await params.onCostCalculated(
       calculateUsedCredits({ costDollars: costOverrideDollars }),
     )
@@ -1392,7 +1426,7 @@ export async function promptAiSdk(
     ),
     costUsd: costOverrideDollars,
     costCredits:
-      costOverrideDollars !== undefined
+      !directProvider && costOverrideDollars !== undefined
         ? calculateUsedCredits({ costDollars: costOverrideDollars })
         : undefined,
   })
@@ -1419,19 +1453,54 @@ export async function promptAiSdkStructured<T>(
   const modelParams: ModelRequestParams = {
     apiKey: params.apiKey,
     model: params.model,
-    skipClaudeOAuth: true, // Always use Codebuff backend for non-streaming
-    // Always use Codebuff backend: generateObject calls doGenerate() which
-    // expects a JSON response, but the ChatGPT backend is streaming-only
-    // (Responses API). Structured output via streamed text is unreliable, so
-    // structured calls intentionally do NOT use ChatGPT OAuth.
-    skipChatGptOAuth: true,
+    // Both Claude OAuth and ChatGPT OAuth backends are streaming-only, so
+    // generateObject's non-streaming doGenerate() can't be used for either —
+    // for both, we inject the JSON Schema into the prompt, collect the
+    // streamed text, and validate it against the Zod schema below (instead of
+    // silently falling back to the Codebuff backend / server-side API key).
   }
-  const { model: aiSDKModel } = await getModelForRequest(modelParams)
+  const {
+    model: aiSDKModel,
+    isClaudeOAuth,
+    isChatGptOAuth,
+    directProvider,
+  } = await getModelForRequest(modelParams)
 
-  // SPARROW: open a gen_ai.chat span around generateObject. Route is always
-  // codebuff_backend because skip*OAuth are forced true above.
+  if (isClaudeOAuth || isChatGptOAuth) {
+    // Inject the JSON Schema into a trailing user message so the model emits
+    // conforming JSON, collect the streamed text, then validate with the Zod
+    // schema. Reuses all OAuth error handling, telemetry, and fallback logic
+    // from promptAiSdkStream. getModelForRequest runs again inside — cheap,
+    // credentials are cached.
+    const jsonSchema = z.toJSONSchema(params.schema)
+    const schemaInstructionText =
+      'Respond with ONLY a JSON object that conforms to the following JSON ' +
+      'Schema. Do not include markdown code fences or any prose — output raw ' +
+      `JSON only.\n\nJSON Schema:\n${JSON.stringify(jsonSchema)}`
+    const schemaInstruction: Message = {
+      role: 'user',
+      content: [{ type: 'text' as const, text: schemaInstructionText }],
+    }
+    let text = ''
+    for await (const chunk of promptAiSdkStream({
+      ...params,
+      messages: [...params.messages, schemaInstruction],
+    })) {
+      if (chunk.type === 'text') text += chunk.text
+    }
+    // Strip optional ```json ... ``` fences before parsing.
+    const cleaned = text
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim()
+    return promptSuccess(params.schema.parse(JSON.parse(cleaned)))
+  }
+
+  // SPARROW: open a gen_ai.chat span around generateObject.
   const sparrowRoute: RouteValue = classifyLlmRoute({
-    viaCodebuffBackend: true,
+    viaCodebuffBackend: !directProvider,
+    directProvider,
   })
   const sparrowHandle = recordLlmCall({
     system: 'ai-sdk',
@@ -1465,6 +1534,7 @@ export async function promptAiSdkStructured<T>(
         ...params,
         agentProviderOptions: params.agentProviderOptions,
         cacheDebugCorrelation: params.cacheDebugCorrelation,
+        directProvider,
       }),
     })
   } catch (err) {
@@ -1490,7 +1560,7 @@ export async function promptAiSdkStructured<T>(
   )
 
   // Call the cost callback if provided
-  if (params.onCostCalculated && costOverrideDollars) {
+  if (!directProvider && params.onCostCalculated && costOverrideDollars) {
     await params.onCostCalculated(
       calculateUsedCredits({ costDollars: costOverrideDollars }),
     )
@@ -1522,7 +1592,7 @@ export async function promptAiSdkStructured<T>(
     ),
     costUsd: costOverrideDollars,
     costCredits:
-      costOverrideDollars !== undefined
+      !directProvider && costOverrideDollars !== undefined
         ? calculateUsedCredits({ costDollars: costOverrideDollars })
         : undefined,
   })

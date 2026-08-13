@@ -23,7 +23,6 @@ import { cloneDeep } from 'lodash'
 
 import { getErrorStatusCode } from './error-utils'
 import { getAgentRuntimeImpl } from './impl/agent-runtime'
-import { getUserInfoFromApiKey } from './impl/database'
 import { initialSessionState, applyOverridesToSessionState } from './run-state'
 import { changeFile } from './tools/change-file'
 import { applyPatchTool } from './tools/apply-patch'
@@ -203,7 +202,7 @@ const createAbortError = (signal?: AbortSignal) => {
 
 type RunExecutionOptions = RunOptions &
   CodebuffClientOptions & {
-    apiKey: string
+    apiKey?: string
     fingerprintId: string
   }
 type RunReturnType = RunState
@@ -575,7 +574,7 @@ async function runOnce({
   const promptId = Math.random().toString(36).substring(2, 15)
 
   // Send input
-  const userInfo = await getUserInfoFromApiKey({
+  const userInfo = await agentRuntimeImpl.getUserInfoFromApiKey({
     ...agentRuntimeImpl,
     apiKey,
     fields: ['id'],

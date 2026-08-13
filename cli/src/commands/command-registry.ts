@@ -7,9 +7,7 @@ import {
 } from '@codebuff/common/mcp/client'
 import { loadMCPConfig, loadMCPConfigSync } from '@codebuff/sdk'
 import { clearMcpOAuthCredentials, getMcpOAuthStatus, McpOAuthProvider } from '@codebuff/sdk/mcp/oauth-provider'
-import open from 'open'
 
-import { handleAdsEnable, handleAdsDisable } from './ads'
 import { handleHippoEnable, handleHippoDisable, handleHippoStatus, handleHippoRetry, handleHippoLogEnable, handleHippoLogDisable, handleHippoLogToggle } from './hippo'
 import { handleLogsClear } from './logs'
 import { buildInterviewPrompt, buildPlanPrompt, buildReviewPromptFromArgs } from './prompt-builders'
@@ -19,14 +17,8 @@ import { useThemeStore } from '../hooks/use-theme'
 import { handleHelpCommand } from './help'
 import { handleImageCommand } from './image'
 import { handleInitializationFlowLocally } from './init'
-import { handleReferralCode } from './referral'
 import { runBashCommand } from './router'
-import { normalizeReferralCode } from './router-utils'
-import { handleUsageCommand } from './usage'
-import { WEBSITE_URL } from '../login/constants'
 import { useChatStore } from '../state/chat-store'
-import { useFeedbackStore } from '../state/feedback-store'
-import { useLoginStore } from '../state/login-store'
 import { getChatGptOAuthStatus } from '../utils/chatgpt-oauth'
 import { AGENT_MODES, IS_FREEBUFF } from '../utils/constants'
 import { getSystemMessage, getUserMessage } from '../utils/message-history'
@@ -37,9 +29,7 @@ import type { MultilineInputHandle } from '../components/multiline-input'
 import type { InputValue, PendingAttachment } from '../types/store'
 import type { ChatMessage } from '../types/chat'
 import type { SendMessageFn } from '../types/contracts/send-message'
-import type { User } from '../utils/auth'
 import type { AgentMode } from '../utils/constants'
-import type { UseMutationResult } from '@tanstack/react-query'
 
 export type RouterParams = {
   abortControllerRef: React.MutableRefObject<AbortController | null>
@@ -48,7 +38,6 @@ export type RouterParams = {
   inputValue: string
   isChainInProgressRef: React.MutableRefObject<boolean>
   isStreaming: boolean
-  logoutMutation: UseMutationResult<boolean, Error, void, unknown>
   streamMessageIdRef: React.MutableRefObject<string | null>
   addToQueue: (message: string, attachments?: PendingAttachment[]) => void
   clearMessages: () => void
@@ -60,20 +49,15 @@ export type RouterParams = {
   setInputValue: (
     value: InputValue | ((prev: InputValue) => InputValue),
   ) => void
-  setIsAuthenticated: (value: React.SetStateAction<boolean | null>) => void
   setMessages: (
     value: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]),
   ) => void
-  setUser: (value: React.SetStateAction<User | null>) => void
   stopStreaming: () => void
 }
 
 export type CommandResult = {
-  openFeedbackMode?: boolean
-  openPublishMode?: boolean
   openChatHistory?: boolean
   openReviewScreen?: boolean
-  preSelectAgents?: string[]
 } | void
 
 export type CommandHandler = (
@@ -178,13 +162,7 @@ const clearInput = (params: RouterParams) => {
 }
 
 const FREEBUFF_REMOVED_COMMANDS = new Set([
-  'ads:enable',
-  'ads:disable',
-  'refer-friends',
-  'usage',
-  'subscribe',
   'image',
-  'publish',
   'gpt-5-agent',
   'connect:claude',
 ])
@@ -194,24 +172,6 @@ const FREEBUFF_REMOVED_COMMANDS = new Set([
 const FREEBUFF_ONLY_COMMANDS = new Set<string>(['plan'])
 
 const ALL_COMMANDS: CommandDefinition[] = [
-  defineCommand({
-    name: 'ads:enable',
-    handler: (params) => {
-      const { postUserMessage } = handleAdsEnable()
-      params.setMessages((prev) => postUserMessage(prev))
-      params.saveToHistory(params.inputValue.trim())
-      clearInput(params)
-    },
-  }),
-  defineCommand({
-    name: 'ads:disable',
-    handler: (params) => {
-      const { postUserMessage } = handleAdsDisable()
-      params.setMessages((prev) => postUserMessage(prev))
-      params.saveToHistory(params.inputValue.trim())
-      clearInput(params)
-    },
-  }),
   defineCommand({
     name: 'hippo:enable',
     handler: (params) => {
@@ -300,23 +260,6 @@ const ALL_COMMANDS: CommandDefinition[] = [
     },
   }),
   defineCommandWithArgs({
-    name: 'feedback',
-    aliases: ['bug', 'report'],
-    handler: (params, args) => {
-      const trimmedArgs = args.trim()
-
-      // If user provided feedback text directly, pre-populate the form
-      if (trimmedArgs) {
-        useFeedbackStore.getState().setFeedbackText(trimmedArgs)
-        useFeedbackStore.getState().setFeedbackCursor(trimmedArgs.length)
-      }
-
-      params.saveToHistory(params.inputValue.trim())
-      clearInput(params)
-      return { openFeedbackMode: true }
-    },
-  }),
-  defineCommandWithArgs({
     name: 'bash',
     aliases: ['!'],
     handler: (params, args) => {
@@ -335,80 +278,6 @@ const ALL_COMMANDS: CommandDefinition[] = [
       useChatStore.getState().setInputMode('bash')
       params.saveToHistory(params.inputValue.trim())
       clearInput(params)
-    },
-  }),
-  defineCommandWithArgs({
-    name: 'refer-friends',
-    aliases: ['referral', 'redeem'],
-    handler: async (params, args) => {
-      const trimmedArgs = args.trim()
-
-      // If user provided a code directly, redeem it immediately
-      if (trimmedArgs) {
-        const code = normalizeReferralCode(trimmedArgs)
-        try {
-          const { postUserMessage } = await handleReferralCode(code)
-          params.setMessages((prev) => [
-            ...prev,
-            getUserMessage(params.inputValue.trim()),
-            ...postUserMessage([]),
-          ])
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : 'Unknown error'
-          params.setMessages((prev) => [
-            ...prev,
-            getUserMessage(params.inputValue.trim()),
-            getSystemMessage(`Error redeeming referral code: ${errorMessage}`),
-          ])
-        }
-        params.saveToHistory(params.inputValue.trim())
-        clearInput(params)
-        return
-      }
-
-      // Otherwise enter referral mode
-      useChatStore.getState().setInputMode('referral')
-      params.saveToHistory(params.inputValue.trim())
-      clearInput(params)
-    },
-  }),
-  defineCommand({
-    name: 'login',
-    aliases: ['signin'],
-    handler: (params) => {
-      params.setMessages((prev) => [
-        ...prev,
-        getSystemMessage(
-          "You're already in the app. Use /logout to switch accounts.",
-        ),
-      ])
-      clearInput(params)
-    },
-  }),
-  defineCommand({
-    name: 'logout',
-    aliases: ['signout'],
-    handler: (params) => {
-      params.abortControllerRef.current?.abort()
-      params.stopStreaming()
-      params.setCanProcessQueue(false)
-
-      const { resetLoginState } = useLoginStore.getState()
-      params.logoutMutation.mutate(undefined, {
-        onSettled: () => {
-          resetLoginState()
-          params.setMessages((prev) => [
-            ...prev,
-            getSystemMessage('Logged out.'),
-          ])
-          clearInput(params)
-          setTimeout(() => {
-            params.setUser(null)
-            params.setIsAuthenticated(false)
-          }, 300)
-        },
-      })
     },
   }),
   defineCommand({
@@ -480,24 +349,6 @@ const ALL_COMMANDS: CommandDefinition[] = [
       }, 0)
     },
   }),
-  defineCommand({
-    name: 'usage',
-    aliases: ['credits'],
-    handler: async (params) => {
-      const { postUserMessage } = await handleUsageCommand()
-      params.setMessages((prev) => postUserMessage(prev))
-      params.saveToHistory(params.inputValue.trim())
-      clearInput(params)
-    },
-  }),
-  defineCommand({
-    name: 'subscribe',
-    aliases: ['strong', 'sub', 'buy-credits'],
-    handler: (params) => {
-      open(WEBSITE_URL + '/subscribe')
-      clearInput(params)
-    },
-  }),
   defineCommandWithArgs({
     name: 'image',
     aliases: ['img', 'attach'],
@@ -548,23 +399,6 @@ const ALL_COMMANDS: CommandDefinition[] = [
       },
     }),
   ),
-  defineCommandWithArgs({
-    name: 'publish',
-    handler: (params, args) => {
-      const trimmedArgs = args.trim()
-      params.saveToHistory(params.inputValue.trim())
-      clearInput(params)
-
-      // If user provided agent ids directly, skip to confirmation step
-      if (trimmedArgs) {
-        const agentIds = trimmedArgs.split(/\s+/).filter(Boolean)
-        return { openPublishMode: true, preSelectAgents: agentIds }
-      }
-
-      // Otherwise open selection UI
-      return { openPublishMode: true }
-    },
-  }),
   defineCommand({
     name: 'gpt-5-agent',
     handler: (params) => {
@@ -586,7 +420,7 @@ const ALL_COMMANDS: CommandDefinition[] = [
           ...prev,
           getUserMessage(params.inputValue.trim()),
           getSystemMessage(
-            'Claude OAuth connection has been disabled. Use /subscribe for usage across all models.',
+            'Claude OAuth connection has been disabled.',
           ),
         ])
         clearInput(params)

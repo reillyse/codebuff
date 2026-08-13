@@ -86,8 +86,6 @@ const defaultCallbacks = {
   onBuildFast: () => {},
   onBuildMax: () => {},
   onBuildFree: () => {},
-  onFeedback: () => {},
-  onCloseFeedback: () => {},
 }
 
 const initializeStore = (overrides: {
@@ -191,16 +189,12 @@ describe('MessageBlockStore', () => {
       const mockBuildFast = () => {}
       const mockBuildMax = () => {}
       const mockBuildFree = () => {}
-      const mockFeedback = () => {}
-      const mockCloseFeedback = () => {}
 
       useMessageBlockStore.getState().setCallbacks({
         onToggleCollapsed: mockToggle,
         onBuildFast: mockBuildFast,
         onBuildMax: mockBuildMax,
         onBuildFree: mockBuildFree,
-        onFeedback: mockFeedback,
-        onCloseFeedback: mockCloseFeedback,
       })
 
       const state = useMessageBlockStore.getState()
@@ -208,8 +202,6 @@ describe('MessageBlockStore', () => {
       expect(state.callbacks.onBuildFast).toBe(mockBuildFast)
       expect(state.callbacks.onBuildMax).toBe(mockBuildMax)
       expect(state.callbacks.onBuildFree).toBe(mockBuildFree)
-      expect(state.callbacks.onFeedback).toBe(mockFeedback)
-      expect(state.callbacks.onCloseFeedback).toBe(mockCloseFeedback)
     })
 
     test('callbacks are independent from context', () => {
@@ -251,8 +243,6 @@ describe('MessageBlockStore', () => {
         onBuildFast: mockFn,
         onBuildMax: mockFn,
         onBuildFree: mockFn,
-        onFeedback: mockFn,
-        onCloseFeedback: mockFn,
       })
 
       useMessageBlockStore.getState().reset()
@@ -469,25 +459,6 @@ describe('callback invocation', () => {
     expect(toggleCalledWith).toBe('test-message-id')
   })
 
-  test('onFeedback callback receives messageId and options', () => {
-    let feedbackMessageId: string | undefined
-    let feedbackOptions: object | undefined
-    const mockFeedback = (messageId: string, options?: object) => {
-      feedbackMessageId = messageId
-      feedbackOptions = options
-    }
-
-    useMessageBlockStore.getState().setCallbacks({
-      ...defaultCallbacks,
-      onFeedback: mockFeedback,
-    })
-
-    const storedCallback = useMessageBlockStore.getState().callbacks.onFeedback
-    storedCallback('msg-123', { category: 'app_bug' })
-
-    expect(feedbackMessageId).toBe('msg-123')
-    expect(feedbackOptions).toEqual({ category: 'app_bug' })
-  })
 })
 
 // =============================================================================

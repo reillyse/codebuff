@@ -110,6 +110,9 @@ export async function getUserInfoFromApiKey<T extends UserColumn>(
   params: GetUserInfoFromApiKeyInput<T>,
 ): GetUserInfoFromApiKeyOutput<T> {
   const { apiKey, fields, logger } = params
+  if (!apiKey) {
+    throw createAuthError()
+  }
 
   const cached = userInfoCache[apiKey]
   if (cached === null) {

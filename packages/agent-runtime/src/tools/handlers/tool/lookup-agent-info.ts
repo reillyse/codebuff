@@ -19,7 +19,7 @@ export const handleLookupAgentInfo = (async (params: {
   toolCall: CodebuffToolCall<'lookup_agent_info'>
   previousToolCallFinished: Promise<void>
 
-  apiKey: string
+  apiKey?: string
   databaseAgentCache: Map<string, AgentTemplate | null>
   localAgentTemplates: Record<string, AgentTemplate>
   logger: Logger

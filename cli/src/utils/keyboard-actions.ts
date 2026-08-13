@@ -16,9 +16,6 @@ export type ChatKeyboardState = {
   isStreaming: boolean
   isWaitingForResponse: boolean
 
-  // Feedback mode
-  feedbackMode: boolean
-
   // Focus state
   focusedAgentId: string | null
 
@@ -50,8 +47,6 @@ export type ChatKeyboardState = {
 export type ChatKeyboardAction =
   // Mode actions
   | { type: 'exit-input-mode' }
-  | { type: 'exit-feedback-mode' }
-  | { type: 'clear-feedback-input' }
 
   // Input actions
   | { type: 'clear-input' }
@@ -104,9 +99,6 @@ export type ChatKeyboardAction =
   // Paste action (dispatcher checks clipboard content to route to image or text handler)
   | { type: 'paste' }
 
-  // Out of credits action
-  | { type: 'open-buy-credits' }
-
   // No action needed
   | { type: 'none' }
 
@@ -136,35 +128,6 @@ export function resolveChatKeyboardAction(
     !hasModifier(key)
   const isPageUp = key.name === 'pageup' && !hasModifier(key)
   const isPageDown = key.name === 'pagedown' && !hasModifier(key)
-
-  // Priority 0: Out of credits mode - Enter opens buy credits page
-  if (state.inputMode === 'outOfCredits') {
-    if (isEnter) {
-      return { type: 'open-buy-credits' }
-    }
-    // Allow Escape or Ctrl+C to exit out-of-credits mode (return to normal input)
-    if (isEscape || isCtrlC) {
-      return { type: 'exit-input-mode' }
-    }
-    // Block most other inputs in this mode
-    return { type: 'none' }
-  }
-
-  // Priority 1: Feedback mode - block global keys except Escape/Ctrl-C/Ctrl-V
-  if (state.feedbackMode) {
-    if (isEscape) {
-      return { type: 'exit-feedback-mode' }
-    }
-    if (isCtrlC) {
-      return state.inputValue.length === 0
-        ? { type: 'exit-feedback-mode' }
-        : { type: 'clear-feedback-input' }
-    }
-    if (isCtrlV) {
-      return { type: 'paste' }
-    }
-    return { type: 'none' }
-  }
 
   // Priority 2: Non-default input mode escape
   // Escape should exit the current mode BEFORE interrupting streams
@@ -371,7 +334,6 @@ export function createDefaultChatKeyboardState(): ChatKeyboardState {
     cursorPosition: 0,
     isStreaming: false,
     isWaitingForResponse: false,
-    feedbackMode: false,
     focusedAgentId: null,
     slashMenuActive: false,
     mentionMenuActive: false,

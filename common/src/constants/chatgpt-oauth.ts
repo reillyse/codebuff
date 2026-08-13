@@ -25,44 +25,27 @@ export const CHATGPT_BACKEND_BASE_URL = 'https://chatgpt.com/backend-api'
 export const CHATGPT_OAUTH_TOKEN_ENV_VAR = 'CODEBUFF_CHATGPT_OAUTH_TOKEN'
 
 /**
- * OpenRouter-style model IDs that are allowed for ChatGPT OAuth direct routing.
- * This includes optimistic aliases requested by the user.
+ * ID-override table for ChatGPT OAuth routing.
+ * Maps OpenRouter-style model IDs to their direct OpenAI model IDs when they differ.
+ * All openai/* models are routed via ChatGPT OAuth; this map is only consulted
+ * when the internal OpenAI model ID differs from stripping the "openai/" prefix.
  */
 export const OPENROUTER_TO_OPENAI_MODEL_MAP: Record<string, string> = {
-  // GPT-5.6 family (Sol = flagship, Terra = balanced, Luna = fast/affordable).
-  'openai/gpt-5.6-sol': 'gpt-5.6-sol',
-  'openai/gpt-5.6-terra': 'gpt-5.6-terra',
-  'openai/gpt-5.6-luna': 'gpt-5.6-luna',
-
-  'openai/gpt-5.3': 'gpt-5.3',
-  'openai/gpt-5.3-codex': 'gpt-5.3-codex',
-  'openai/gpt-5.2': 'gpt-5.2',
-  'openai/gpt-5.2-chat': 'gpt-5.2-chat',
-  'openai/gpt-5.2-codex': 'gpt-5.2-codex',
-
-  // Lightweight reasoning/research model (routed via ChatGPT OAuth).
-  'openai/gpt-5-mini': 'gpt-5-mini',
-
-  // Nearby/optimistic aliases supported in current model config.
-  'openai/gpt-5.1': 'gpt-5.1',
-  'openai/gpt-5.1-chat': 'gpt-5.1-chat',
-  'openai/gpt-4o-2024-11-20': 'gpt-4o-2024-11-20',
-  'openai/gpt-4o-mini-2024-07-18': 'gpt-4o-mini-2024-07-18',
+  // Add entries here only when the internal OpenAI model ID differs from
+  // stripping the "openai/" prefix (e.g. 'openai/foo-alias': 'foo-internal-id').
+  // All other openai/* models are handled by the prefix-strip fallback in toOpenAIModelId.
 }
-
-export const CHATGPT_OAUTH_OPENAI_MODEL_ALLOWLIST = Object.keys(
-  OPENROUTER_TO_OPENAI_MODEL_MAP,
-) as Array<keyof typeof OPENROUTER_TO_OPENAI_MODEL_MAP>
 
 export function isOpenAIProviderModel(model: string): boolean {
   return model.startsWith('openai/')
 }
 
 /**
- * Check if model is in the explicit ChatGPT OAuth allowlist.
+ * Check if a model should be routed via ChatGPT OAuth.
+ * All openai/* models are eligible — no explicit allowlist needed.
  */
 export function isChatGptOAuthModelAllowed(model: string): boolean {
-  return model in OPENROUTER_TO_OPENAI_MODEL_MAP
+  return isOpenAIProviderModel(model)
 }
 
 /**
@@ -85,5 +68,6 @@ export function toOpenAIModelId(model: string): string {
     return mapped
   }
 
-  throw new Error(`Model is not supported for ChatGPT OAuth direct routing: ${model}`)
+  // Fallback: strip the "openai/" prefix, same pattern as toAnthropicModelId.
+  return model.slice('openai/'.length)
 }

@@ -370,6 +370,9 @@ export type ModelName =
   // Recommended Models
 
   // OpenAI
+  | 'openai/gpt-5.6-sol'
+  | 'openai/gpt-5.6-terra'
+  | 'openai/gpt-5.6-luna'
   | 'openai/gpt-5.2'
   | 'openai/gpt-5.2-chat'
   | 'openai/gpt-5-mini'
@@ -379,6 +382,8 @@ export type ModelName =
   | 'anthropic/claude-sonnet-5'
   | 'anthropic/claude-sonnet-4.5'
   | 'anthropic/claude-sonnet-4.6'
+  | 'anthropic/claude-opus-5'
+  | 'anthropic/claude-opus-5-fast'
   | 'anthropic/claude-opus-4.1'
   | 'anthropic/claude-opus-4.6'
   | 'anthropic/claude-opus-4.7'

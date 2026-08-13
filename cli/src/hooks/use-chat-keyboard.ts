@@ -22,8 +22,6 @@ const KEYBOARD_ACTIVITY_THROTTLE_MS = 1000
 export type ChatKeyboardHandlers = {
   // Mode handlers
   onExitInputMode: () => void
-  onExitFeedbackMode: () => void
-  onClearFeedbackInput: () => void
 
   // Input handlers
   onClearInput: () => void
@@ -81,9 +79,6 @@ export type ChatKeyboardHandlers = {
 
   // Toggle all handler
   onToggleAll: () => void
-
-  // Out of credits handler
-  onOpenBuyCredits: () => void
 }
 
 /**
@@ -112,12 +107,6 @@ function dispatchAction(
   switch (action.type) {
     case 'exit-input-mode':
       handlers.onExitInputMode()
-      return true
-    case 'exit-feedback-mode':
-      handlers.onExitFeedbackMode()
-      return true
-    case 'clear-feedback-input':
-      handlers.onClearFeedbackInput()
       return true
     case 'clear-input':
       handlers.onClearInput()
@@ -245,9 +234,6 @@ function dispatchAction(
     case 'toggle-all':
       handlers.onToggleAll()
       return true
-    case 'open-buy-credits':
-      handlers.onOpenBuyCredits()
-      return true
     case 'none':
       return false
   }
@@ -260,15 +246,12 @@ function dispatchAction(
  * Integrates priority-based action resolution with handlers.
  *
  * This hook handles:
- * - Mode switching (bash, referral, etc.)
+ * - Mode switching (bash, interview, plan, etc.)
  * - Stream interruption
  * - Suggestion menu navigation (slash and mention menus)
  * - History navigation
  * - Agent mode toggle
  * - Exit handling
- *
- * For feedback mode, the hook respects the feedbackMode state and routes
- * escape/ctrl-c appropriately.
  */
 export function useChatKeyboard({
   state,

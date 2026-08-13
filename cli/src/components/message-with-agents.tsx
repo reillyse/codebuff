@@ -22,7 +22,6 @@ import {
 } from '../utils/markdown-renderer'
 
 import type { ChatMessage } from '../types/chat'
-import type { FeedbackCategory } from '@codebuff/common/constants/feedback'
 
 interface AgentChildrenGridProps {
   agentChildren: ChatMessage[]
@@ -106,29 +105,15 @@ export const MessageWithAgents = memo(
         })),
       )
 
-    const { onToggleCollapsed, onBuildFast, onBuildMax, onBuildFree, onFeedback, onCloseFeedback } =
+    const { onToggleCollapsed, onBuildFast, onBuildMax, onBuildFree } =
       useMessageBlockStore(
         useShallow((state) => ({
           onToggleCollapsed: state.callbacks.onToggleCollapsed,
           onBuildFast: state.callbacks.onBuildFast,
           onBuildMax: state.callbacks.onBuildMax,
           onBuildFree: state.callbacks.onBuildFree,
-          onFeedback: state.callbacks.onFeedback,
-          onCloseFeedback: state.callbacks.onCloseFeedback,
         })),
       )
-
-    // Memoize onOpenFeedback to prevent unnecessary re-renders
-    const onOpenFeedback = useCallback(
-      (options?: {
-        category?: FeedbackCategory
-        footerMessage?: string
-        errors?: Array<{ id: string; message: string }>
-      }) => {
-        onFeedback(message.id, options)
-      },
-      [onFeedback, message.id],
-    )
 
     const contentBoxStyle = useMemo(
       () => ({
@@ -261,11 +246,8 @@ export const MessageWithAgents = memo(
                   onBuildFast={onBuildFast}
                   onBuildMax={onBuildMax}
                   onBuildFree={onBuildFree}
-                  onFeedback={onFeedback}
-                  onCloseFeedback={onCloseFeedback}
                   validationErrors={message.validationErrors}
                   userError={message.userError}
-                  onOpenFeedback={onOpenFeedback}
                   attachments={message.attachments}
                   textAttachments={message.textAttachments}
                   metadata={message.metadata}
@@ -296,11 +278,8 @@ export const MessageWithAgents = memo(
                 onBuildFast={onBuildFast}
                 onBuildMax={onBuildMax}
                 onBuildFree={onBuildFree}
-                onFeedback={onFeedback}
-                onCloseFeedback={onCloseFeedback}
                 validationErrors={message.validationErrors}
                 userError={message.userError}
-                onOpenFeedback={onOpenFeedback}
                 attachments={message.attachments}
                 textAttachments={message.textAttachments}
                 metadata={message.metadata}

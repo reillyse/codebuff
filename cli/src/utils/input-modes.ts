@@ -7,16 +7,12 @@ export type InputMode =
   | 'default'
   | 'bash'
   | 'homeDir'
-  | 'referral'
-  | 'usage'
   | 'image'
   | 'help'
   | 'connect:claude'
   | 'connect:chatgpt'
   | 'interview'
   | 'plan'
-  | 'outOfCredits'
-  | 'subscriptionLimit'
 
 // Theme color keys that are valid color values (must match ChatTheme keys)
 export type ThemeColorKey =
@@ -69,24 +65,6 @@ export const INPUT_MODE_CONFIGS: Record<InputMode, InputModeConfig> = {
   homeDir: {
     icon: null,
     color: 'warning',
-    placeholder: 'enter a coding task or / for commands',
-    widthAdjustment: 0,
-    showAgentModeToggle: true,
-    disableSlashSuggestions: false,
-    blockKeyboardExit: false,
-  },
-  referral: {
-    icon: '◎',
-    color: 'warning',
-    placeholder: 'have a code? enter it here',
-    widthAdjustment: 2, // 1 char + 1 padding
-    showAgentModeToggle: false,
-    disableSlashSuggestions: true,
-    blockKeyboardExit: false,
-  },
-  usage: {
-    icon: null,
-    color: 'foreground',
     placeholder: 'enter a coding task or / for commands',
     widthAdjustment: 0,
     showAgentModeToggle: true,
@@ -146,24 +124,6 @@ export const INPUT_MODE_CONFIGS: Record<InputMode, InputModeConfig> = {
     showAgentModeToggle: false,
     disableSlashSuggestions: true,
     blockKeyboardExit: false,
-  },
-  outOfCredits: {
-    icon: null,
-    color: 'warning',
-    placeholder: '',
-    widthAdjustment: 0,
-    showAgentModeToggle: false,
-    disableSlashSuggestions: true,
-    blockKeyboardExit: false,
-  },
-  subscriptionLimit: {
-    icon: null,
-    color: 'warning',
-    placeholder: '',
-    widthAdjustment: 0,
-    showAgentModeToggle: false,
-    disableSlashSuggestions: true,
-    blockKeyboardExit: true, // User must click "Continue with credits" or wait for reset
   },
 }
 

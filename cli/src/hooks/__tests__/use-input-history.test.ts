@@ -442,7 +442,7 @@ describe('use-input-history - isNavigating flag behavior', () => {
       nav.state.isNavigating = false
     })
 
-    test('exiting feedback mode explicitly resets history navigation', () => {
+    test('explicit reset call resets history navigation', () => {
       const nav = createMockHistoryNavigator(['entry 1', 'entry 2'])
 
       nav.navigateUp()

@@ -12,7 +12,7 @@ import type { ToolSet } from 'ai'
 
 export const getAgentStreamFromTemplate = (params: {
   agentId?: string
-  apiKey: string
+  apiKey?: string
   clientSessionId: string
   costMode?: string
   fingerprintId: string
