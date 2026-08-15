@@ -1,11 +1,11 @@
-import { CURRENT_GPT5_MODEL, CURRENT_HAIKU_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_GPT5_MODEL, CURRENT_HAIKU_MODEL, CURRENT_OPUS_MODEL, CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
 
 import { publisher } from '../constants'
 
 import type { AgentDefinition } from '../types/agent-definition'
 
 export const createCodeEditor = (options: {
-  model: 'gpt-5' | 'opus' | 'haiku'
+  model: 'gpt-5' | 'opus' | 'haiku' | 'sonnet'
 }): Omit<AgentDefinition, 'id'> => {
   const { model } = options
   return {
@@ -15,7 +15,9 @@ export const createCodeEditor = (options: {
         ? CURRENT_GPT5_MODEL
         : options.model === 'haiku'
           ? CURRENT_HAIKU_MODEL
-          : CURRENT_OPUS_MODEL,
+          : options.model === 'sonnet'
+            ? CURRENT_SONNET_MODEL
+            : CURRENT_OPUS_MODEL,
     ...(options.model === 'opus' && {
       providerOptions: {
         only: ['amazon-bedrock'],
@@ -134,7 +136,7 @@ Write out your complete implementation now, formatting all changes as tool calls
 }
 
 const definition = {
-  ...createCodeEditor({ model: 'opus' }),
+  ...createCodeEditor({ model: 'sonnet' }),
   id: 'editor',
 }
 export default definition

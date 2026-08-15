@@ -1,4 +1,4 @@
-import { CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
 
 import { publisher } from '../../constants'
 
@@ -13,7 +13,7 @@ import type { SecretAgentDefinition } from '../../types/secret-agent-definition'
 export function createMultiPromptEditor(): Omit<SecretAgentDefinition, 'id'> {
   return {
     publisher,
-    model: CURRENT_OPUS_MODEL,
+    model: CURRENT_SONNET_MODEL,
     providerOptions: {
       only: ['amazon-bedrock'],
     },
@@ -33,7 +33,7 @@ export function createMultiPromptEditor(): Omit<SecretAgentDefinition, 'id'> {
     ],
     spawnableAgents: [
       'best-of-n-selector2',
-      'editor-implementor-opus',
+      'editor-implementor',
       'editor-implementor-gpt-5',
     ],
 
@@ -96,10 +96,10 @@ function* handleStepsMultiPrompt({
     includeToolCall: false,
   } satisfies ToolCall<'set_messages'>
 
-  // Spawn one opus implementor per prompt
+  // Spawn one sonnet implementor per prompt
   const implementorAgents: { agent_type: string; prompt?: string }[] =
     prompts.map((prompt) => ({
-      agent_type: 'editor-implementor-opus',
+      agent_type: 'editor-implementor',
       prompt: `Strategy: ${prompt}`,
     }))
 

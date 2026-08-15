@@ -175,7 +175,7 @@ Write out your complete implementation now. Do not write any final summary.`,
   }
 }
 const definition = {
-  ...createBestOfNImplementor({ model: 'opus' }),
+  ...createBestOfNImplementor({ model: 'sonnet' }),
   id: 'editor-implementor',
 }
 export default definition
