@@ -26,17 +26,23 @@ export const openaiModels = {
 } as const
 export type OpenAIModel = (typeof openaiModels)[keyof typeof openaiModels]
 
+// NOTE: several keys below are legacy names kept only so existing importers keep
+// compiling. Their *values* track the current model for that tier — Anthropic has
+// retired the older IDs, so pointing them at a sunset model would 404 at runtime.
 export const openrouterModels = {
   openrouter_claude_sonnet_5: 'anthropic/claude-sonnet-5',
   openrouter_claude_sonnet_4_6: 'anthropic/claude-sonnet-4.6',
-  openrouter_claude_sonnet_4: 'anthropic/claude-4-sonnet-20250522',
+  // Legacy alias: claude-4-sonnet-20250522 is retired.
+  openrouter_claude_sonnet_4: 'anthropic/claude-sonnet-5',
   openrouter_claude_opus_5: 'anthropic/claude-opus-5',
-  openrouter_claude_opus_5_fast: 'anthropic/claude-opus-5-fast',
+  // `opus-5-fast` is an output-speed mode, not a distinct API model.
+  openrouter_claude_opus_5_fast: 'anthropic/claude-opus-5',
   openrouter_claude_opus_4: 'anthropic/claude-opus-4.8',
   openrouter_claude_fable_5: 'anthropic/claude-fable-5',
   // Updated from claude-3.5-haiku to claude-haiku-4.5
   openrouter_claude_3_5_haiku: 'anthropic/claude-haiku-4.5',
-  openrouter_claude_3_5_sonnet: 'anthropic/claude-3.5-sonnet-20240620',
+  // Legacy alias: the claude-3.x Sonnets are retired.
+  openrouter_claude_3_5_sonnet: 'anthropic/claude-sonnet-5',
   openrouter_gpt4o: 'openai/gpt-4o-2024-11-20',
   openrouter_gpt5: 'openai/gpt-5.2',
   openrouter_gpt5_chat: 'openai/gpt-5.2-chat',
@@ -117,6 +123,59 @@ export const CURRENT_GPT5_MINI_MODEL = 'openai/gpt-5.6-luna' as const
 /** The current Haiku model used by lightweight utility agents (routed via Claude OAuth). */
 export const CURRENT_HAIKU_MODEL = 'anthropic/claude-haiku-4.5' as const
 
+/**
+ * Maximum output tokens per Anthropic model, keyed by OpenRouter-style ID.
+ *
+ * This exists because `@ai-sdk/anthropic` picks a default via substring matching
+ * on the model ID (`getModelCapabilities`), and anything it doesn't recognize
+ * silently falls back to **4096**. Its table only knows the 4.x line, so every
+ * 5-series model (`claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`) lands in
+ * that fallback — a ~16x cut from the 64000 the 4.x models get.
+ *
+ * The failure mode is nasty: with extended thinking on, the model spends the
+ * whole 4096 budget on reasoning tokens and the stream ends with
+ * `finish_reason: "length"` having emitted no text and no tool call. The request
+ * looks completely healthy — chunks arrive, no error — the agent just receives
+ * nothing and appears to hang on the provider.
+ *
+ * So we always pass an explicit cap rather than trusting the provider default.
+ * Values match the per-family limits the SDK uses for the 4.x line.
+ */
+const ANTHROPIC_MAX_OUTPUT_TOKENS: Record<string, number> = {
+  'anthropic/claude-sonnet-5': 64_000,
+  'anthropic/claude-sonnet-latest': 64_000,
+  'anthropic/claude-sonnet-4.6': 64_000,
+  'anthropic/claude-sonnet-4.5': 64_000,
+  'anthropic/claude-haiku-4.5': 64_000,
+  'anthropic/claude-opus-5': 32_000,
+  'anthropic/claude-opus-latest': 32_000,
+  'anthropic/claude-opus-4.8': 32_000,
+  'anthropic/claude-opus-4.7': 32_000,
+  'anthropic/claude-opus-4.6': 32_000,
+  'anthropic/claude-opus-4.5': 64_000,
+  'anthropic/claude-fable-5': 32_000,
+  'anthropic/claude-fable-latest': 32_000,
+}
+
+/**
+ * Explicit max-output-tokens cap for a model, or `undefined` to let the provider
+ * decide.
+ *
+ * Only models with a known-good cap are pinned. A blanket default is NOT applied
+ * to unlisted Anthropic models: this value is also sent on the OpenRouter /
+ * codebuff-backend routes, where older models have far lower ceilings
+ * (claude-3.5-haiku is 8192, claude-3-haiku is 4096) and an over-large
+ * `max_tokens` is rejected with a 400. Returning undefined keeps the provider's
+ * own correct default for anything not listed.
+ *
+ * OpenAI routes are likewise left alone — they are not subject to the
+ * unknown-model fallback described above.
+ */
+export function getMaxOutputTokens(model: Model): number | undefined {
+  if (!model.startsWith('anthropic/')) return undefined
+  return ANTHROPIC_MAX_OUTPUT_TOKENS[model]
+}
+
 export const shortModelNames = {
   sol: models.openrouter_gpt56_sol,
   terra: models.openrouter_gpt56_terra,
@@ -130,11 +189,14 @@ export const shortModelNames = {
   'opus-4': models.openrouter_claude_opus_4,
   'sonnet-5': models.openrouter_claude_sonnet_5,
   'sonnet-4.6': models.openrouter_claude_sonnet_4_6,
-  'sonnet-4.5': models.openrouter_claude_sonnet_4_6, // deprecated alias
-  'sonnet-4': models.openrouter_claude_sonnet_4,
-  'sonnet-3.7': models.openrouter_claude_sonnet_4,
+  // Deprecated aliases — the underlying models are retired at Anthropic, so these
+  // resolve forward to the current Sonnet rather than 404ing.
+  'sonnet-4': models.openrouter_claude_sonnet_5,
+  'sonnet-3.7': models.openrouter_claude_sonnet_5,
   'sonnet-3.6': models.openrouter_claude_3_5_sonnet,
   'sonnet-3.5': models.openrouter_claude_3_5_sonnet,
+  haiku: models.openrouter_claude_3_5_haiku,
+  fable: models.openrouter_claude_fable_5,
   'gpt-4.1': models.gpt4_1,
   'o3-mini': models.o3mini,
   o3: models.o3,
@@ -162,13 +224,15 @@ export type Model = (typeof models)[keyof typeof models] | (string & {})
 export const shouldCacheModels = [
   'anthropic/claude-opus-5',
   'anthropic/claude-opus-4.8',
+  'anthropic/claude-opus-4.7',
+  'anthropic/claude-opus-4.6',
   'anthropic/claude-fable-5',
   'anthropic/claude-sonnet-5',
   'anthropic/claude-sonnet-4.6',
-  'anthropic/claude-sonnet-4',
-  'anthropic/claude-opus-4',
-  'anthropic/claude-3.7-sonnet',
+  'anthropic/claude-sonnet-4.5',
   'anthropic/claude-haiku-4.5',
+  // Non-Anthropic entries feed isExplicitlyDefinedModel (see model-utils), which
+  // also drives allow_fallbacks — keep them so caching/routing is unchanged.
   'z-ai/glm-4.5',
   'qwen/qwen3-coder',
 ]
@@ -242,17 +306,17 @@ export const getModelForMode = (
       free: models.openrouter_claude_3_5_haiku,
       normal: models.openrouter_claude_3_5_haiku,
       max: models.openrouter_claude_sonnet_4_6,
-      experimental: models.openrouter_claude_sonnet_4,
+      experimental: models.openrouter_claude_sonnet_5,
       ask: models.openrouter_claude_3_5_haiku,
     }[costMode]
   }
   if (operation === 'check-new-files') {
     return {
       free: models.openrouter_claude_3_5_haiku,
-      normal: models.openrouter_claude_sonnet_4,
+      normal: models.openrouter_claude_sonnet_5,
       max: models.openrouter_claude_sonnet_4_6,
-      experimental: models.openrouter_claude_sonnet_4,
-      ask: models.openrouter_claude_sonnet_4,
+      experimental: models.openrouter_claude_sonnet_5,
+      ask: models.openrouter_claude_sonnet_5,
     }[costMode]
   }
   throw new Error(`Unknown operation: ${operation}`)

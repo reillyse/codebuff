@@ -13,7 +13,7 @@ import type {
   AgentValidationError,
 } from '../agents/load-agents'
 
-const MODEL_NAME = 'anthropic/claude-sonnet-4' as const
+const MODEL_NAME = 'anthropic/claude-sonnet-5' as const
 
 /**
  * Helper to write an agent file to the test directory.

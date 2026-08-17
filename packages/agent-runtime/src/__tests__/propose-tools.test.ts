@@ -209,7 +209,7 @@ console.log(add(1, 2));
       id: 'test-implementor',
       displayName: 'Test Implementor',
       spawnerPrompt: 'Testing propose tools',
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'anthropic/claude-sonnet-5',
       inputSchema: {},
       outputMode: 'structured_output',
       includeMessageHistory: true,

@@ -216,7 +216,7 @@ describe('providerOptions', () => {
       reasoning: {
         max_tokens: 1000,
       },
-      model: 'anthropic/claude-3.7-sonnet',
+      model: 'anthropic/claude-sonnet-5',
       stream: true,
     })
   })

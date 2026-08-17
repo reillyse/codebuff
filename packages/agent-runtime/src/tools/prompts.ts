@@ -435,6 +435,76 @@ const MAX_MCP_TOOL_DESCRIPTION_CHARS = 100
  * params (person_id, campaign_id, ...) carry the intent; the schema
  * STRUCTURE is what matters.
  */
+/**
+ * Anthropic rejects a tool whose `input_schema` has `anyOf`/`oneOf`/`allOf` at
+ * the TOP level:
+ *
+ *   tools.28.custom.input_schema: input_schema does not support oneOf, allOf,
+ *   or anyOf at the top level
+ *
+ * MCP tool schemas are registered verbatim (see the jsonSchema() branch below),
+ * so a third-party server that models its input as a top-level union takes down
+ * every request for the whole session — and because the 400 arrives after the
+ * stream opens, it surfaces as an opaque `AI_NoOutputGeneratedError` that the
+ * retry ladder treats as transient.
+ *
+ * Collapse the union into a single object schema: merge every branch's
+ * properties, and keep only the `required` entries common to ALL branches for
+ * anyOf/oneOf (a field required by one branch is not required overall), or the
+ * union of them for allOf (where every branch must hold). Nested unions are
+ * left alone — only the top level is rejected.
+ */
+export function normalizeTopLevelUnionSchema(
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const unionKey = (['anyOf', 'oneOf', 'allOf'] as const).find((k) =>
+    Array.isArray(schema[k]),
+  )
+  if (!unionKey) {
+    // Anthropic also requires the top level to be an object.
+    return schema.type === 'object' ? schema : { ...schema, type: 'object' }
+  }
+
+  const branches = (schema[unionKey] as unknown[]).filter(
+    (b): b is Record<string, unknown> =>
+      !!b && typeof b === 'object' && !Array.isArray(b),
+  )
+
+  const { [unionKey]: _dropped, ...rest } = schema
+  const mergedProperties: Record<string, unknown> = {
+    ...((rest.properties as Record<string, unknown>) ?? {}),
+  }
+  const requiredPerBranch: string[][] = []
+
+  for (const branch of branches) {
+    const props = branch.properties
+    if (props && typeof props === 'object' && !Array.isArray(props)) {
+      Object.assign(mergedProperties, props as Record<string, unknown>)
+    }
+    requiredPerBranch.push(
+      Array.isArray(branch.required) ? (branch.required as string[]) : [],
+    )
+  }
+
+  let required: string[]
+  if (unionKey === 'allOf') {
+    required = [...new Set(requiredPerBranch.flat())]
+  } else {
+    required = requiredPerBranch.length
+      ? requiredPerBranch.reduce((acc, cur) => acc.filter((r) => cur.includes(r)))
+      : []
+  }
+  // Never require something we did not end up keeping a property for.
+  required = required.filter((r) => r in mergedProperties)
+
+  return {
+    ...rest,
+    type: 'object',
+    properties: mergedProperties,
+    ...(required.length > 0 ? { required } : {}),
+  }
+}
+
 function truncatePropertyDescriptions(
   schema: Record<string, unknown>,
   maxChars = 0,
@@ -523,7 +593,12 @@ export async function getToolSet(params: {
           description,
         }
       } else {
-        toolSet[toolName] = toolDef
+        // Copy rather than assign the shared toolParams entry by reference.
+        // Defensive: the cache-control block below always rebuilds a fresh
+        // object rather than mutating providerOptions in place, but keeping
+        // this copy means a future refactor of that block can't accidentally
+        // stamp `cacheControl` onto the module-level `toolParams` singleton.
+        toolSet[toolName] = { ...toolDef }
       }
     }
   }
@@ -570,9 +645,8 @@ export async function getToolSet(params: {
       // an infinite context-overflow loop). Removing them (maxChars = 0)
       // keeps the argument names and types intact so the model still knows
       // what to pass — well-named params carry the intent.
-      const trimmedRawSchema = truncatePropertyDescriptions(
-        rawSchema as Record<string, unknown>,
-        0,
+      const trimmedRawSchema = normalizeTopLevelUnionSchema(
+        truncatePropertyDescriptions(rawSchema as Record<string, unknown>, 0),
       )
       toolSet[toolName] = {
         ...clonedDef,
@@ -608,21 +682,39 @@ export async function getToolSet(params: {
   }
 
   // Mark the last tool with cache_control so @ai-sdk/anthropic caches the
-  // entire tools block. Anthropic's prompt caching treats everything up to
-  // (and including) the cache-breakpoint tool as a single cacheable prefix,
-  // saving ~60k tokens of re-tokenisation per step on MCP-heavy sessions.
-  // Mutate providerOptions in-place to avoid reconstructing the full Tool
-  // object (which would require re-asserting required fields like inputSchema).
+  // entire tools block, saving re-tokenisation per step. Anthropic allows at
+  // most 4 cache breakpoints per request, so this must stamp EXACTLY one
+  // breakpoint no matter how the tools arrived here (an inherited toolSet, a
+  // custom/MCP def with its own providerOptions, etc.) — first strip any
+  // existing anthropic cacheControl/cache_control marker from every tool,
+  // then stamp a fresh one only on the last tool. We always build a new tool
+  // object rather than mutating in place, so this can never leak a marker
+  // onto a shared reference like the module-level `toolParams` singleton.
   if (includeCacheControl) {
     const lastToolName = Object.keys(toolSet).at(-1)
-    if (lastToolName) {
-      const lastTool = toolSet[lastToolName] as unknown as Record<string, unknown>
-      const existingProviderOptions = (lastTool.providerOptions as Record<string, unknown> | undefined) ?? {}
-      const existingAnthropic = (existingProviderOptions.anthropic as Record<string, unknown> | undefined) ?? {}
-      lastTool.providerOptions = {
-        ...existingProviderOptions,
-        anthropic: { ...existingAnthropic, cacheControl: { type: 'ephemeral' } },
+    for (const [name, tool] of Object.entries(toolSet)) {
+      const providerOptions = (tool as { providerOptions?: Record<string, unknown> })
+        .providerOptions
+      const anthropic = providerOptions?.anthropic as
+        | Record<string, unknown>
+        | undefined
+      const hasMarker =
+        !!anthropic && ('cacheControl' in anthropic || 'cache_control' in anthropic)
+      if (!hasMarker && name !== lastToolName) {
+        continue
       }
+      const { cacheControl: _cacheControl, cache_control: _cache_control, ...restAnthropic } =
+        anthropic ?? {}
+      toolSet[name] = {
+        ...tool,
+        providerOptions: {
+          ...providerOptions,
+          anthropic:
+            name === lastToolName
+              ? { ...restAnthropic, cacheControl: { type: 'ephemeral' } }
+              : restAnthropic,
+        },
+      } as (typeof toolSet)[string]
     }
   }
 

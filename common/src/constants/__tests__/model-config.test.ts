@@ -7,8 +7,10 @@ import {
   CURRENT_OPUS_MODEL,
   CURRENT_SONNET_MODEL,
   getEmptyResponseFallbackModel,
+  getMaxOutputTokens,
   getOverloadFallbackModel,
 } from '../model-config'
+import { OPENROUTER_TO_ANTHROPIC_MODEL_MAP } from '../claude-oauth'
 
 import type { Model } from '../model-config'
 
@@ -137,5 +139,32 @@ describe('getEmptyResponseFallbackModel', () => {
     expect(getEmptyResponseFallbackModel(CURRENT_SONNET_MODEL)).toBe(
       CURRENT_OPUS_MODEL,
     )
+  })
+})
+
+describe('getMaxOutputTokens', () => {
+  // Regression: @ai-sdk/anthropic substring-matches the model ID to pick a
+  // default and silently falls back to 4096 for anything it doesn't know, which
+  // is every 5-series model. Combined with extended thinking, the whole budget
+  // goes to reasoning tokens and the stream ends on `length` having emitted
+  // nothing — the agent just appears to hang on the provider.
+  it('never leaves an Anthropic model near the 4096 fallback', () => {
+    for (const model of Object.keys(OPENROUTER_TO_ANTHROPIC_MODEL_MAP)) {
+      const cap = getMaxOutputTokens(model)
+      expect(cap, `${model} has no explicit output cap`).toBeDefined()
+      expect(cap!, `${model} is capped at ${cap}`).toBeGreaterThan(4096)
+    }
+  })
+
+  it('pins the models agents actually run on', () => {
+    expect(getMaxOutputTokens(CURRENT_SONNET_MODEL)).toBe(64_000)
+    expect(getMaxOutputTokens(CURRENT_OPUS_MODEL)).toBe(32_000)
+    expect(getMaxOutputTokens(CURRENT_HAIKU_MODEL)).toBe(64_000)
+    expect(getMaxOutputTokens(CURRENT_FABLE_MODEL)).toBe(32_000)
+  })
+
+  it('leaves non-Anthropic providers on their own defaults', () => {
+    expect(getMaxOutputTokens(CURRENT_GPT5_MODEL)).toBeUndefined()
+    expect(getMaxOutputTokens('openai/gpt-5.6-luna')).toBeUndefined()
   })
 })

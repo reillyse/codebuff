@@ -81,7 +81,7 @@ describe('runProgrammaticStep', () => {
       id: 'test-agent',
       displayName: 'Test Agent',
       spawnerPrompt: 'Testing',
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'anthropic/claude-sonnet-5',
       inputSchema: {},
       outputMode: 'structured_output',
       includeMessageHistory: true,

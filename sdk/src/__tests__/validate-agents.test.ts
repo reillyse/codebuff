@@ -12,7 +12,7 @@ describe('validateAgents', () => {
           {
             id: 'simple-agent',
             displayName: 'Simple Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
         ]
 
@@ -68,7 +68,7 @@ describe('validateAgents', () => {
           {
             id: 'input-agent',
             displayName: 'Input Schema Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             inputSchema: {
               prompt: {
                 type: 'string',
@@ -98,7 +98,7 @@ describe('validateAgents', () => {
           {
             id: 'structured-agent',
             displayName: 'Structured Output Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             outputMode: 'structured_output',
             toolNames: ['set_output'],
             outputSchema: {
@@ -124,7 +124,7 @@ describe('validateAgents', () => {
           {
             id: 'agent-one',
             displayName: 'Agent One',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
           {
             id: 'agent-two',
@@ -152,7 +152,7 @@ describe('validateAgents', () => {
           {
             id: 'reasoning-agent',
             displayName: 'Reasoning Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             reasoningOptions: {
               max_tokens: 4096,
             },
@@ -172,7 +172,7 @@ describe('validateAgents', () => {
         const agents: any[] = [
           {
             displayName: 'Missing ID Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
         ]
 
@@ -187,7 +187,7 @@ describe('validateAgents', () => {
         const agents: any[] = [
           {
             id: 'no-display-name',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
         ]
 
@@ -218,7 +218,7 @@ describe('validateAgents', () => {
           {
             id: 'Invalid-Agent-ID',
             displayName: 'Invalid ID Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
         ]
 
@@ -233,7 +233,7 @@ describe('validateAgents', () => {
           {
             id: 'invalid agent id',
             displayName: 'Invalid ID Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
         ]
 
@@ -248,7 +248,7 @@ describe('validateAgents', () => {
           {
             id: 'invalid_agent_id!',
             displayName: 'Invalid ID Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
         ]
 
@@ -263,12 +263,12 @@ describe('validateAgents', () => {
           {
             id: 'duplicate-id',
             displayName: 'Agent One',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
           {
             id: 'duplicate-id',
             displayName: 'Agent Two',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
         ]
 
@@ -284,7 +284,7 @@ describe('validateAgents', () => {
           {
             id: 'bad-output-schema',
             displayName: 'Bad Output Schema Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             outputSchema: {
               type: 'object',
               properties: {
@@ -306,7 +306,7 @@ describe('validateAgents', () => {
           {
             id: 'missing-spawn-tool',
             displayName: 'Missing Spawn Tool',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             spawnableAgents: ['child-agent'],
             toolNames: ['read_files'], // Missing spawn_agents
           },
@@ -323,7 +323,7 @@ describe('validateAgents', () => {
           {
             id: 'conflicting-prompts',
             displayName: 'Conflicting Prompts',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             inheritParentSystemPrompt: true,
             systemPrompt: 'This should not be allowed',
           },
@@ -340,7 +340,7 @@ describe('validateAgents', () => {
           {
             id: 'bad-handle-steps',
             displayName: 'Bad Handle Steps',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             handleSteps: 'not a function',
           },
         ]
@@ -415,7 +415,7 @@ describe('validateAgents', () => {
           {
             id: 'array-mismatch',
             displayName: 'Array Mismatch Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             toolNames: 'read_files', // Should be array
           },
         ]
@@ -455,7 +455,7 @@ describe('validateAgents', () => {
         const agents: any[] = [
           {
             id: 'detailed-errors',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             // Missing required displayName
           },
         ]
@@ -474,7 +474,7 @@ describe('validateAgents', () => {
           (_, i) => ({
             id: `agent-${i}`,
             displayName: `Agent ${i}`,
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           }),
         )
 
@@ -490,7 +490,7 @@ describe('validateAgents', () => {
           {
             id: 'long-field-agent',
             displayName: 'Long Field Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             systemPrompt: longString,
           },
         ]
@@ -505,7 +505,7 @@ describe('validateAgents', () => {
           {
             id: 'unicode-agent',
             displayName: '🚀 Unicode Agent 中文 العربية',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             systemPrompt: 'You are a helpful assistant 😊',
           },
         ]
@@ -520,7 +520,7 @@ describe('validateAgents', () => {
           {
             id: 'agent-🚀-unicode',
             displayName: 'Unicode ID Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
           },
         ]
 
@@ -537,7 +537,7 @@ describe('validateAgents', () => {
           {
             id: 'nested-schema-agent',
             displayName: 'Nested Schema Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             inputSchema: {
               params: {
                 type: 'object',
@@ -574,7 +574,7 @@ describe('validateAgents', () => {
           {
             id: 'invalid-schema',
             displayName: 'Invalid Schema Agent',
-            model: 'anthropic/claude-sonnet-4',
+            model: 'anthropic/claude-sonnet-5',
             inputSchema: {
               params: {
                 type: 'invalid-type', // Not a valid JSON schema type
@@ -594,7 +594,7 @@ describe('validateAgents', () => {
         const circularObj: any = {
           id: 'circular-agent',
           displayName: 'Circular Agent',
-          model: 'anthropic/claude-sonnet-4',
+          model: 'anthropic/claude-sonnet-5',
         }
         // Create circular reference
         circularObj.self = circularObj
@@ -663,7 +663,7 @@ describe('validateAgents', () => {
         {
           id: 'test-agent',
           displayName: 'Test Agent',
-          model: 'anthropic/claude-sonnet-4',
+          model: 'anthropic/claude-sonnet-5',
         },
       ]
 
@@ -698,7 +698,7 @@ describe('validateAgents', () => {
         {
           id: 'test-agent',
           displayName: 'Test Agent',
-          model: 'anthropic/claude-sonnet-4',
+          model: 'anthropic/claude-sonnet-5',
         },
       ]
 
@@ -728,7 +728,7 @@ describe('validateAgents', () => {
         {
           id: 'bad-agent',
           displayName: 'Bad Agent',
-          model: 'anthropic/claude-sonnet-4',
+          model: 'anthropic/claude-sonnet-5',
         },
       ]
 
@@ -763,7 +763,7 @@ describe('validateAgents', () => {
         {
           id: 'test-agent',
           displayName: 'Test Agent',
-          model: 'anthropic/claude-sonnet-4',
+          model: 'anthropic/claude-sonnet-5',
         },
       ]
 
@@ -792,7 +792,7 @@ describe('validateAgents', () => {
         {
           id: 'test-agent',
           displayName: 'Test Agent',
-          model: 'anthropic/claude-sonnet-4',
+          model: 'anthropic/claude-sonnet-5',
         },
       ]
 
@@ -814,7 +814,7 @@ describe('validateAgents', () => {
         {
           id: 'test-agent',
           displayName: 'Test Agent',
-          model: 'anthropic/claude-sonnet-4',
+          model: 'anthropic/claude-sonnet-5',
         },
       ]
 
@@ -842,7 +842,7 @@ describe('validateAgents', () => {
         {
           id: 'test-agent',
           displayName: 'Test Agent',
-          model: 'anthropic/claude-sonnet-4',
+          model: 'anthropic/claude-sonnet-5',
         },
       ]
 
@@ -868,7 +868,7 @@ describe('validateAgents', () => {
       const agents: AgentDefinition[] = Array.from({ length: 100 }, (_, i) => ({
         id: `agent-${i}`,
         displayName: `Agent ${i}`,
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
       }))
 
       mockFetch.mockResolvedValue({
@@ -899,7 +899,7 @@ describe('validateAgents', () => {
         {
           id: 'test-agent',
           displayName: 'Test Agent',
-          model: 'anthropic/claude-sonnet-4',
+          model: 'anthropic/claude-sonnet-5',
         },
       ]
 

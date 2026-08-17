@@ -4,7 +4,7 @@ import type { AgentDefinition } from '../agents/types/agent-definition'
 
 const definition: AgentDefinition = {
   id: 'creative-catalyst',
-  model: 'anthropic/claude-4-sonnet-20250522',
+  model: 'anthropic/claude-sonnet-5',
   displayName: 'Chloe the Creative Catalyst',
   publisher,
   spawnerPrompt:

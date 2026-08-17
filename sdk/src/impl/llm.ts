@@ -11,7 +11,7 @@ import {
 } from '@codebuff/common/sparrow/telemetry'
 import { buildArray } from '@codebuff/common/util/array'
 import { normalizeProviderRequestBodyForCacheDebug } from '@codebuff/common/util/cache-debug'
-import { AbortError, getErrorObject, getTransientStatusCode, isNoOutputGeneratedError, isStreamStallError, promptAborted, promptSuccess, StreamStallError } from '@codebuff/common/util/error'
+import { AbortError, getErrorObject, getTransientStatusCode, isNoOutputGeneratedError, isStreamStallError, OutputTruncatedError, promptAborted, promptSuccess, StreamStallError } from '@codebuff/common/util/error'
 import { convertCbToModelMessages } from '@codebuff/common/util/messages'
 import { isExplicitlyDefinedModel } from '@codebuff/common/util/model-utils'
 import { StopSequenceHandler } from '@codebuff/common/util/stop-sequence'
@@ -54,11 +54,8 @@ import z from 'zod/v4'
 
 // Provider routing documentation: https://openrouter.ai/docs/features/provider-routing
 const providerOrder = {
-  [models.openrouter_claude_sonnet_4]: [
-    'Google',
-    'Anthropic',
-    'Amazon Bedrock',
-  ],
+  // `openrouter_claude_sonnet_4` is a legacy alias that now resolves to the same
+  // ID as `openrouter_claude_sonnet_5`, so it no longer needs its own entry.
   [models.openrouter_claude_sonnet_5]: [
     'Google',
     'Anthropic',
@@ -505,6 +502,7 @@ export async function* promptAiSdkStream(
     skipClaudeOAuth: params.skipClaudeOAuth,
     skipChatGptOAuth: params.skipChatGptOAuth,
     costMode: params.costMode,
+    logger,
   }
     const {
       model: aiSDKModel,
@@ -720,6 +718,13 @@ export async function* promptAiSdkStream(
   // false positives. Mirrors run-agent-step.ts's own empty check (no content
   // AND no tool calls).
   let sawToolCall = false
+  // A tool call that ran out of output budget mid-JSON emits
+  // `tool-input-start`/`tool-input-delta` but never a final `tool-call`. That
+  // gap is what distinguishes "the model was writing a tool call and got cut
+  // off" (a real, actionable cap problem) from "the model only produced
+  // reasoning" — which ends the turn instead of failing the run.
+  let sawPartialToolInput = false
+  let sawReasoning = false
   try {
   while (true) {
     const stallResult = await nextChunkWithStallTimeout(
@@ -1058,6 +1063,7 @@ export async function* promptAiSdkStream(
       throw chunkValue.error
     }
     if (chunkValue.type === 'reasoning-delta') {
+      sawReasoning = true
       for (const provider of ['openrouter', 'codebuff'] as const) {
         if (
           (
@@ -1097,6 +1103,14 @@ export async function* promptAiSdkStream(
         }
       }
     }
+    // Emitted while a tool's JSON arguments stream in. Seeing these without a
+    // subsequent 'tool-call' means the arguments were cut off mid-flight.
+    if (
+      chunkValue.type === 'tool-input-start' ||
+      chunkValue.type === 'tool-input-delta'
+    ) {
+      sawPartialToolInput = true
+    }
     if (chunkValue.type === 'tool-call') {
       sawToolCall = true
       yield chunkValue
@@ -1135,6 +1149,10 @@ export async function* promptAiSdkStream(
   // "empty response" symptom: outputTokens=0 with finishReason=stop points at
   // a dropped/truncated stream, whereas finishReason=length (max_tokens),
   // content-filter, or a swallowed error chunk each imply a different cause.
+  // Set when the stream ended at the output ceiling with nothing usable. Thrown
+  // after telemetry finalizes below, so the span still records the attempt.
+  let outputTruncatedError: OutputTruncatedError | undefined
+
   if (!hasYieldedContent && !sawToolCall) {
     const emptyFinishReason = await response.finishReason.catch(() => undefined)
     const emptyProviderMetadata = await response.providerMetadata.catch(
@@ -1142,7 +1160,35 @@ export async function* promptAiSdkStream(
     )
     const anthropicMeta = (emptyProviderMetadata as Record<string, unknown>)
       ?.anthropic as Record<string, unknown> | undefined
-    logger.warn(
+
+    // `length` here is NOT an empty response — the model produced a full budget
+    // of tokens, they just didn't reach the agent. Treating it as an
+    // empty/dropped stream sends it down the retry+model-switch ladder, which
+    // cannot succeed because the next model truncates at the same ceiling.
+    //
+    // Two distinct causes share this signature, and only one is a cap problem:
+    //
+    //  - Tool-call truncation: `tool-input-*` chunks arrived but no final
+    //    `tool-call`, so the arguments were cut off mid-JSON. Deterministic and
+    //    actionable — fail loudly.
+    //  - Reasoning-only: the budget went to reasoning tokens with no tool call
+    //    ever started. Failing the whole run here would be a regression (this
+    //    previously just ended the turn), so it stays a warning.
+    const isTruncation =
+      emptyFinishReason === 'length' || anthropicMeta?.stopReason === 'max_tokens'
+    const isToolCallTruncation = isTruncation && sawPartialToolInput
+    if (isToolCallTruncation) {
+      outputTruncatedError = new OutputTruncatedError(
+        params.model,
+        usageResult.outputTokens,
+        extractRequestMaxTokens(params as Record<string, unknown>),
+      )
+    }
+
+    const log = isToolCallTruncation
+      ? logger.error.bind(logger)
+      : logger.warn.bind(logger)
+    log(
       {
         site: 'sdk/llm.promptAiSdkStream',
         requestModel: requestedModel,
@@ -1160,8 +1206,14 @@ export async function* promptAiSdkStream(
         receivedAnyChunk,
         sawErrorChunk,
         firstErrorChunkName,
+        sawPartialToolInput,
+        sawReasoning,
       },
-      'LLM stream finished with no content yielded (empty response) — dumping finish reason + usage + error-chunk state to pinpoint the provider cause (overload vs refusal vs max_tokens vs dropped stream)',
+      isToolCallTruncation
+        ? 'LLM stream hit the output-token ceiling while writing a tool call, so the arguments were truncated mid-JSON and no tool call reached the agent. This is a configuration error, not a transient failure: raise maxOutputTokens for this model.'
+        : isTruncation
+          ? 'LLM stream hit the output-token ceiling with no tool call started (reasoning-only). Ending the turn rather than failing the run; raise maxOutputTokens if this recurs.'
+          : 'LLM stream finished with no content yielded (empty response) — dumping finish reason + usage + error-chunk state to pinpoint the provider cause (overload vs refusal vs max_tokens vs dropped stream)',
     )
   }
   emitCacheDebugUsage({
@@ -1200,7 +1252,8 @@ export async function* promptAiSdkStream(
     attempt: sparrowAttempt,
     route: sparrowRoute,
     model: requestedModel,
-    succeeded: true,
+    succeeded: !outputTruncatedError,
+    ...(outputTruncatedError && { error: 'output_truncated' }),
   })
   sparrowHandle.finalize({
     route: sparrowRoute,
@@ -1230,6 +1283,13 @@ export async function* promptAiSdkStream(
     oauthAccountId: sparrowOAuthAccountId,
   })
   if (sparrowIsTopLevel) sparrowHandle.end()
+
+  // Thrown here rather than at the detection site so usage, cost and the
+  // gen_ai.chat span are all finalized first — the tokens were really spent and
+  // must still be accounted for.
+  if (outputTruncatedError) {
+    throw outputTruncatedError
+  }
 
   return promptSuccess(messageId)
   } catch (error) {
@@ -1318,6 +1378,7 @@ export async function promptAiSdk(
     // non-streaming doGenerate()/generateText() support), so we handle them
     // via the streaming path below instead of silently falling back to the
     // Codebuff backend / server-side API key.
+    logger: params.logger,
   }
   const {
     model: aiSDKModel,
@@ -1458,6 +1519,7 @@ export async function promptAiSdkStructured<T>(
     // for both, we inject the JSON Schema into the prompt, collect the
     // streamed text, and validate it against the Zod schema below (instead of
     // silently falling back to the Codebuff backend / server-side API key).
+    logger: params.logger,
   }
   const {
     model: aiSDKModel,

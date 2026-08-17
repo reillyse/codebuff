@@ -1,0 +1,10 @@
+# `bun test` reads bunfig.toml from the current working directory, and the cli
+# test script runs from this package — so the root bunfig's [test] settings never
+# applied here. Without them the shared env preload was skipped (suites that
+# import the env schema failed to load) and integration tests, which need real
+# services, ran as part of the normal suite.
+#
+# Mirrors the [test] section of the root bunfig.toml.
+[test]
+preload = ["../sdk/test/setup-env.ts"]
+exclude = ["**/*.integration.test.*"]

@@ -30,7 +30,7 @@ describe('tool validation error handling', () => {
     id: 'test-agent',
     displayName: 'Test Agent',
     spawnerPrompt: 'Test agent',
-    model: 'claude-3-5-sonnet-20241022',
+    model: 'anthropic/claude-sonnet-5',
     inputSchema: {},
     outputMode: 'structured_output',
     includeMessageHistory: true,

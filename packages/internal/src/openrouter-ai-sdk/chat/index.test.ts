@@ -545,7 +545,7 @@ describe('doGenerate', () => {
     const requestBody = await server.calls[0]!.requestBodyJson
 
     expect(requestBody).toStrictEqual({
-      model: 'anthropic/claude-3.5-sonnet',
+      model: 'anthropic/claude-sonnet-5',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
     })
   })
@@ -564,7 +564,7 @@ describe('doGenerate', () => {
     const requestBody = await server.calls[0]!.requestBodyJson
 
     expect(requestBody).toStrictEqual({
-      model: 'anthropic/claude-3.5-sonnet',
+      model: 'anthropic/claude-sonnet-5',
       models: ['anthropic/claude-2', 'gryphe/mythomax-l2-13b'],
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
     })
@@ -625,7 +625,7 @@ describe('doGenerate', () => {
     const requestBody = await server.calls[0]!.requestBodyJson
 
     expect(requestBody).toStrictEqual({
-      model: 'anthropic/claude-3.5-sonnet',
+      model: 'anthropic/claude-sonnet-5',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
       tools: [
         {
@@ -707,7 +707,7 @@ describe('doGenerate', () => {
     const requestBody = await server.calls[0]!.requestBodyJson
 
     expect(requestBody).toStrictEqual({
-      model: 'anthropic/claude-3.5-sonnet',
+      model: 'anthropic/claude-sonnet-5',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
       response_format: {
         type: 'json_schema',
@@ -745,7 +745,7 @@ describe('doGenerate', () => {
     const requestBody = await server.calls[0]!.requestBodyJson
 
     expect(requestBody).toStrictEqual({
-      model: 'anthropic/claude-3.5-sonnet',
+      model: 'anthropic/claude-sonnet-5',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
       response_format: {
         type: 'json_schema',
@@ -1490,7 +1490,7 @@ describe('doStream', () => {
     expect(requestBody).toStrictEqual({
       stream: true,
       stream_options: { include_usage: true },
-      model: 'anthropic/claude-3.5-sonnet',
+      model: 'anthropic/claude-sonnet-5',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
     })
   })
@@ -1583,7 +1583,7 @@ describe('doStream', () => {
     expect(requestBody).toStrictEqual({
       stream: true,
       stream_options: { include_usage: true },
-      model: 'anthropic/claude-3.5-sonnet',
+      model: 'anthropic/claude-sonnet-5',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
       response_format: {
         type: 'json_schema',

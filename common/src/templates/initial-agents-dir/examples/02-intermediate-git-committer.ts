@@ -7,7 +7,7 @@ import type {
 const definition: AgentDefinition = {
   id: 'git-committer',
   displayName: 'Intermediate Git Committer',
-  model: 'anthropic/claude-4-sonnet-20250522',
+  model: 'anthropic/claude-sonnet-5',
   toolNames: ['read_files', 'run_terminal_command', 'add_message', 'end_turn'],
 
   inputSchema: {

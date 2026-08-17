@@ -71,6 +71,9 @@ jobs:
       - name: Guard against deprecated Grok model references
         run: bun scripts/check-no-grok-models.ts
 
+      - name: Guard against retired Anthropic model references
+        run: bun scripts/check-no-retired-models.ts
+
       - name: Build SDK
         run: cd sdk && bun run build
 

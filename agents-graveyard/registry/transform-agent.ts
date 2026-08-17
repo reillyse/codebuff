@@ -10,7 +10,7 @@ import type { AgentDefinition } from '../../agents/types/agent-definition'
 const agent: AgentDefinition = {
   id: 'transform-agent',
   displayName: 'Transform Agent',
-  model: 'anthropic/claude-4-sonnet-20250522',
+  model: 'anthropic/claude-sonnet-5',
   outputMode: 'structured_output',
   includeMessageHistory: false,
   publisher: 'brandon',

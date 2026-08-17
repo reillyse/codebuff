@@ -1,3 +1,9 @@
+/**
+ * Imports `next/server`, whose Request shim needs the WHATWG `Request` global
+ * that jsdom does not provide.
+ *
+ * @jest-environment node
+ */
 import { describe, expect, mock, test } from 'bun:test'
 
 import type { Logger } from '@codebuff/common/types/contracts/logger'

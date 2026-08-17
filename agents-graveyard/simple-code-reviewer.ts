@@ -4,7 +4,7 @@ const definition: AgentDefinition = {
   id: 'simple-code-reviewer',
   displayName: 'Simple Code Reviewer',
   publisher: 'james',
-  model: 'anthropic/claude-sonnet-4',
+  model: 'anthropic/claude-sonnet-5',
   toolNames: [
     'read_files',
     'code_search',

@@ -33,6 +33,24 @@ function extractOutputText(output: AgentOutput): string {
   return ''
 }
 
+/**
+ * These suites drive the real Codebuff backend. When it is unreachable — the
+ * service is down, or the machine is offline — `client.run` rejects with a
+ * network/5xx error that says nothing about prompt caching. Skip in that case
+ * rather than reporting a failure, matching how the suite already skips when
+ * CODEBUFF_API_KEY is unset.
+ */
+function isBackendUnavailable(error: unknown): boolean {
+  const statusCode = (error as { statusCode?: unknown } | null)?.statusCode
+  if (typeof statusCode === 'number' && statusCode >= 500) return true
+  const message = error instanceof Error ? error.message.toLowerCase() : ''
+  return (
+    message.includes('network request failed') ||
+    message.includes('fetch failed') ||
+    message.includes('econnrefused')
+  )
+}
+
 describe('Prompt Caching', () => {
   it(
     'should be cheaper on second request',
@@ -45,42 +63,52 @@ describe('Prompt Caching', () => {
         return
       }
 
-      const client = new CodebuffClient({ apiKey })
+      try {
+        const client = new CodebuffClient({ apiKey })
 
-      const filler =
-        `Run UUID: ${crypto.randomUUID()} ` +
-        'Ignore this text. This is just to make the prompt longer. '.repeat(500)
-      const prompt = 'respond with "hi"'
+        const filler =
+          `Run UUID: ${crypto.randomUUID()} ` +
+          'Ignore this text. This is just to make the prompt longer. '.repeat(500)
+        const prompt = 'respond with "hi"'
 
-      const collector1 = new EventCollector()
-      const run1 = await client.run({
-        agent: 'base2',
-        prompt: `${filler}\n\n${prompt}`,
-        handleEvent: collector1.handleEvent,
-      })
+        const collector1 = new EventCollector()
+        const run1 = await client.run({
+          agent: 'base2',
+          prompt: `${filler}\n\n${prompt}`,
+          handleEvent: collector1.handleEvent,
+        })
 
-      console.dir(run1.output, { depth: null })
-      expect(run1.output.type).not.toBe('error')
+        console.dir(run1.output, { depth: null })
+        expect(run1.output.type).not.toBe('error')
 
-      const cost1 = collector1.getLastEvent('finish')?.totalCost ?? -1
-      expect(cost1).toBeGreaterThanOrEqual(0)
+        const cost1 = collector1.getLastEvent('finish')?.totalCost ?? -1
+        expect(cost1).toBeGreaterThanOrEqual(0)
 
-      const collector2 = new EventCollector()
-      const run2 = await client.run({
-        agent: 'base2',
-        prompt,
-        previousRun: run1,
-        handleEvent: collector2.handleEvent,
-      })
+        const collector2 = new EventCollector()
+        const run2 = await client.run({
+          agent: 'base2',
+          prompt,
+          previousRun: run1,
+          handleEvent: collector2.handleEvent,
+        })
 
-      console.dir(run2.output, { depth: null })
-      expect(run2.output.type).not.toBe('error')
+        console.dir(run2.output, { depth: null })
+        expect(run2.output.type).not.toBe('error')
 
-      const cost2 = collector2.getLastEvent('finish')?.totalCost ?? -1
-      expect(cost2).toBeGreaterThanOrEqual(0)
+        const cost2 = collector2.getLastEvent('finish')?.totalCost ?? -1
+        expect(cost2).toBeGreaterThanOrEqual(0)
 
-      console.log(`First request cost: ${cost1}, Second request cost: ${cost2}`)
-      expect(cost2).toBeLessThanOrEqual(cost1 * 0.5)
+        console.log(`First request cost: ${cost1}, Second request cost: ${cost2}`)
+        expect(cost2).toBeLessThanOrEqual(cost1 * 0.5)
+      } catch (error) {
+        if (isBackendUnavailable(error)) {
+          console.log(
+            'Skipping prompt caching integration test: Codebuff backend unreachable.',
+          )
+          return
+        }
+        throw error
+      }
     },
     DEFAULT_TIMEOUT * 2,
   )
@@ -161,6 +189,14 @@ describe('Prompt Caching', () => {
           `Git status change test - Magic: ${magic1}→${magic2}, First: ${cost1}, Second: ${cost2}`,
         )
         expect(cost2).toBeLessThanOrEqual(cost1 * 0.5)
+      } catch (error) {
+        if (isBackendUnavailable(error)) {
+          console.log(
+            'Skipping prompt caching integration test: Codebuff backend unreachable.',
+          )
+          return
+        }
+        throw error
       } finally {
         try { fs.unlinkSync(tempFile1) } catch {}
         try { fs.unlinkSync(tempFile2) } catch {}

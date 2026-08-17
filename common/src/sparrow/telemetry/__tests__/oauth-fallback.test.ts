@@ -81,7 +81,7 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
     await withPromptSpan({ sessionId: 's-rl' }, async () => {
       const llm = recordLlmCall({
         system: 'ai-sdk',
-        requestModel: 'anthropic/claude-sonnet-4',
+        requestModel: 'anthropic/claude-sonnet-5',
         route: 'claude_oauth',
         routeAttempt: 1,
       })
@@ -90,7 +90,7 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
       llm.recordAttempt({
         attempt: 1,
         route: 'claude_oauth',
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
         succeeded: false,
         error: 'claude_oauth_rate_limited',
       })
@@ -99,14 +99,14 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
       llm.recordAttempt({
         attempt: 2,
         route: 'codebuff_backend',
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
         succeeded: true,
       })
       llm.finalize({
         route: 'codebuff_backend',
         attempt: 2,
         system: 'ai-sdk',
-        requestModel: 'anthropic/claude-sonnet-4',
+        requestModel: 'anthropic/claude-sonnet-5',
         responseModel: 'anthropic/claude-sonnet-4-20250514',
         finishReason: 'stop',
         inputTokens: 1234,
@@ -137,7 +137,7 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
     expect(events[0].attrs[Attr.ROUTE_ATTEMPT]).toBe(1)
     expect(events[0].attrs.error).toBe('claude_oauth_rate_limited')
     expect(events[0].attrs[Attr.GEN_AI_REQUEST_MODEL]).toBe(
-      'anthropic/claude-sonnet-4',
+      'anthropic/claude-sonnet-5',
     )
     expect(events[1].name).toBe(Events.ROUTE_ATTEMPT_SUCCEEDED)
     expect(events[1].attrs[Attr.ROUTE]).toBe('codebuff_backend')
@@ -185,7 +185,7 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
       llm.recordAttempt({
         attempt: 1,
         route: 'claude_oauth',
-        model: 'anthropic/claude-opus-4',
+        model: 'anthropic/claude-opus-5',
         succeeded: false,
         error: 'claude_oauth_auth_error',
       })
@@ -193,7 +193,7 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
       llm.recordAttempt({
         attempt: 2,
         route: 'claude_oauth',
-        model: 'anthropic/claude-opus-4',
+        model: 'anthropic/claude-opus-5',
         succeeded: false,
         error: 'claude_oauth_rate_limited',
       })
@@ -201,7 +201,7 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
       llm.recordAttempt({
         attempt: 3,
         route: 'codebuff_backend',
-        model: 'anthropic/claude-opus-4',
+        model: 'anthropic/claude-opus-5',
         succeeded: true,
       })
       llm.finalize({
@@ -314,21 +314,21 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
     await withPromptSpan({ sessionId: 's-rollup' }, async () => {
       const llm = recordLlmCall({
         system: 'ai-sdk',
-        requestModel: 'anthropic/claude-sonnet-4',
+        requestModel: 'anthropic/claude-sonnet-5',
         route: 'claude_oauth',
         routeAttempt: 1,
       })
       llm.recordAttempt({
         attempt: 1,
         route: 'claude_oauth',
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
         succeeded: false,
         error: 'claude_oauth_rate_limited',
       })
       llm.recordAttempt({
         attempt: 2,
         route: 'codebuff_backend',
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
         succeeded: true,
       })
       llm.finalize({
@@ -369,21 +369,21 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
     await withPromptSpan({ sessionId: 's-happy' }, async () => {
       const llm = recordLlmCall({
         system: 'ai-sdk',
-        requestModel: 'anthropic/claude-sonnet-4',
+        requestModel: 'anthropic/claude-sonnet-5',
         route: 'claude_oauth',
         routeAttempt: 1,
       })
       llm.recordAttempt({
         attempt: 1,
         route: 'claude_oauth',
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
         succeeded: true,
       })
       llm.finalize({
         route: 'claude_oauth',
         attempt: 1,
         system: 'ai-sdk',
-        requestModel: 'anthropic/claude-sonnet-4',
+        requestModel: 'anthropic/claude-sonnet-5',
         inputTokens: 100,
         outputTokens: 50,
         costUsd: 0.005,
@@ -421,21 +421,21 @@ describe('telemetry integration: OAuth fallback (spec task 8.5)', () => {
     await withPromptSpan({ sessionId: 's-fatal' }, async () => {
       const llm = recordLlmCall({
         system: 'ai-sdk',
-        requestModel: 'anthropic/claude-sonnet-4',
+        requestModel: 'anthropic/claude-sonnet-5',
         route: 'claude_oauth',
         routeAttempt: 1,
       })
       llm.recordAttempt({
         attempt: 1,
         route: 'claude_oauth',
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
         succeeded: false,
         error: 'claude_oauth_rate_limited',
       })
       llm.recordAttempt({
         attempt: 2,
         route: 'codebuff_backend',
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
         succeeded: false,
         error: 'APICallError',
       })

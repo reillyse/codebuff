@@ -64,7 +64,7 @@ describe('Prompt Caching for Subagents with inheritParentSystemPrompt', () => {
         outputMode: 'last_message',
         inputSchema: {},
         spawnerPrompt: '',
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
         includeMessageHistory: false,
         inheritParentSystemPrompt: false,
         mcpServers: {},
@@ -80,7 +80,7 @@ describe('Prompt Caching for Subagents with inheritParentSystemPrompt', () => {
         outputMode: 'last_message',
         inputSchema: {},
         spawnerPrompt: '',
-        model: 'anthropic/claude-sonnet-4', // Same model as parent
+        model: 'anthropic/claude-sonnet-5', // Same model as parent
         includeMessageHistory: false,
         inheritParentSystemPrompt: true, // Should inherit parent's system prompt
         mcpServers: {},
@@ -200,7 +200,7 @@ describe('Prompt Caching for Subagents with inheritParentSystemPrompt', () => {
       outputMode: 'last_message',
       inputSchema: {},
       spawnerPrompt: '',
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
       includeMessageHistory: false,
       inheritParentSystemPrompt: false,
       mcpServers: {},
@@ -262,7 +262,7 @@ describe('Prompt Caching for Subagents with inheritParentSystemPrompt', () => {
       outputMode: 'last_message',
       inputSchema: {},
       spawnerPrompt: '',
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
       includeMessageHistory: true, // Includes message history
       inheritParentSystemPrompt: false, // But uses own system prompt
       mcpServers: {},
@@ -336,7 +336,7 @@ describe('Prompt Caching for Subagents with inheritParentSystemPrompt', () => {
     const validAgent = {
       id: 'valid-agent',
       displayName: 'Valid',
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
       inheritParentSystemPrompt: true,
       systemPrompt: '',
       instructionsPrompt: '',
@@ -349,7 +349,7 @@ describe('Prompt Caching for Subagents with inheritParentSystemPrompt', () => {
     const invalidAgent = {
       id: 'invalid-agent',
       displayName: 'Invalid',
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
       inheritParentSystemPrompt: true,
       systemPrompt: 'Custom system prompt',
       instructionsPrompt: '',
@@ -419,7 +419,7 @@ describe('Prompt Caching for Subagents with inheritParentSystemPrompt', () => {
       outputMode: 'last_message',
       inputSchema: {},
       spawnerPrompt: '',
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
       includeMessageHistory: false,
       inheritParentSystemPrompt: true,
       mcpServers: {},
@@ -496,7 +496,7 @@ describe('Prompt Caching for Subagents with inheritParentSystemPrompt', () => {
       outputMode: 'last_message',
       inputSchema: {},
       spawnerPrompt: '',
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
       includeMessageHistory: true, // Includes message history
       inheritParentSystemPrompt: true, // AND inherits system prompt
       mcpServers: {},

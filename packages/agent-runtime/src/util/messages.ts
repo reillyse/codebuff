@@ -2,7 +2,11 @@ import { AssertionError } from 'assert'
 
 import { buildArray } from '@codebuff/common/util/array'
 import { getErrorObject } from '@codebuff/common/util/error'
-import { systemMessage, userMessage } from '@codebuff/common/util/messages'
+import {
+  systemMessage,
+  userMessage,
+  withoutCacheControl,
+} from '@codebuff/common/util/messages'
 import { closeXml } from '@codebuff/common/util/xml'
 import { cloneDeep, isEqual } from 'lodash'
 
@@ -272,27 +276,29 @@ export function getMessagesSubset(params: {
     logger,
   })
 
-  // Remove cache_control from all messages
-  for (const message of messagesSubset) {
-    for (const provider of ['anthropic', 'openrouter', 'codebuff'] as const) {
-      delete message.providerOptions?.[provider]?.cacheControl
-    }
-  }
+  // Remove cache_control from all messages. withoutCacheControl clones before
+  // stripping, which matters because trimMessagesToFitTokenLimit can return
+  // the SAME message objects unchanged (already under the limit) — an
+  // in-place delete would otherwise mutate the caller's live messageHistory.
+  // Skip messages with no providerOptions (the vast majority) to avoid a
+  // deep-clone of the entire history on every call.
+  const cleanedMessages = messagesSubset.map((m) =>
+    m.providerOptions ? withoutCacheControl(m) : m,
+  )
 
-  // Cache up to the last message!
-  const lastMessage = messagesSubset[messagesSubset.length - 1]
+  const lastMessage = cleanedMessages[cleanedMessages.length - 1]
   if (!lastMessage) {
     logger.debug(
       {
         messages,
-        messagesSubset,
+        messagesSubset: cleanedMessages,
         otherTokens,
       },
       'No last message found in messagesSubset!',
     )
   }
 
-  return messagesSubset
+  return cleanedMessages
 }
 
 export function expireMessages(

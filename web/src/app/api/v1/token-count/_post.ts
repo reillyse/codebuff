@@ -126,10 +126,18 @@ async function countTokensViaAnthropic(params: {
 
   // Convert model from OpenRouter format (e.g. "anthropic/claude-opus-4.5") to Anthropic format (e.g. "claude-opus-4-5-20251101")
   // For non-Anthropic models, use the default Anthropic model for token counting
+  // Token counting only needs a tokenizer-compatible model name, so a retired or
+  // unknown pin must degrade to the default rather than 500 the endpoint --
+  // toAnthropicModelId throws for anything outside the live map.
   const isNonAnthropicModel = !model || !isClaudeModel(model)
-  const anthropicModelId = isNonAnthropicModel
-    ? DEFAULT_ANTHROPIC_MODEL
-    : toAnthropicModelId(model)
+  let anthropicModelId = DEFAULT_ANTHROPIC_MODEL
+  if (!isNonAnthropicModel) {
+    try {
+      anthropicModelId = toAnthropicModelId(model)
+    } catch {
+      anthropicModelId = DEFAULT_ANTHROPIC_MODEL
+    }
+  }
 
   // Use the count_tokens endpoint (beta) or make a minimal request
   const response = await fetch(

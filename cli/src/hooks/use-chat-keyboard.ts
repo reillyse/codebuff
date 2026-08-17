@@ -3,6 +3,7 @@ import { useCallback, useRef } from 'react'
 
 import { getProjectRoot } from '../project-files'
 import { reportActivity } from '../utils/activity-tracker'
+import { logger } from '../utils/logger'
 import { hasClipboardImage, readClipboardText, readClipboardImageFilePath, getImageFilePathFromText } from '../utils/clipboard-image'
 import {
   resolveChatKeyboardAction,
@@ -273,6 +274,29 @@ export function useChatKeyboard({
         }
 
         const action = resolveChatKeyboardAction(key, state)
+
+        // Aborting a run is deliberately not logged downstream (run-agent-step
+        // treats it as a user action, not an error), which makes a spurious
+        // interrupt indistinguishable from a real one after the fact: the run
+        // just stops and reports "[response interrupted]" with nothing in the
+        // logs. Record the key that caused it so an unintended abort — a stray
+        // keypress, or a terminal control sequence that degraded to a bare ESC —
+        // can be told apart from a deliberate one.
+        if (action.type === 'interrupt-stream') {
+          logger.info(
+            {
+              keyName: key.name,
+              ctrl: key.ctrl,
+              meta: key.meta,
+              shift: key.shift,
+              sequence: JSON.stringify(key.sequence ?? key.raw ?? ''),
+              isStreaming: state.isStreaming,
+              isWaitingForResponse: state.isWaitingForResponse,
+            },
+            'Stream interrupt triggered by keypress',
+          )
+        }
+
         const handled = dispatchAction(action, handlers)
 
         // Prevent default for handled actions

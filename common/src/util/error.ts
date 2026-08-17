@@ -194,6 +194,59 @@ export class StreamStallError extends Error {
 }
 
 /**
+ * Thrown when a stream ends at the output-token ceiling having produced nothing
+ * the agent can use, *and* the budget demonstrably went into a tool call.
+ *
+ * The model spends its whole budget writing a tool call's JSON arguments, hits
+ * the cap mid-argument, and the tool call never finishes parsing — so the AI SDK
+ * emits `tool-input-delta` chunks but never a final `tool-call`. With no text
+ * either, the step yields zero content despite having generated (and billed) a
+ * full budget of tokens.
+ *
+ * Only raised when partial tool input was actually observed. A `length` finish
+ * with no tool call started (reasoning-only) shares the same outward signature
+ * but is NOT this error — that case ends the turn rather than failing the run.
+ *
+ * It is deliberately NOT transient. The old behavior classified it as an empty
+ * response, which put the model on cooldown, switched models, and retried three
+ * times — every attempt truncating identically at the same ceiling. It is a
+ * deterministic configuration error and must fail loudly on the first attempt.
+ */
+export class OutputTruncatedError extends Error {
+  constructor(
+    public readonly model: string,
+    public readonly outputTokens: number | undefined,
+    public readonly maxOutputTokens: number | undefined,
+  ) {
+    const cap =
+      maxOutputTokens !== undefined
+        ? `${maxOutputTokens}`
+        : 'the provider default'
+    super(
+      `Model "${model}" hit its output-token limit (${cap}) while writing a tool call. ` +
+        `It generated ${outputTokens ?? 'an unknown number of'} output tokens, but the tool arguments were cut off ` +
+        `mid-JSON, so the call never completed and no text or tool call reached the agent. ` +
+        `Either the output this step needs exceeds the cap (e.g. writing a very large file — split it into smaller ` +
+        `edits), or the cap is set too low for this model (see getMaxOutputTokens in ` +
+        `common/src/constants/model-config.ts). Retrying will not help — the limit is deterministic.`,
+    )
+    this.name = 'OutputTruncatedError'
+  }
+}
+
+/**
+ * Detects an {@link OutputTruncatedError} (by name, so it survives serialization
+ * / cross-realm boundaries).
+ */
+export function isOutputTruncatedError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    (error as { name?: unknown }).name === 'OutputTruncatedError'
+  )
+}
+
+/**
  * Detects a {@link StreamStallError} (by name, so it survives serialization /
  * cross-realm boundaries).
  */
@@ -311,6 +364,13 @@ function isTransientApiErrorImpl(
   if (!error || typeof error !== 'object') return false
   if (seen.has(error)) return false
   seen.add(error)
+
+  // Output truncation is deterministic, not transient: the same request against
+  // the same cap truncates identically every time. Checked before everything
+  // else so no downstream heuristic can reclassify it as retryable.
+  if (isOutputTruncatedError(error)) {
+    return false
+  }
 
   // A local stream-stall timeout is transient: retrying (same model) usually
   // recovers from a stalled/half-open connection.

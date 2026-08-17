@@ -3,7 +3,7 @@ import type { AgentDefinition } from '../types/agent-definition'
 const definition: AgentDefinition = {
   id: 'basic-diff-reviewer',
   displayName: 'Basic Diff Reviewer',
-  model: 'anthropic/claude-4-sonnet-20250522',
+  model: 'anthropic/claude-sonnet-5',
   toolNames: ['read_files', 'run_terminal_command'],
 
   spawnerPrompt: 'Spawn when you need to review code changes in the git diff',

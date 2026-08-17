@@ -12,7 +12,7 @@ describe('DynamicAgentDefinitionSchema', () => {
     version: '1.0.0',
     displayName: 'Test Agent',
     spawnerPrompt: 'A test agent',
-    model: 'anthropic/claude-4-sonnet-20250522',
+    model: 'anthropic/claude-sonnet-5',
     systemPrompt: 'Test system prompt',
     instructionsPrompt: 'Test user prompt',
     stepPrompt: 'Test step prompt',

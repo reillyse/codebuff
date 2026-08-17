@@ -17,7 +17,7 @@ import {
 } from '@codebuff/common/sparrow/telemetry'
 import { TOOLS_WHICH_WONT_FORCE_NEXT_STEP } from '@codebuff/common/tools/constants'
 import { buildArray } from '@codebuff/common/util/array'
-import { AbortError, describeTransientApiError, getContextOverflowSignal, getErrorObject, getErrorStatusCode, getTransientStatusCode, isAbortError, isNoOutputGeneratedError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
+import { AbortError, describeTransientApiError, getContextOverflowSignal, getErrorObject, getErrorStatusCode, getTransientStatusCode, isAbortError, isNoOutputGeneratedError, isOutputTruncatedError, isTransientApiError, parseApiErrorResponseBody } from '@codebuff/common/util/error'
 import { abortableSleep } from '@codebuff/common/util/promise'
 import { serializeCacheDebugCorrelation } from '@codebuff/common/util/cache-debug'
 import { systemMessage, userMessage } from '@codebuff/common/util/messages'
@@ -159,6 +159,22 @@ const MAX_CONSECUTIVE_CONTEXT_OVERFLOW_STEPS = 2
 
 const CONTEXT_OVERFLOW_WARN_MESSAGE =
   '\n⚠️ CONTEXT WINDOW CRITICAL: Your context is very full. The model may struggle to respond. Consider starting a new session (e.g. /new) if you encounter issues.\n\n'
+
+/**
+ * Gate for the context-budget WARN/ERROR log lines below (the
+ * CONTEXT_BUDGET_WARN_TOKENS / CONTEXT_BUDGET_ERROR_TOKENS breakdown emitted
+ * on every step once context gets large). These are useful when actively
+ * debugging a context-overflow issue but are noisy in cli.jsonl otherwise, so
+ * they're off by default — opt in with CODEBUFF_CONTEXT_BUDGET_LOG=1.
+ *
+ * This does NOT gate the user-visible CONTEXT_OVERFLOW_WARN_MESSAGE chunk
+ * below, which always fires so the user still sees the safety warning in the
+ * transcript regardless of this flag.
+ */
+function isContextBudgetLogEnabled(): boolean {
+  const lower = process.env.CODEBUFF_CONTEXT_BUDGET_LOG?.trim().toLowerCase()
+  return lower === '1' || lower === 'true'
+}
 
 async function additionalToolDefinitions(
   params: {
@@ -1298,34 +1314,10 @@ export async function loopAgentSteps(
       // ERROR it means we're almost certainly going to get an empty
       // response on this step.
       const ctxEst = currentAgentState.contextTokenCount ?? localTokenEstimate
+      const contextBudgetLogEnabled = isContextBudgetLogEnabled()
       if (ctxEst >= CONTEXT_BUDGET_ERROR_TOKENS) {
         consecutiveContextOverflowSteps++
-        logger.error(
-          {
-            agentType,
-            agentId: currentAgentState.agentId,
-            runId,
-            totalSteps,
-            contextTokenEstimate: ctxEst,
-            localTokenEstimate,
-            warningThreshold: CONTEXT_BUDGET_WARN_TOKENS,
-            errorThreshold: CONTEXT_BUDGET_ERROR_TOKENS,
-            consecutiveContextOverflowSteps,
-            systemTokenEst,
-            toolTokenEst,
-            toolCount,
-            messageTokenEst,
-          },
-          '🚨 Context budget CRITICAL: estimated tokens likely exceed safe input budget (200k − 64k output = 136k). Expect empty response / context-overflow loop on this step.',
-        )
-        // On the 2nd consecutive CRITICAL step, emit a one-time user-visible
-        // warning but continue the run. We warn rather than force-quit so
-        // long-running agents aren't abruptly terminated when the pruner
-        // temporarily can't recover the budget.
-        if (
-          consecutiveContextOverflowSteps ===
-          MAX_CONSECUTIVE_CONTEXT_OVERFLOW_STEPS
-        ) {
+        if (contextBudgetLogEnabled) {
           logger.error(
             {
               agentType,
@@ -1333,31 +1325,64 @@ export async function loopAgentSteps(
               runId,
               totalSteps,
               contextTokenEstimate: ctxEst,
+              localTokenEstimate,
+              warningThreshold: CONTEXT_BUDGET_WARN_TOKENS,
+              errorThreshold: CONTEXT_BUDGET_ERROR_TOKENS,
               consecutiveContextOverflowSteps,
+              systemTokenEst,
+              toolTokenEst,
+              toolCount,
+              messageTokenEst,
             },
-            'Context overflow warning threshold reached (consecutive CRITICAL steps after pruning); emitting one-time user warning and continuing',
+            '🚨 Context budget CRITICAL: estimated tokens likely exceed safe input budget (200k − 64k output = 136k). Expect empty response / context-overflow loop on this step.',
           )
+        }
+        // On the 2nd consecutive CRITICAL step, emit a one-time user-visible
+        // warning but continue the run. We warn rather than force-quit so
+        // long-running agents aren't abruptly terminated when the pruner
+        // temporarily can't recover the budget. The user-visible warning
+        // chunk below is intentionally NOT gated by CODEBUFF_CONTEXT_BUDGET_LOG,
+        // so the user still sees the safety notice regardless of the log flag.
+        if (
+          consecutiveContextOverflowSteps ===
+          MAX_CONSECUTIVE_CONTEXT_OVERFLOW_STEPS
+        ) {
+          if (contextBudgetLogEnabled) {
+            logger.error(
+              {
+                agentType,
+                agentId: currentAgentState.agentId,
+                runId,
+                totalSteps,
+                contextTokenEstimate: ctxEst,
+                consecutiveContextOverflowSteps,
+              },
+              'Context overflow warning threshold reached (consecutive CRITICAL steps after pruning); emitting one-time user warning and continuing',
+            )
+          }
           onResponseChunk(CONTEXT_OVERFLOW_WARN_MESSAGE)
         }
       } else if (ctxEst >= CONTEXT_BUDGET_WARN_TOKENS) {
         consecutiveContextOverflowSteps = 0
-        logger.warn(
-          {
-            agentType,
-            agentId: currentAgentState.agentId,
-            runId,
-            totalSteps,
-            contextTokenEstimate: ctxEst,
-            localTokenEstimate,
-            warningThreshold: CONTEXT_BUDGET_WARN_TOKENS,
-            errorThreshold: CONTEXT_BUDGET_ERROR_TOKENS,
-            systemTokenEst,
-            toolTokenEst,
-            toolCount,
-            messageTokenEst,
-          },
-          '⚠️ Context budget WARNING: approaching safe input budget limit (200k − 64k output = 136k). Pruning may not be sufficient.',
-        )
+        if (contextBudgetLogEnabled) {
+          logger.warn(
+            {
+              agentType,
+              agentId: currentAgentState.agentId,
+              runId,
+              totalSteps,
+              contextTokenEstimate: ctxEst,
+              localTokenEstimate,
+              warningThreshold: CONTEXT_BUDGET_WARN_TOKENS,
+              errorThreshold: CONTEXT_BUDGET_ERROR_TOKENS,
+              systemTokenEst,
+              toolTokenEst,
+              toolCount,
+              messageTokenEst,
+            },
+            '⚠️ Context budget WARNING: approaching safe input budget limit (200k − 64k output = 136k). Pruning may not be sufficient.',
+          )
+        }
       } else {
         consecutiveContextOverflowSteps = 0
       }
@@ -1550,6 +1575,31 @@ export async function loopAgentSteps(
         } catch (error) {
           stepError = error
           lastAttemptWasEmpty = false
+
+          // Output truncation is deterministic: the model spent its whole token
+          // budget on a tool call that got cut off mid-argument. Retrying, or
+          // stepping down the empty-response model ladder, just truncates again
+          // at the same ceiling while burning a full budget of tokens each time.
+          // Fail immediately and name the fix.
+          if (isOutputTruncatedError(error)) {
+            logger.error(
+              {
+                agentType,
+                agentId: currentAgentState.agentId,
+                model: currentModel,
+                runId,
+                error: getErrorObject(error),
+              },
+              `Output truncated for agent '${agentTemplate.displayName}' (${agentType}) — not retrying, the token limit is deterministic`,
+            )
+            throw new Error(
+              `Agent '${agentTemplate.displayName}' (${agentType}) produced no usable output: ` +
+                `${currentModel} hit its output-token limit while writing a tool call, so the call was truncated ` +
+                `mid-argument and never completed. Raise maxOutputTokens for this model in ` +
+                `getMaxOutputTokens (common/src/constants/model-config.ts). Retrying will not help.`,
+              { cause: error },
+            )
+          }
           // Diagnostic + control-flow for AI_NoOutputGeneratedError: the stream
           // opened but closed without output. This is AMBIGUOUS — it can be a
           // genuine transient provider overload (retryable, possibly a 529) OR

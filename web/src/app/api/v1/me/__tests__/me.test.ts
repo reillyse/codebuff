@@ -41,7 +41,7 @@ describe('/api/v1/me route', () => {
     agentRuntimeImpl = {
       ...TEST_AGENT_RUNTIME_IMPL,
       getUserInfoFromApiKey: async ({ apiKey, fields }) => {
-        const userData = mockUserData[apiKey]
+        const userData = apiKey ? mockUserData[apiKey] : undefined
         if (!userData) {
           return null
         }

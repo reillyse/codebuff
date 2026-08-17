@@ -44,7 +44,7 @@ const examplesAgentsContent = [
 
 const definition: AgentDefinition = {
   id: 'agent-builder',
-  model: 'anthropic/claude-4-sonnet-20250522',
+  model: 'anthropic/claude-sonnet-5',
   displayName: 'Bob the Agent Builder',
   publisher,
   spawnerPrompt:

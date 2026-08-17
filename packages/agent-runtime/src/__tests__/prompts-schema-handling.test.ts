@@ -249,6 +249,51 @@ describe('Schema handling error recovery', () => {
       // Should return the same schema
       expect(result).toBe(zodSchema)
     })
+
+    test('getToolSet with includeCacheControl stamps exactly one breakpoint and never mutates the shared toolParams singleton', async () => {
+      // Regression test for "Maximum 4 cache breakpoints exceeded": getToolSet
+      // used to assign built-in tools by reference from the module-level
+      // toolParams registry and then mutate providerOptions in place, which
+      // permanently stamped cacheControl onto the singleton across calls.
+      const toolSetA = await getToolSet({
+        toolNames: ['read_files', 'write_file'],
+        additionalToolDefinitions: async () => ({}),
+        agentTools: {},
+        skills: {},
+        includeCacheControl: true,
+      })
+      const toolSetB = await getToolSet({
+        toolNames: ['str_replace', 'run_terminal_command'],
+        additionalToolDefinitions: async () => ({}),
+        agentTools: {},
+        skills: {},
+        includeCacheControl: true,
+      })
+
+      const countMarked = (toolSet: Awaited<ReturnType<typeof getToolSet>>) =>
+        Object.values(toolSet).filter((tool) => {
+          const anthropic = (
+            tool as { providerOptions?: { anthropic?: Record<string, unknown> } }
+          ).providerOptions?.anthropic
+          return !!anthropic && 'cacheControl' in anthropic
+        }).length
+
+      // Each independently-built toolSet should have exactly one breakpoint.
+      expect(countMarked(toolSetA)).toBe(1)
+      expect(countMarked(toolSetB)).toBe(1)
+
+      // A toolSet built after both of the above (sharing no tool names with
+      // either) must still have exactly one breakpoint -- proof that neither
+      // prior call stamped the shared toolParams registry.
+      const toolSetC = await getToolSet({
+        toolNames: ['read_files', 'write_file', 'str_replace', 'run_terminal_command'],
+        additionalToolDefinitions: async () => ({}),
+        agentTools: {},
+        skills: {},
+        includeCacheControl: true,
+      })
+      expect(countMarked(toolSetC)).toBe(1)
+    })
   })
 
   describe('toJSONSchema error handling in lookup-agent-info.ts', () => {

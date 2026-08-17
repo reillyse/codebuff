@@ -1,3 +1,10 @@
+/**
+ * Next.js route handlers use the WHATWG `Request`/`Response` globals, which
+ * jsdom does not provide — without this the suite fails to load with
+ * "ReferenceError: Request is not defined".
+ *
+ * @jest-environment node
+ */
 import { describe, expect, mock, test } from 'bun:test'
 
 import type { Logger } from '@codebuff/common/types/contracts/logger'

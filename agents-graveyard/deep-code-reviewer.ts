@@ -6,7 +6,7 @@ const definition: AgentDefinition = {
   id: 'deep-code-reviewer',
   publisher,
   displayName: 'Deep Code Reviewer',
-  model: 'anthropic/claude-sonnet-4',
+  model: 'anthropic/claude-sonnet-5',
 
   includeMessageHistory: false,
 

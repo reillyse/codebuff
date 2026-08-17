@@ -214,7 +214,7 @@ export function createTestAgentRuntimeParams(
   const defaultTemplate: TestAgentRuntimeParams['agentTemplate'] = {
     id: 'test-agent',
     displayName: 'Test Agent',
-    model: 'claude-3-5-sonnet-20241022',
+    model: 'anthropic/claude-sonnet-5',
     inputSchema: {},
     outputMode: 'last_message',
     includeMessageHistory: true,

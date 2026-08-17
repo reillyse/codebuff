@@ -53,7 +53,7 @@ Here's an example of a `git-committer` agent that creates good commit messages:
 export default {
   id: 'git-committer',
   displayName: 'Git Committer',
-  model: 'openai/gpt-5-nano',
+  model: 'openai/gpt-5.6-luna',
   toolNames: ['read_files', 'run_terminal_command', 'end_turn'],
 
   instructionsPrompt:
@@ -84,7 +84,7 @@ Each agent is a TypeScript file that exports an `AgentDefinition` object:
 export default {
   id: 'my-agent', // Unique identifier (lowercase, hyphens only)
   displayName: 'My Agent', // Human-readable name
-  model: 'claude-3-5-sonnet', // AI model to use
+  model: 'anthropic/claude-sonnet-5', // AI model to use
   toolNames: ['read_files', 'write_file'], // Available tools
   instructionsPrompt: 'You are...', // Agent behavior instructions
   spawnerPrompt: 'Use this agent when...', // When others should spawn this

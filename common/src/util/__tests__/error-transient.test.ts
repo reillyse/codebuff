@@ -1,3 +1,4 @@
+import { OutputTruncatedError, isOutputTruncatedError } from '../error'
 import { APICallError } from 'ai'
 import { describe, expect, it } from 'bun:test'
 
@@ -340,5 +341,46 @@ describe('describeTransientApiError', () => {
     expect(describeTransientApiError(new Error('something else'))).toBe(
       'Transient API error',
     )
+  })
+})
+
+describe('OutputTruncatedError', () => {
+  const err = new OutputTruncatedError('anthropic/claude-sonnet-5', 4096, 4096)
+
+  it('is detected by name', () => {
+    expect(isOutputTruncatedError(err)).toBe(true)
+    expect(isOutputTruncatedError(new Error('boom'))).toBe(false)
+  })
+
+  // The whole point: the old path classified this as an empty response, which
+  // cooled the model down, switched models and retried three times — each
+  // attempt truncating identically at the same ceiling.
+  it('is NOT transient, so the retry ladder leaves it alone', () => {
+    expect(isTransientApiError(err)).toBe(false)
+  })
+
+  it('stays non-transient even when wrapped as a cause', () => {
+    const wrapper = new Error('agent step failed', { cause: err })
+    expect(isTransientApiError(wrapper)).toBe(false)
+  })
+
+  it('names the cap and both plausible fixes in its message', () => {
+    expect(err.message).toContain('output-token limit')
+    expect(err.message).toContain('getMaxOutputTokens')
+    expect(err.message).toContain('Retrying will not help')
+  })
+
+  it('only claims what the stream actually showed', () => {
+    // The error is raised only when partial tool input was observed, so it may
+    // state the tool call was cut off — but it must not blame reasoning tokens,
+    // which are a separate case that does not fail the run.
+    expect(err.message).toContain('while writing a tool call')
+    expect(err.message).not.toContain('reasoning')
+  })
+
+  it('offers the oversized-output reading, not just a misconfiguration', () => {
+    // A legitimately huge write is not a config error; the message must not
+    // imply the only remedy is raising the cap.
+    expect(err.message).toContain('split it into smaller')
   })
 })

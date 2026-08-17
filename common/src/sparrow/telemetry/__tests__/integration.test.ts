@@ -186,7 +186,7 @@ describe('telemetry integration: full span hierarchy', () => {
     await withPromptSpan({ sessionId: 's' }, async () => {
       const llm = recordLlmCall({
         system: 'ai-sdk',
-        requestModel: 'claude-sonnet',
+        requestModel: 'claude-sonnet-5',
         route: 'claude_oauth',
         routeAttempt: 1,
       })
@@ -194,7 +194,7 @@ describe('telemetry integration: full span hierarchy', () => {
       llm.recordAttempt({
         attempt: 1,
         route: 'claude_oauth',
-        model: 'claude-sonnet',
+        model: 'claude-sonnet-5',
         succeeded: false,
         error: 'claude_oauth_rate_limited',
       })
@@ -211,7 +211,7 @@ describe('telemetry integration: full span hierarchy', () => {
     expect(genAi).toBeDefined()
 
     // Initial attempt attrs on open
-    expect(genAi.attributes[Attr.GEN_AI_REQUEST_MODEL]).toBe('claude-sonnet')
+    expect(genAi.attributes[Attr.GEN_AI_REQUEST_MODEL]).toBe('claude-sonnet-5')
     // Final route + attempt number set by finalize
     expect(genAi.attributes[Attr.ROUTE]).toBe('codebuff_backend')
     expect(genAi.attributes[Attr.ROUTE_ATTEMPT]).toBe(2)

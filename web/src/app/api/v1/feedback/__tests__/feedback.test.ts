@@ -29,7 +29,7 @@ describe('/api/v1/feedback POST endpoint', () => {
   const mockGetUserInfoFromApiKey: GetUserInfoFromApiKeyFn = async ({
     apiKey,
   }) => {
-    const userData = mockUserData[apiKey]
+    const userData = apiKey ? mockUserData[apiKey] : undefined
     if (!userData) {
       return null
     }

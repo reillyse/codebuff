@@ -423,7 +423,10 @@ describe('mainPrompt', () => {
     expect(newSessionState.mainAgentState.stepsRemaining).toBe(initialCount - 1)
   })
 
-  it('should return no tool calls when LLM response is empty', { timeout: 10_000 }, async () => {
+  // Options go in the THIRD position for bun:test — `(label, fn, options)`.
+  // Bun accepts the jest-style second-position form at runtime, so this ran
+  // fine while failing typecheck.
+  it('should return no tool calls when LLM response is empty', async () => {
     // Mock the LLM stream to return nothing
     mockAgentStream([])
 
@@ -445,5 +448,5 @@ describe('mainPrompt', () => {
     })
 
     expect(output.type).toBeDefined() // Output should exist even for empty response
-  })
+  }, { timeout: 10_000 })
 })

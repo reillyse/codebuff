@@ -91,7 +91,7 @@ testPassed: <YES if both have tools (count > 0) AND credentialsShared is YES, NO
 const TEST_AGENT: AgentDefinition = {
   id: 'mcp-credential-test',
   displayName: 'MCP Credential Test Agent',
-  model: 'anthropic/claude-sonnet-4-5',
+  model: 'anthropic/claude-sonnet-4.5',
   mcpServers: {
     sparrow: {
       type: 'http',

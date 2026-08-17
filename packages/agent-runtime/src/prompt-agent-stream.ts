@@ -1,3 +1,5 @@
+import { getMaxOutputTokens } from '@codebuff/common/constants/model-config'
+
 import { globalStopSequence } from './constants'
 
 import type { AgentTemplate } from './templates/types'
@@ -79,7 +81,10 @@ export const getAgentStreamFromTemplate = (params: {
     includeCacheControl,
     logger,
     localAgentTemplates,
-    maxOutputTokens: undefined,
+    // Explicit, because @ai-sdk/anthropic silently falls back to 4096 output
+    // tokens for any model its capability table doesn't recognize — which is
+    // every 5-series model. See getMaxOutputTokens.
+    maxOutputTokens: getMaxOutputTokens(model),
     maxRetries: 3,
     messages,
     model,

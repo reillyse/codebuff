@@ -11,6 +11,7 @@ import { createHash } from 'crypto'
 import path from 'path'
 
 import { createAnthropic } from '@ai-sdk/anthropic'
+import { APICallError } from 'ai'
 import { BYOK_OPENROUTER_HEADER } from '@codebuff/common/constants/byok'
 import { isFreeMode } from '@codebuff/common/constants/free-agents'
 import {
@@ -44,6 +45,7 @@ import {
   extractChatGptAccountId,
 } from './chatgpt-backend-fetch'
 
+import type { Logger } from '@codebuff/common/types/contracts/logger'
 import type { LanguageModel } from 'ai'
 
 // ============================================================================
@@ -282,6 +284,11 @@ export interface ModelRequestParams {
   skipChatGptOAuth?: boolean
   /** Cost mode (e.g. 'free') — affects fallback behavior for OAuth routes */
   costMode?: string
+  /**
+   * Optional logger used to surface provider-level HTTP failures (e.g. a 404 for
+   * a retired model) that the streaming layer would otherwise swallow.
+   */
+  logger?: Logger
 }
 
 /**
@@ -375,6 +382,7 @@ export async function getModelForRequest(params: ModelRequestParams): Promise<Mo
           model: createAnthropicOAuthModel(
             model,
             claudeOAuthCredentials.accessToken,
+            params.logger,
           ),
           isClaudeOAuth: true,
           isChatGptOAuth: false,
@@ -509,6 +517,7 @@ function createOpenAIOAuthModel(model: string, oauthToken: string): LanguageMode
 function createAnthropicOAuthModel(
   model: string,
   oauthToken: string,
+  logger?: Logger,
 ): LanguageModel {
   // Convert OpenRouter model ID to Anthropic model ID
   const anthropicModelId = toAnthropicModelId(model)
@@ -584,10 +593,66 @@ function createAnthropicOAuthModel(
       }
     }
 
-    return globalThis.fetch(input, {
+    const response = await globalThis.fetch(input, {
       ...modifiedInit,
       headers,
     })
+
+    // A non-OK status here (notably a 404 for a retired model) is otherwise
+    // swallowed by the streaming layer and resurfaces as an opaque
+    // `AI_NoOutputGeneratedError`, which the retry ladder treats as a transient
+    // overload and retries to no effect. This is the last point where the real
+    // status and body are still available, so log them. The response is passed
+    // through untouched so the AI SDK's own error handling is unchanged.
+    if (!response.ok) {
+      let bodyText = ''
+      try {
+        bodyText = await response.clone().text()
+      } catch {
+        // Body may not be replayable; the status alone is still worth logging.
+      }
+      // 429 is an expected, handled condition (rate limit -> BYOK/backend
+      // fallback; `credits_required` for fable), so it logs at warn. Everything
+      // else -- notably a 404 for a retired model -- is a real error.
+      const log = response.status === 429 ? logger?.warn : logger?.error
+      log?.call(
+        logger,
+        {
+          site: 'model-provider/createAnthropicOAuthModel',
+          status: response.status,
+          model: anthropicModelId,
+          requestModel: model,
+          responseBody: bodyText.slice(0, 2000),
+        },
+        `Anthropic OAuth request failed with HTTP ${response.status} for model "${anthropicModelId}"`,
+      )
+
+
+      // A 4xx other than 429 is deterministic: the request itself is malformed
+      // (bad tool schema, unknown model, oversized field) and will fail
+      // identically forever. Returning the Response lets the streaming layer
+      // swallow it into an opaque `AI_NoOutputGeneratedError`, which the retry
+      // ladder classifies as a transient overload and retries three times.
+      // Throwing an APICallError instead carries the real status and body, so
+      // isTransientApiError sees a non-transient code and fails fast with the
+      // provider's own explanation.
+      //
+      // 429 is excluded: it is a handled path (rate-limit fallback to
+      // BYOK/backend) that inspects the Response itself. 5xx is excluded so
+      // genuine transient overloads keep their existing retry behavior.
+      if (response.status !== 429 && response.status >= 400 && response.status < 500) {
+        throw new APICallError({
+          message: `Anthropic API rejected the request (HTTP ${response.status}): ${bodyText.slice(0, 500)}`,
+          url: typeof input === 'string' ? input : String(input),
+          requestBodyValues: {},
+          statusCode: response.status,
+          responseBody: bodyText,
+          isRetryable: false,
+        })
+      }
+    }
+
+    return response
   }
 
   // Pass empty apiKey like opencode does - this prevents the SDK from adding x-api-key header

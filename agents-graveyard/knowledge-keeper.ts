@@ -6,7 +6,7 @@ const definition: AgentDefinition = {
   id: 'knowledge-keeper',
   publisher,
   displayName: 'Kendra the Knowledge Keeper',
-  model: 'anthropic/claude-4-sonnet-20250522',
+  model: 'anthropic/claude-sonnet-5',
   toolNames: [
     'read_files',
     'write_file',

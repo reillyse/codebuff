@@ -35,7 +35,7 @@ import {
   __resetLocalAgentRegistryForTests,
 } from '../../utils/local-agent-registry'
 
-const MODEL_NAME = 'anthropic/claude-sonnet-4'
+const MODEL_NAME = 'anthropic/claude-sonnet-5'
 
 const writeAgentFile = (
   agentsDir: string,

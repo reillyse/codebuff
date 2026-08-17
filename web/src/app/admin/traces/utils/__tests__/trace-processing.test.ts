@@ -109,7 +109,7 @@ describe('buildTimelineFromMessages', () => {
         id: 'msg1',
         client_request_id: 'req1',
         user_id: 'user1',
-        model: 'claude-3-sonnet',
+        model: 'anthropic/claude-sonnet-5',
         request: {},
         response: `
           I'll spawn some agents to help:
@@ -166,7 +166,7 @@ describe('buildTimelineFromMessages', () => {
         id: 'msg1',
         client_request_id: 'req1',
         user_id: 'user1',
-        model: 'claude-3-sonnet',
+        model: 'anthropic/claude-sonnet-5',
         request: {},
         response: {
           content: `<spawn_agents><agents>[{"agent_type":"planner","prompt":"Create a plan"}]</agents></spawn_agents>`,

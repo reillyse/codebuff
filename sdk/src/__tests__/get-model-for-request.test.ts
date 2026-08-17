@@ -50,7 +50,7 @@ describe('getModelForRequest', () => {
 
     const result = await getModelForRequest({
       apiKey: 'test-api-key',
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
     })
 
     expect(result.isClaudeOAuth).toBe(true)
@@ -72,7 +72,7 @@ describe('getModelForRequest', () => {
 
     const result = await getModelForRequest({
       apiKey: 'test-api-key',
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
       skipClaudeOAuth: true,
     })
 
@@ -86,7 +86,7 @@ describe('getModelForRequest', () => {
     await expect(
       getModelForRequest({
         apiKey: 'test-api-key',
-        model: 'anthropic/claude-sonnet-4',
+        model: 'anthropic/claude-sonnet-5',
       }),
     ).rejects.toThrow('rate limited')
   })
@@ -95,7 +95,7 @@ describe('getModelForRequest', () => {
     process.env[BYOK_OPENROUTER_ENV] = 'test-openrouter-key'
 
     const result = await getModelForRequest({
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
       skipClaudeOAuth: true,
     })
 
@@ -113,7 +113,7 @@ describe('getModelForRequest', () => {
     setClaudeOAuthFallbackEnabled(false)
 
     const result = await getModelForRequest({
-      model: 'anthropic/claude-sonnet-4',
+      model: 'anthropic/claude-sonnet-5',
     })
 
     expect(result.directProvider).toBe('openrouter')

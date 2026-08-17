@@ -10,7 +10,7 @@ import type { AgentDefinition } from '../../agents/types/agent-definition'
 const agent: AgentDefinition = {
   id: 'extract-agent',
   displayName: 'Extract Agent',
-  model: 'anthropic/claude-4-sonnet-20250522',
+  model: 'anthropic/claude-sonnet-5',
   outputMode: 'last_message',
   includeMessageHistory: false,
   publisher: 'brandon',

@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test'
 
-import { CURRENT_GPT5_MODEL, CURRENT_HAIKU_MODEL, CURRENT_OPUS_MODEL } from '@codebuff/common/constants/model-config'
+import { CURRENT_GPT5_MODEL, CURRENT_HAIKU_MODEL, CURRENT_OPUS_MODEL, CURRENT_SONNET_MODEL } from '@codebuff/common/constants/model-config'
 
 import editor, { createCodeEditor } from '../editor/editor'
 
@@ -29,8 +29,10 @@ describe('editor agent', () => {
       expect(editor.displayName).toBe('Code Editor')
     })
 
-    test('uses opus model by default', () => {
-      expect(editor.model).toBe(CURRENT_OPUS_MODEL)
+    // The default editor implements, and implementing runs on Sonnet; Opus is
+    // reserved for the planning/reviewing editors.
+    test('uses sonnet model by default', () => {
+      expect(editor.model).toBe(CURRENT_SONNET_MODEL)
     })
 
     test('has output mode set to structured_output', () => {

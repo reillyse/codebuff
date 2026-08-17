@@ -41,7 +41,7 @@ const mockStaticTemplates: Record<string, AgentTemplate> = {
     outputMode: 'last_message',
     includeMessageHistory: true,
     inheritParentSystemPrompt: false,
-    model: 'anthropic/claude-4-sonnet-20250522',
+    model: 'anthropic/claude-sonnet-5',
     spawnerPrompt: 'Test',
     inputSchema: {},
   },
@@ -150,7 +150,7 @@ describe('Agent Registry', () => {
           outputMode: 'last_message',
           includeMessageHistory: true,
           inheritParentSystemPrompt: false,
-          model: 'anthropic/claude-4-sonnet-20250522',
+          model: 'anthropic/claude-sonnet-5',
           spawnerPrompt: 'Test',
           inputSchema: {},
         } as AgentTemplate,
@@ -217,7 +217,7 @@ describe('Agent Registry', () => {
         outputMode: 'last_message',
         includeMessageHistory: true,
         inheritParentSystemPrompt: false,
-        model: 'anthropic/claude-4-sonnet-20250522',
+        model: 'anthropic/claude-sonnet-5',
         spawnerPrompt: 'Test',
       }
 
@@ -267,7 +267,7 @@ describe('Agent Registry', () => {
         outputMode: 'last_message',
         includeMessageHistory: true,
         inheritParentSystemPrompt: false,
-        model: 'x-ai/grok-4.1-fast',
+        model: 'anthropic/claude-sonnet-5',
         spawnerPrompt: 'Test',
         inputSchema: {},
       }
@@ -317,7 +317,7 @@ describe('Agent Registry', () => {
         outputMode: 'last_message',
         includeMessageHistory: true,
         inheritParentSystemPrompt: false,
-        model: 'x-ai/grok-4.1-fast',
+        model: 'anthropic/claude-sonnet-5',
         spawnerPrompt: 'Test',
         inputSchema: {},
       }
@@ -350,7 +350,7 @@ describe('Agent Registry', () => {
           outputMode: 'last_message',
           includeMessageHistory: true,
           inheritParentSystemPrompt: false,
-          model: 'anthropic/claude-4-sonnet-20250522',
+          model: 'anthropic/claude-sonnet-5',
           spawnerPrompt: 'Local test',
           inputSchema: {},
         } as AgentTemplate,
@@ -379,7 +379,7 @@ describe('Agent Registry', () => {
         outputMode: 'last_message',
         includeMessageHistory: true,
         inheritParentSystemPrompt: false,
-        model: 'anthropic/claude-4-sonnet-20250522',
+        model: 'anthropic/claude-sonnet-5',
         spawnerPrompt: 'Cached test',
       }
 
@@ -431,7 +431,7 @@ describe('Agent Registry', () => {
             spawnableAgents: [],
             outputMode: 'last_message',
             includeMessageHistory: true,
-            model: 'anthropic/claude-4-sonnet-20250522',
+            model: 'anthropic/claude-sonnet-5',
             spawnerPrompt: 'Custom test',
           },
         },
@@ -510,7 +510,7 @@ describe('Agent Registry', () => {
         outputMode: 'last_message',
         includeMessageHistory: true,
         inheritParentSystemPrompt: false,
-        model: 'anthropic/claude-4-sonnet-20250522',
+        model: 'anthropic/claude-sonnet-5',
         spawnerPrompt: 'Cache test',
       }
 
